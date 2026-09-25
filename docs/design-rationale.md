@@ -50,11 +50,11 @@ Every header-value type parses the way sip-uri does, so the two crates read one 
 
 ## One error type for every header value
 
-Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
+Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. A framing fault a lookup store reports travels as the same type, with a transport-neutral code. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
 
 ## Multi-occurrence headers stay one entry per occurrence
 
-`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. `SipHeaderLookup` exposes every occurrence through `sip_header_all_str` / `sip_header_all`, and every list accessor reads through them, splitting each row untrimmed. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
+`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. `SipHeaderLookup` exposes every occurrence through `sip_header_all_str` / `sip_header_all`, and every list accessor reads through the fallible `sip_header_rows`, splitting each row untrimmed. A backing store that decodes its own framing reports a decoding failure there, so the caller gets that failure instead of a value parsed from undecoded text. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
 
 ## Error Display never carries the rejected bytes
 
