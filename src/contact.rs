@@ -164,10 +164,38 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_mixed_with_addr_is_error() {
-        assert!(parse_contact_entries(["*", "<sip:alice@example.com>"]).is_err());
-        assert!(parse_contact_entries(["<sip:alice@example.com>", "*"]).is_err());
-        assert!(parse_contact_list("*, <sip:alice@example.com>").is_err());
+    fn wildcard_beside_addr_is_kept_with_warning() {
+        use crate::diagnostic::WarningCode;
+
+        let parsed =
+            ContactList::from_entries_with_warnings(["<sip:alice@example.com>", "*"]).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .entries()[1],
+            ContactValue::Wildcard
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.entry),
+            (
+                Field::Entry,
+                WarningCode::WildcardNotAlone,
+                sip_uri::WarningKind::Recovered,
+                Some(1)
+            )
+        );
+        assert_eq!(
+            parse_contact_list("*, <sip:alice@example.com>")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            ContactList::parse_strict("*, <sip:alice@example.com>"),
+            Err(ParseError::NonConformant(w)) if w.entry == Some(0)
+        ));
+        assert!(ContactList::parse_strict("*").is_ok());
     }
 
     #[test]
@@ -207,7 +235,6 @@ mod tests {
         assert!(ContactList::parse("")
             .unwrap()
             .is_empty());
-        assert!(ContactList::from_entries(["*", "<sip:a@example.com>"]).is_err());
         assert_eq!(
             ContactList::from_entries(["<sip:a@example.com>", " "]),
             Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))

@@ -1839,9 +1839,12 @@ mod multi_row_tests {
             3
         );
         let h = rows(&[("Contact", &["*", "<sip:a@example.com>"])]);
-        assert!(h
-            .contact()
-            .is_err());
+        assert_eq!(
+            h.contact()
+                .unwrap()
+                .len(),
+            2
+        );
         let h = rows(&[("Contact", &[""])]);
         assert!(h
             .contact()
