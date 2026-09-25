@@ -410,6 +410,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn enum_error_display_omits_input() {
+        let status = "secret"
+            .parse::<EndpointStatus>()
+            .unwrap_err();
+        let joining = "secret"
+            .parse::<JoiningMethod>()
+            .unwrap_err();
+        let disconnection = "secret"
+            .parse::<DisconnectionMethod>()
+            .unwrap_err();
+        assert_eq!(
+            (&*status.0, &*joining.0, &*disconnection.0),
+            ("secret", "secret", "secret")
+        );
+        assert_eq!(status.to_string(), "invalid endpoint status (6 bytes)");
+        assert_eq!(joining.to_string(), "invalid joining method (6 bytes)");
+        assert_eq!(
+            disconnection.to_string(),
+            "invalid disconnection method (6 bytes)"
+        );
+    }
+
+    #[test]
     fn endpoint_status_round_trip() {
         for (s, expected) in [
             ("pending", EndpointStatus::Pending),

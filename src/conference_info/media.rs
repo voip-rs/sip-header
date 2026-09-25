@@ -148,6 +148,15 @@ mod tests {
     }
 
     #[test]
+    fn media_status_error_display_omits_input() {
+        let e = "secret"
+            .parse::<MediaStatus>()
+            .unwrap_err();
+        assert_eq!(e.0, "secret");
+        assert_eq!(e.to_string(), "invalid media status (6 bytes)");
+    }
+
+    #[test]
     fn media_builder() {
         let m = Media::new("1")
             .with_type("audio")

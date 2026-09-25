@@ -140,6 +140,15 @@ mod tests {
     }
 
     #[test]
+    fn state_error_display_omits_input() {
+        let e = "secret"
+            .parse::<State>()
+            .unwrap_err();
+        assert_eq!(e.0, "secret");
+        assert_eq!(e.to_string(), "invalid conference-info state (6 bytes)");
+    }
+
+    #[test]
     fn execution_info_builder() {
         let info = ExecutionInfo::new()
             .with_when("2026-02-24T14:26:16Z")
