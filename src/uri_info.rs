@@ -134,11 +134,21 @@ pub(crate) fn read_params_reporting(
     warnings: &mut Vec<ParseWarning>,
 ) -> Vec<(String, Option<String>)> {
     let raw = crate::parse_params(params);
-    for p in &raw {
+    report_param_quoting(entry, &raw, warnings);
+    crate::stored_params(raw)
+}
+
+/// Raise the quote breaches in `params`, read from `entry`, for a type that
+/// stores values as sent.
+pub(crate) fn report_param_quoting(
+    entry: &str,
+    params: &[crate::RawParam<'_>],
+    warnings: &mut Vec<ParseWarning>,
+) {
+    for p in params {
         // Unquoted only to report; the stored value stays as sent.
         p.unquoted_reporting(entry, warnings);
     }
-    crate::stored_params(raw)
 }
 
 impl CommaList for UriInfo {

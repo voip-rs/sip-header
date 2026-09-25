@@ -1226,7 +1226,7 @@ mod tests {
             .unwrap();
         assert_eq!(via.len(), 1);
         assert_eq!(via.entries()[0].transport(), "UDP");
-        assert_eq!(via.entries()[0].host(), "198.51.100.1");
+        assert_eq!(via.entries()[0].host(), Some("198.51.100.1"));
     }
 
     #[test]

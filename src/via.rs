@@ -2,9 +2,10 @@
 
 use std::fmt;
 
-use crate::diagnostic::{Field, ParseWarning};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::{non_empty, CommaList};
+use crate::uri_info::report_param_quoting;
 
 /// A single Via entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +14,7 @@ pub struct SipViaEntry {
     protocol_name: String,
     protocol_version: String,
     transport: String,
-    host: String,
+    host: Option<String>,
     port: Option<u16>,
     params: Vec<(String, Option<String>)>,
     rport: Option<Option<u16>>,
@@ -35,9 +36,11 @@ impl SipViaEntry {
         &self.transport
     }
 
-    /// Returns the host.
-    pub fn host(&self) -> &str {
-        &self.host
+    /// Returns the host as sent, IPv6 without brackets; `None` for a sent-by
+    /// without one, reported as [`MissingHost`](crate::WarningCode::MissingHost).
+    pub fn host(&self) -> Option<&str> {
+        self.host
+            .as_deref()
     }
 
     /// Returns the port, if present.
@@ -79,7 +82,7 @@ impl SipViaEntry {
         self.rport
     }
 
-    fn parse(entry: &str) -> Result<Self, ParseError> {
+    fn parse(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
         let trimmed = entry.trim();
         if trimmed.is_empty() {
             return Err(ParseError::malformed(
@@ -98,9 +101,10 @@ impl SipViaEntry {
 
         let (protocol_name, protocol_version, transport, sent_by) =
             parse_sent_protocol(entry, main_part)?;
-        let (host, port) = parse_host_port(entry, sent_by)?;
+        let (host, port) = parse_host_port(entry, sent_by, warnings)?;
 
         let raw_params = crate::parse_params(params_part.unwrap_or(""));
+        report_param_quoting(entry, &raw_params, warnings);
         let rport = raw_params
             .iter()
             .find(|p| {
@@ -164,13 +168,6 @@ fn parse_sent_protocol<'a>(
     {
         (transport, sent_by) = ("", transport);
     }
-    if sent_by.is_empty() {
-        return Err(ParseError::malformed(
-            Field::SentBy,
-            FaultCode::Missing,
-            None,
-        ));
-    }
     for part in [name, version, transport] {
         if let Some(i) = part.find(|c: char| c == '/' || c.is_whitespace()) {
             return Err(ParseError::malformed(
@@ -191,17 +188,13 @@ impl fmt::Display for SipViaEntry {
             self.protocol_name, self.protocol_version, self.transport
         )?;
 
-        // Handle IPv6 addresses with brackets
-        if self
+        match self
             .host
-            .contains(':')
-            && !self
-                .host
-                .starts_with('[')
+            .as_deref()
         {
-            write!(f, " [{}]", self.host)?;
-        } else {
-            write!(f, " {}", self.host)?;
+            Some(host) if host.contains(':') && !host.starts_with('[') => write!(f, " [{host}]")?,
+            Some(host) => write!(f, " {host}")?,
+            None => f.write_str(" ")?,
         }
 
         if let Some(port) = self.port {
@@ -222,9 +215,9 @@ impl CommaList for SipVia {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipViaEntry>, ParseError> {
-        SipViaEntry::parse(entry).map(Some)
+        SipViaEntry::parse(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
@@ -234,8 +227,13 @@ impl CommaList for SipVia {
 
 list_type!(SipVia, SipViaEntry, sep: ", ", entry: "via-parm");
 
-/// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon.
-fn parse_host_port(entry: &str, sent_by: &str) -> Result<(String, Option<u16>), ParseError> {
+/// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon; the
+/// host is read by sip-uri's host grammar, with its warnings forwarded.
+fn parse_host_port(
+    entry: &str,
+    sent_by: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<(Option<String>, Option<u16>), ParseError> {
     let at = |code, part: &str| {
         ParseError::malformed(Field::SentBy, code, Some(crate::offset_in(entry, part)))
     };
@@ -252,7 +250,7 @@ fn parse_host_port(entry: &str, sent_by: &str) -> Result<(String, Option<u16>), 
                     .ok_or_else(|| at(FaultCode::InvalidChar, rest))?,
             )
         };
-        (&inner[..close], port)
+        (&sent_by[..close + 2], port)
     } else {
         match sent_by.split_once(':') {
             Some((_, port)) if port.contains(':') => {
@@ -272,7 +270,28 @@ fn parse_host_port(entry: &str, sent_by: &str) -> Result<(String, Option<u16>), 
                 .map_err(|_| at(FaultCode::InvalidNumber, p))
         })
         .transpose()?;
-    Ok((host.to_string(), port))
+    if host.is_empty() {
+        warnings.push(ParseWarning::new(
+            Field::SentBy,
+            WarningCode::MissingHost,
+            Some(crate::offset_in(entry, sent_by)),
+        ));
+        return Ok((None, port));
+    }
+    let offset = crate::offset_in(entry, host);
+    let parsed =
+        sip_uri::Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset))?;
+    warnings.extend(
+        parsed
+            .warnings
+            .into_iter()
+            .map(|w| ParseWarning::from_uri(w, offset)),
+    );
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok((Some(bare.to_string()), port))
 }
 
 #[cfg(test)]
