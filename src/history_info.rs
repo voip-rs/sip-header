@@ -179,8 +179,10 @@ list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", entry: "hi-entry");
 
 #[cfg(test)]
 mod tests {
+    use sip_uri::WarningKind;
+
     use super::*;
-    use crate::diagnostic::Field;
+    use crate::diagnostic::{Field, Parsed, WarningCode};
     use crate::error::FaultCode;
 
     const EXAMPLE_1: &str = "\
@@ -418,7 +420,7 @@ mod tests {
 
     #[test]
     fn parse_reason_full() {
-        let r = parse_reason("SIP;cause=302;text=\"Moved\"");
+        let r = reason_value("SIP;cause=302;text=\"Moved\"");
         assert_eq!(r.protocol(), "SIP");
         assert_eq!(r.cause(), Some(302));
         assert_eq!(r.text(), Some("Moved"));
@@ -426,7 +428,7 @@ mod tests {
 
     #[test]
     fn parse_reason_no_text() {
-        let r = parse_reason("Q.850;cause=16");
+        let r = reason_value("Q.850;cause=16");
         assert_eq!(r.protocol(), "Q.850");
         assert_eq!(r.cause(), Some(16));
         assert_eq!(r.text(), None);
@@ -434,7 +436,7 @@ mod tests {
 
     #[test]
     fn parse_reason_protocol_only() {
-        let r = parse_reason("SIP");
+        let r = reason_value("SIP");
         assert_eq!(r.protocol(), "SIP");
         assert_eq!(r.cause(), None);
         assert_eq!(r.text(), None);
@@ -442,27 +444,27 @@ mod tests {
 
     #[test]
     fn parse_reason_unquoted_text() {
-        let r = parse_reason("SIP;cause=200;text=OK");
+        let r = reason_value("SIP;cause=200;text=OK");
         assert_eq!(r.text(), Some("OK"));
     }
 
     #[test]
     fn parse_reason_quoted_text_hides_cause_lookalike() {
-        let r = parse_reason(r#"SIP;text="because=5";cause=200"#);
+        let r = reason_value(r#"SIP;text="because=5";cause=200"#);
         assert_eq!(r.cause(), Some(200));
         assert_eq!(r.text(), Some("because=5"));
     }
 
     #[test]
     fn parse_reason_text_unescapes_quoted_pair() {
-        let r = parse_reason(r#"SIP;cause=480;text="say \"hi\"""#);
+        let r = reason_value(r#"SIP;cause=480;text="say \"hi\"""#);
         assert_eq!(r.cause(), Some(480));
         assert_eq!(r.text(), Some(r#"say "hi""#));
     }
 
     #[test]
     fn parse_reason_keys_case_insensitive_and_sws() {
-        let r = parse_reason(r#"SIP ; Cause = 486 ; TEXT = "Busy; here""#);
+        let r = reason_value(r#"SIP ; Cause = 486 ; TEXT = "Busy; here""#);
         assert_eq!(r.protocol(), "SIP");
         assert_eq!(r.cause(), Some(486));
         assert_eq!(r.text(), Some("Busy; here"));
@@ -470,15 +472,216 @@ mod tests {
 
     #[test]
     fn parse_reason_key_suffix_not_matched() {
-        let r = parse_reason(r#"SIP;xcause=1;subtext="no";cause=2"#);
+        let r = reason_value(r#"SIP;xcause=1;subtext="no";cause=2"#);
         assert_eq!(r.cause(), Some(2));
         assert_eq!(r.text(), None);
     }
 
+    fn reason_parsed(decoded: &str) -> Parsed<HistoryInfoReason> {
+        let mut warnings = Vec::new();
+        let value = parse_reason(decoded, &mut warnings);
+        Parsed::new(value, warnings)
+    }
+
+    fn reason_value(decoded: &str) -> HistoryInfoReason {
+        reason_parsed(decoded).value
+    }
+
+    fn entry_reason(encoded: &str) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
+        let hi =
+            HistoryInfo::parse(&format!("<sip:a@example.com?Reason={encoded}>;index=1")).unwrap();
+        hi.entries()[0].reason_with_warnings()
+    }
+
+    fn only_warning(
+        p: &Parsed<HistoryInfoReason>,
+    ) -> (Field, WarningCode, WarningKind, Option<usize>) {
+        assert_eq!(
+            p.warnings
+                .len(),
+            1,
+            "{:?}",
+            p.warnings
+        );
+        let w = p.warnings[0];
+        assert_eq!(
+            p.clone()
+                .into_strict(),
+            Err(ParseError::NonConformant(w))
+        );
+        (w.field, w.code, w.kind, w.position)
+    }
+
     #[test]
-    fn parse_reason_unparseable_cause_is_none() {
-        assert_eq!(parse_reason("SIP;cause=abc").cause(), None);
-        assert_eq!(parse_reason("SIP;cause=70000").cause(), None);
+    fn parse_reason_unparseable_cause_is_dropped_with_warning() {
+        for (decoded, at) in [
+            ("SIP;cause=abc", 10),
+            ("SIP;cause=70000", 10),
+            ("SIP;cause=+5", 10),
+            ("SIP;cause", 4),
+        ] {
+            let p = reason_parsed(decoded);
+            assert_eq!(
+                p.value
+                    .cause(),
+                None,
+                "{decoded}"
+            );
+            assert_eq!(
+                only_warning(&p),
+                (
+                    Field::Cause,
+                    WarningCode::InvalidCause,
+                    WarningKind::Lost,
+                    Some(at)
+                ),
+                "{decoded}"
+            );
+        }
+        assert!(reason_parsed("SIP;cause=200")
+            .warnings
+            .is_empty());
+    }
+
+    #[test]
+    fn reason_invalid_cause_through_entry() {
+        let p = entry_reason("SIP%3Bcause%3Dabc")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            p.value
+                .protocol(),
+            "SIP"
+        );
+        assert_eq!(
+            only_warning(&p),
+            (
+                Field::Cause,
+                WarningCode::InvalidCause,
+                WarningKind::Lost,
+                Some(10)
+            )
+        );
+        let lenient =
+            HistoryInfo::parse("<sip:a@example.com?Reason=SIP%3Bcause%3Dabc>;index=1").unwrap();
+        assert_eq!(
+            lenient.entries()[0]
+                .reason()
+                .unwrap()
+                .unwrap()
+                .cause(),
+            None
+        );
+    }
+
+    #[test]
+    fn reason_unquoted_text_is_kept_with_warning() {
+        let p = entry_reason("SIP%3Bcause%3D200%3Btext%3DOK")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            p.value
+                .text(),
+            Some("OK")
+        );
+        assert_eq!(
+            only_warning(&p),
+            (
+                Field::Text,
+                WarningCode::UnquotedText,
+                WarningKind::Recovered,
+                "SIP;cause=200;text=OK".find("OK")
+            )
+        );
+    }
+
+    #[test]
+    fn reason_text_trailing_backslash_warns() {
+        let decoded = r#"SIP;text="a\""#;
+        let p = entry_reason("SIP%3Btext%3D%22a%5C%22")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            p.value
+                .text(),
+            Some("a")
+        );
+        let w = p
+            .warnings
+            .iter()
+            .find(|w| w.code == WarningCode::TrailingBackslash)
+            .copied()
+            .unwrap();
+        assert_eq!(
+            (w.field, w.kind, w.position),
+            (Field::Text, WarningKind::Lost, decoded.find('\\'))
+        );
+        assert!(p
+            .into_strict()
+            .is_err());
+    }
+
+    #[test]
+    fn reason_not_utf8_is_malformed_value() {
+        assert_eq!(
+            entry_reason("SIP%3Btext%3D%22%C0%80%22"),
+            Some(Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::NotUtf8,
+                None
+            )))
+        );
+    }
+
+    #[test]
+    fn entry_without_index_warns() {
+        let input = "<sip:a@example.com>";
+        assert_eq!(
+            HistoryInfo::parse(input)
+                .unwrap()
+                .len(),
+            1
+        );
+        let parsed = HistoryInfo::parse_with_warnings(input).unwrap();
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position, w.entry),
+            (
+                Field::Index,
+                WarningCode::MissingIndex,
+                WarningKind::Recovered,
+                None,
+                Some(0)
+            )
+        );
+        assert_eq!(
+            HistoryInfo::parse_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
+    }
+
+    #[test]
+    fn bare_addr_spec_entry_warns() {
+        let input = "<sip:a@example.com>;index=1, sip:b@example.com;index=2";
+        let hi = HistoryInfo::parse(input).unwrap();
+        assert_eq!(hi.len(), 2);
+        let parsed = HistoryInfo::parse_with_warnings(input).unwrap();
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position, w.entry),
+            (
+                Field::Addr,
+                WarningCode::NotNameAddr,
+                WarningKind::Recovered,
+                Some(1),
+                Some(1)
+            )
+        );
+        assert_eq!(parsed.warnings[1].code, WarningCode::MissingIndex);
+        assert_eq!(
+            HistoryInfo::parse_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
     }
 
     #[test]
