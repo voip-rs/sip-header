@@ -4,8 +4,8 @@
 //! or a comma-separated list of `name-addr / addr-spec` entries with
 //! optional parameters.
 
-use crate::diagnostic::{Field, ParseWarning};
-use crate::error::{FaultCode, ParseError};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::error::ParseError;
 use crate::header_addr::{parse_list_addr, SipHeaderAddr};
 use crate::list::CommaList;
 use std::fmt;
@@ -52,15 +52,23 @@ impl CommaList for ContactList {
     }
 
     fn from_parsed(entries: Vec<ContactValue>) -> Result<Self, ParseError> {
+        Ok(Self(entries))
+    }
+
+    fn from_parsed_reporting(
+        entries: Vec<ContactValue>,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Self, ParseError> {
         if entries.len() > 1 {
-            if let Some(i) = entries
+            let wildcards = entries
                 .iter()
-                .position(|v| matches!(v, ContactValue::Wildcard))
-            {
-                return Err(
-                    ParseError::malformed(Field::Entry, FaultCode::Misplaced, None).in_entry(i),
-                );
-            }
+                .enumerate()
+                .filter(|(_, v)| matches!(v, ContactValue::Wildcard))
+                .map(|(i, _)| {
+                    ParseWarning::new(Field::Entry, WarningCode::WildcardNotAlone, None).in_entry(i)
+                });
+            warnings.extend(wildcards);
+            warnings.sort_by_key(|w| w.entry);
         }
         Ok(Self(entries))
     }
@@ -89,6 +97,7 @@ pub fn parse_contact_entries<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::FaultCode;
 
     #[test]
     fn wildcard() {
@@ -165,8 +174,6 @@ mod tests {
 
     #[test]
     fn wildcard_beside_addr_is_kept_with_warning() {
-        use crate::diagnostic::WarningCode;
-
         let parsed =
             ContactList::from_entries_with_warnings(["<sip:alice@example.com>", "*"]).unwrap();
         assert_eq!(
@@ -200,8 +207,6 @@ mod tests {
 
     #[test]
     fn contact_list_warnings_carry_entry_index() {
-        use crate::diagnostic::WarningCode;
-
         let bad = "<sip:b@example.com>junk;expires=60";
         let parsed =
             ContactList::parse_with_warnings(&format!("<sip:a@example.com>, {bad}")).unwrap();

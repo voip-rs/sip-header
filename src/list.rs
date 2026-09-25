@@ -23,6 +23,14 @@ pub(crate) trait CommaList: Sized {
     /// Build the list from the entries kept.
     fn from_parsed(entries: Vec<Self::Entry>) -> Result<Self, ParseError>;
 
+    /// Build the list, reporting breaches that span entries.
+    fn from_parsed_reporting(
+        entries: Vec<Self::Entry>,
+        _warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Self, ParseError> {
+        Self::from_parsed(entries)
+    }
+
     /// What a whitespace-only value parses to.
     fn blank() -> Result<Self, ParseError> {
         Err(ParseError::Empty)
@@ -72,7 +80,8 @@ pub(crate) trait CommaList: Sized {
             );
             kept.extend(value);
         }
-        Self::from_parsed(kept).map(|v| Parsed::new(v, warnings))
+        let value = Self::from_parsed_reporting(kept, &mut warnings)?;
+        Ok(Parsed::new(value, warnings))
     }
 }
 
