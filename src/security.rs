@@ -29,10 +29,7 @@ impl SipSecurityMechanism {
 
     /// Look up a parameter by key (case-insensitive).
     pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        self.params
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.as_deref())
+        crate::find_param(&self.params, key)
     }
 
     /// The `q` preference value, if present.

@@ -95,6 +95,58 @@ pub(crate) fn fmt_joined<T: std::fmt::Display>(
     Ok(())
 }
 
+/// Read `*(SEMI generic-param)` into stored form: keys lowercased, values
+/// raw, `None` for a flag.
+pub(crate) fn read_params(s: &str) -> Vec<(String, Option<String>)> {
+    stored_params(parse_params(s))
+}
+
+/// Parameters already read, in stored form.
+pub(crate) fn stored_params(params: Vec<RawParam<'_>>) -> Vec<(String, Option<String>)> {
+    params
+        .into_iter()
+        .map(|p| {
+            (
+                p.key
+                    .to_ascii_lowercase(),
+                p.value
+                    .map(str::to_string),
+            )
+        })
+        .collect()
+}
+
+/// Write stored parameters as `;key` or `;key=value`, values as stored.
+pub(crate) fn write_params<W: std::fmt::Write + ?Sized>(
+    w: &mut W,
+    params: &[(String, Option<String>)],
+) -> std::fmt::Result {
+    for (key, value) in params {
+        write_param(w, key, value.as_deref(), false)?;
+    }
+    Ok(())
+}
+
+/// Look up a stored parameter by key, case-insensitively: `Some(None)` for a flag.
+pub(crate) fn find_param<'a>(
+    params: &'a [(String, Option<String>)],
+    key: &str,
+) -> Option<Option<&'a str>> {
+    params
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(key))
+        .map(|(_, v)| v.as_deref())
+}
+
+/// Stored parameters as borrowed `(key, value)` pairs.
+pub(crate) fn iter_params(
+    params: &[(String, Option<String>)],
+) -> impl Iterator<Item = (&str, Option<&str>)> {
+    params
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_deref()))
+}
+
 /// Byte offset of `inner`, a subslice of `outer`, within `outer`.
 pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
     (inner.as_ptr() as usize).saturating_sub(outer.as_ptr() as usize)

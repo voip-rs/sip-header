@@ -239,11 +239,7 @@ impl SipReplaces {
 
     /// Returns a specific generic parameter by key (case-insensitive).
     pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        let key_lower = key.to_ascii_lowercase();
-        self.params
-            .iter()
-            .find(|(k, _)| k == &key_lower)
-            .map(|(_, v)| v.as_deref())
+        crate::find_param(&self.params, key)
     }
 
     fn wire_form(&self) -> Result<String, fmt::Error> {
@@ -254,16 +250,9 @@ impl SipReplaces {
         if self.early_only {
             s.push_str(";early-only");
         }
-        write_params(&mut s, &self.params)?;
+        crate::write_params(&mut s, &self.params)?;
         Ok(s)
     }
-}
-
-pub(crate) fn write_params(s: &mut String, params: &[(String, Option<String>)]) -> fmt::Result {
-    for (key, value) in params {
-        crate::write_param(s, key, value.as_deref(), false)?;
-    }
-    Ok(())
 }
 
 impl fmt::Display for SipReplaces {

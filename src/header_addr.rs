@@ -183,9 +183,7 @@ impl SipHeaderAddr {
     /// therefore keys as `+urn%3aemergency%3a…` in this list but
     /// `+urn:emergency:…` as a URI parameter.
     pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        self.params
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_deref()))
+        crate::iter_params(&self.params)
     }
 
     /// Look up a header-level parameter by name (case-insensitive).
@@ -201,11 +199,8 @@ impl SipHeaderAddr {
     /// Returns `None` if the param is not present, `Some(Ok(None))` for
     /// flag params (no value), `Some(Ok(Some(decoded)))` for valued params.
     pub fn param(&self, name: &str) -> Option<Result<Option<Cow<'_, str>>, Utf8Error>> {
-        let needle = name.to_ascii_lowercase();
-        self.params
-            .iter()
-            .find(|(k, _)| *k == needle)
-            .map(|(_, v)| match v {
+        self.param_raw(name)
+            .map(|v| match v {
                 Some(raw) => percent_decode_str(raw)
                     .decode_utf8()
                     .map(Some),
@@ -218,11 +213,7 @@ impl SipHeaderAddr {
     /// Returns the raw value without percent-decoding. Use this when
     /// round-trip fidelity matters or the value may not be valid UTF-8.
     pub fn param_raw(&self, name: &str) -> Option<Option<&str>> {
-        let needle = name.to_ascii_lowercase();
-        self.params
-            .iter()
-            .find(|(k, _)| *k == needle)
-            .map(|(_, v)| v.as_deref())
+        crate::find_param(&self.params, name)
     }
 
     /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present.
@@ -393,25 +384,9 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let addr = SipHeaderAddr {
         display_name: display_name.filter(|n| !n.is_empty()),
         uri,
-        params: parse_header_params(&tail[params_start..]),
+        params: crate::read_params(&tail[params_start..]),
     };
     Ok(Parsed::new(addr, warnings))
-}
-
-/// Parse header-level parameters from the trailing portion after `>`.
-/// Keys are lowercased; values stay raw (quotes and percent-encoding intact).
-fn parse_header_params(s: &str) -> Vec<(String, Option<String>)> {
-    crate::parse_params(s)
-        .into_iter()
-        .map(|p| {
-            (
-                p.key
-                    .to_ascii_lowercase(),
-                p.value
-                    .map(str::to_string),
-            )
-        })
-        .collect()
 }
 
 /// RFC 3261 §25.1 `token` character.
@@ -506,10 +481,7 @@ impl fmt::Display for SipHeaderAddr {
                 write!(f, "<{}>", self.uri)?;
             }
         }
-        for (key, value) in &self.params {
-            crate::write_param(f, key, value.as_deref(), false)?;
-        }
-        Ok(())
+        crate::write_params(f, &self.params)
     }
 }
 

@@ -11,7 +11,7 @@ use crate::error::{FaultCode, ParseError};
 pub struct SipAcceptEntry {
     media_range: String,
     slash_pos: usize,
-    params: Vec<(String, String)>,
+    params: Vec<(String, Option<String>)>,
 }
 
 impl SipAcceptEntry {
@@ -30,29 +30,27 @@ impl SipAcceptEntry {
         &self.media_range
     }
 
-    /// All parameters as `(key, value)` pairs.
-    pub fn params(&self) -> &[(String, String)] {
+    /// All parameters as `(key, value)` pairs; keys lowercased, `None` for a flag.
+    pub fn params(&self) -> &[(String, Option<String>)] {
         &self.params
     }
 
-    /// Look up a parameter by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<&str> {
-        self.params
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.as_str())
+    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
+    pub fn param(&self, key: &str) -> Option<Option<&str>> {
+        crate::find_param(&self.params, key)
     }
 
     /// The `q` quality value, if present.
     pub fn q(&self) -> Option<&str> {
         self.param("q")
+            .flatten()
     }
 }
 
 impl fmt::Display for SipAcceptEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.media_range)?;
-        write_accept_params(f, &self.params)
+        crate::write_params(f, &self.params)
     }
 }
 
@@ -93,40 +91,8 @@ fn parse_accept_entry(entry: &str) -> Result<SipAcceptEntry, ParseError> {
     Ok(SipAcceptEntry {
         media_range,
         slash_pos,
-        params: read_accept_params(params_part.unwrap_or("")),
+        params: crate::read_params(params_part.unwrap_or("")),
     })
-}
-
-/// Read `*(SEMI accept-param)`: keys lowercased, values raw, `""` for a flag.
-pub(crate) fn read_accept_params(s: &str) -> Vec<(String, String)> {
-    crate::parse_params(s)
-        .into_iter()
-        .map(|p| {
-            (
-                p.key
-                    .to_ascii_lowercase(),
-                p.value
-                    .unwrap_or("")
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-/// Write `*(SEMI accept-param)`, an empty value as a flag.
-pub(crate) fn write_accept_params(
-    f: &mut fmt::Formatter<'_>,
-    params: &[(String, String)],
-) -> fmt::Result {
-    for (key, value) in params {
-        crate::write_param(
-            f,
-            key,
-            Some(value.as_str()).filter(|v| !v.is_empty()),
-            false,
-        )?;
-    }
-    Ok(())
 }
 
 /// A blank entry beside a real one, shared by the Accept-* headers.
@@ -284,17 +250,26 @@ mod tests {
 
     #[test]
     fn flag_param_roundtrip() {
-        let raw = "application/sdp;foo";
+        let raw = "application/sdp;foo;Q=0.5";
         let accept = SipAccept::parse(raw).unwrap();
-        assert_eq!(accept.entries()[0].param("foo"), Some(""));
-        assert_eq!(accept.to_string(), raw);
+        let entry = &accept.entries()[0];
+        assert_eq!(entry.param("FOO"), Some(None));
+        assert_eq!(entry.param("absent"), None);
+        assert_eq!(
+            entry.params(),
+            &[
+                ("foo".to_string(), None),
+                ("q".to_string(), Some("0.5".to_string()))
+            ]
+        );
+        assert_eq!(accept.to_string(), "application/sdp;foo;q=0.5");
     }
 
     #[test]
     fn quoted_param_keeps_semicolon() {
         let raw = r#"application/sdp;x="a;b";q=0.5"#;
         let accept = SipAccept::parse(raw).unwrap();
-        assert_eq!(accept.entries()[0].param("x"), Some(r#""a;b""#));
+        assert_eq!(accept.entries()[0].param("x"), Some(Some(r#""a;b""#)));
         assert_eq!(accept.entries()[0].q(), Some("0.5"));
         assert_eq!(accept.to_string(), raw);
     }

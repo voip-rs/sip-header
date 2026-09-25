@@ -9,51 +9,41 @@ use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
-///
-/// The data field contains the URI stripped of angle brackets.
-/// Metadata keys are stored lowercased; values are preserved as-is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UriInfoEntry {
-    /// The URI or data inside the angle brackets, with brackets stripped.
-    pub data: String,
-    /// Semicolon-delimited parameters as `(key, value)` pairs.
-    /// Keys are lowercased at parse time; values are preserved as-is.
-    /// A key with no `=` sign is stored with an empty string value.
-    pub metadata: Vec<(String, String)>,
+    uri: String,
+    params: Vec<(String, Option<String>)>,
 }
 
 impl UriInfoEntry {
-    /// Look up a metadata parameter by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<&str> {
-        self.metadata
-            .iter()
-            .find_map(|(k, v)| {
-                if k.eq_ignore_ascii_case(key) {
-                    Some(v.as_str())
-                } else {
-                    None
-                }
-            })
+    /// The URI or data inside the angle brackets, with brackets stripped.
+    pub fn uri(&self) -> &str {
+        &self.uri
     }
 
-    /// The `purpose` parameter value, if present.
+    /// All parameters as `(key, value)` pairs; keys lowercased, values as
+    /// sent, `None` for a flag.
+    pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        crate::iter_params(&self.params)
+    }
+
+    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
+    pub fn param(&self, key: &str) -> Option<Option<&str>> {
+        crate::find_param(&self.params, key)
+    }
+
+    /// The `purpose` parameter value, if present with a value.
     pub fn purpose(&self) -> Option<&str> {
         self.param("purpose")
+            .flatten()
     }
 }
 
 impl fmt::Display for UriInfoEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<{}>", self.data)?;
-        for (key, value) in &self.metadata {
-            if value.is_empty() {
-                write!(f, ";{key}")?;
-            } else {
-                write!(f, ";{key}={value}")?;
-            }
-        }
-        Ok(())
+        write!(f, "<{}>", self.uri)?;
+        crate::write_params(f, &self.params)
     }
 }
 
@@ -109,22 +99,9 @@ fn parse_entry(entry: &str) -> Result<UriInfoEntry, ParseError> {
         ));
     }
 
-    let metadata = crate::parse_params(params)
-        .into_iter()
-        .map(|p| {
-            (
-                p.key
-                    .to_ascii_lowercase(),
-                p.value
-                    .unwrap_or("")
-                    .to_string(),
-            )
-        })
-        .collect();
-
     Ok(UriInfoEntry {
-        data: data.to_string(),
-        metadata,
+        uri: data.to_string(),
+        params: crate::read_params(params),
     })
 }
 
@@ -219,19 +196,25 @@ mod tests {
     #[test]
     fn entry_no_metadata() {
         let entry = parse_entry("<data>").unwrap();
-        assert_eq!(entry.data, "data");
-        assert!(entry
-            .metadata
-            .is_empty());
+        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .params()
+                .count(),
+            0
+        );
     }
 
     #[test]
     fn entry_no_metadata_trailing_semicolon() {
         let entry = parse_entry("<data>;").unwrap();
-        assert_eq!(entry.data, "data");
-        assert!(entry
-            .metadata
-            .is_empty());
+        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .params()
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -239,11 +222,11 @@ mod tests {
         let entry = parse_entry("<data>;meta1").unwrap();
         assert_eq!(
             entry
-                .metadata
-                .len(),
-            1
+                .params()
+                .collect::<Vec<_>>(),
+            vec![("meta1", None)]
         );
-        assert_eq!(entry.metadata[0], ("meta1".to_string(), String::new()));
+        assert_eq!(entry.param("META1"), Some(None));
     }
 
     #[test]
@@ -251,41 +234,41 @@ mod tests {
         let entry = parse_entry("<data>;meta1=").unwrap();
         assert_eq!(
             entry
-                .metadata
-                .len(),
-            1
+                .params()
+                .collect::<Vec<_>>(),
+            vec![("meta1", Some(""))]
         );
-        assert_eq!(entry.metadata[0], ("meta1".to_string(), String::new()));
+        assert_eq!(entry.to_string(), "<data>;meta1=");
     }
 
     #[test]
     fn entry_two_metadata_items() {
         let entry = parse_entry("<data>;meta1=one;meta2=two;").unwrap();
-        assert_eq!(entry.data, "data");
+        assert_eq!(entry.uri(), "data");
         assert_eq!(
             entry
-                .metadata
-                .len(),
+                .params()
+                .count(),
             2
         );
-        assert_eq!(entry.param("meta1"), Some("one"));
-        assert_eq!(entry.param("meta2"), Some("two"));
+        assert_eq!(entry.param("meta1"), Some(Some("one")));
+        assert_eq!(entry.param("meta2"), Some(Some("two")));
+        assert_eq!(entry.param("meta3"), None);
     }
 
     #[test]
     fn entry_strips_angle_brackets() {
         let entry = parse_entry("<data>;meta1=one;meta2=two;").unwrap();
-        assert_eq!(entry.data, "data");
+        assert_eq!(entry.uri(), "data");
     }
 
     #[test]
     fn entry_uppercase_metadata_key_lowercased() {
         let entry = parse_entry("<data>;Meta-1=one").unwrap();
         assert!(entry
-            .metadata
-            .iter()
-            .all(|(k, _)| k == &k.to_ascii_lowercase()));
-        assert_eq!(entry.param("meta-1"), Some("one"));
+            .params()
+            .all(|(k, _)| k == k.to_ascii_lowercase()));
+        assert_eq!(entry.param("meta-1"), Some(Some("one")));
     }
 
     #[test]
@@ -304,27 +287,23 @@ mod tests {
 
     #[test]
     fn entry_display_contains_all_metadata() {
-        let entry = parse_entry("<http://somedata/?arg=123>").unwrap();
-        // Build entry with metadata manually since the URL contains ? and =
-        let mut entry = entry;
-        entry
-            .metadata
-            .push(("meta1".to_string(), "one".to_string()));
-        entry
-            .metadata
-            .push(("meta2".to_string(), "two".to_string()));
-        let s = entry.to_string();
-        assert!(
-            s.matches(';')
-                .count()
-                >= 2
-        );
+        let raw = "<http://somedata/?arg=123>;meta1=one;meta2=two";
+        let entry = parse_entry(raw).unwrap();
+        assert_eq!(entry.uri(), "http://somedata/?arg=123");
+        assert_eq!(entry.to_string(), raw);
     }
 
     #[test]
     fn entry_display_no_value_key() {
         let entry = parse_entry("<data>;flagkey").unwrap();
         assert_eq!(entry.to_string(), "<data>;flagkey");
+    }
+
+    #[test]
+    fn flag_purpose_is_none() {
+        let entry = parse_entry("<data>;purpose").unwrap();
+        assert_eq!(entry.purpose(), None);
+        assert_eq!(entry.param("purpose"), Some(None));
     }
 
     // -- UriInfo tests --
@@ -374,7 +353,7 @@ mod tests {
             .find(|e| e.purpose() == Some("nena-CallId"))
             .unwrap();
         assert!(entry
-            .data
+            .uri()
             .contains("callid"));
     }
 
@@ -391,7 +370,7 @@ mod tests {
             .collect();
         assert_eq!(eido.len(), 1);
         assert!(eido[0]
-            .data
+            .uri()
             .contains("EidoRetrievalService"));
     }
 
@@ -407,7 +386,7 @@ mod tests {
             })
             .collect();
         assert_eq!(with_site.len(), 1);
-        assert_eq!(with_site[0].param("site"), Some("bcf.example.com"));
+        assert_eq!(with_site[0].param("site"), Some(Some("bcf.example.com")));
     }
 
     #[test]
@@ -420,7 +399,7 @@ mod tests {
             .find(|e| e.purpose() == Some("emergency-CallId"))
             .unwrap();
         assert!(call_id
-            .data
+            .uri()
             .contains("callid"));
 
         let incident = info
@@ -429,7 +408,7 @@ mod tests {
             .find(|e| e.purpose() == Some("emergency-IncidentId"))
             .unwrap();
         assert!(incident
-            .data
+            .uri()
             .contains("incidentid"));
     }
 
@@ -461,8 +440,14 @@ mod tests {
     #[test]
     fn metadata_param_lookup() {
         let info = UriInfo::parse(SAMPLE_WITH_SITE).unwrap();
-        assert_eq!(info.entries()[0].param("site"), Some("bcf.example.com"));
-        assert_eq!(info.entries()[0].param("purpose"), Some("emergency-CallId"));
+        assert_eq!(
+            info.entries()[0].param("site"),
+            Some(Some("bcf.example.com"))
+        );
+        assert_eq!(
+            info.entries()[0].param("purpose"),
+            Some(Some("emergency-CallId"))
+        );
         assert!(info.entries()[1]
             .param("site")
             .is_none());
@@ -524,7 +509,7 @@ mod tests {
     #[test]
     fn semicolon_inside_brackets_stays_in_data() {
         let entry = parse_entry("<sip:a@example.com;lr>;purpose=icon").unwrap();
-        assert_eq!(entry.data, "sip:a@example.com;lr");
+        assert_eq!(entry.uri(), "sip:a@example.com;lr");
         assert_eq!(entry.purpose(), Some("icon"));
         assert_eq!(entry.to_string(), "<sip:a@example.com;lr>;purpose=icon");
     }
@@ -532,13 +517,12 @@ mod tests {
     #[test]
     fn quoted_param_keeps_semicolon_and_quotes() {
         let entry = parse_entry(r#"<https://example.com/a>;note="x;y";Purpose=info"#).unwrap();
-        assert_eq!(entry.data, "https://example.com/a");
+        assert_eq!(entry.uri(), "https://example.com/a");
         assert_eq!(
-            entry.metadata,
-            vec![
-                ("note".to_string(), r#""x;y""#.to_string()),
-                ("purpose".to_string(), "info".to_string()),
-            ]
+            entry
+                .params()
+                .collect::<Vec<_>>(),
+            vec![("note", Some(r#""x;y""#)), ("purpose", Some("info"))]
         );
         assert_eq!(
             entry.to_string(),
@@ -550,26 +534,25 @@ mod tests {
     fn sws_around_params() {
         let entry = parse_entry("<urn:example:1> ; purpose = icon ; flag").unwrap();
         assert_eq!(
-            entry.metadata,
-            vec![
-                ("purpose".to_string(), "icon".to_string()),
-                ("flag".to_string(), String::new()),
-            ]
+            entry
+                .params()
+                .collect::<Vec<_>>(),
+            vec![("purpose", Some("icon")), ("flag", None)]
         );
     }
 
     #[test]
     fn unbracketed_and_trailing_junk_keep_fallback() {
         let entry = parse_entry("urn:example:1;purpose=icon").unwrap();
-        assert_eq!(entry.data, "urn:example:1");
+        assert_eq!(entry.uri(), "urn:example:1");
         assert_eq!(entry.purpose(), Some("icon"));
 
         let entry = parse_entry("<urn:example:1>junk;purpose=icon").unwrap();
-        assert_eq!(entry.data, "urn:example:1>junk");
+        assert_eq!(entry.uri(), "urn:example:1>junk");
         assert_eq!(entry.purpose(), Some("icon"));
 
         let entry = parse_entry("<urn:example:1;purpose=icon").unwrap();
-        assert_eq!(entry.data, "urn:example:1");
+        assert_eq!(entry.uri(), "urn:example:1");
         assert_eq!(entry.purpose(), Some("icon"));
     }
 

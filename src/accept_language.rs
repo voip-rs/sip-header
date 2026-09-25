@@ -2,9 +2,7 @@
 
 use std::fmt;
 
-use crate::accept::{
-    all_blank, missing_entry, parse_entries, read_accept_params, write_accept_params,
-};
+use crate::accept::{all_blank, missing_entry, parse_entries};
 use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 
@@ -13,7 +11,7 @@ use crate::error::{FaultCode, ParseError};
 #[non_exhaustive]
 pub struct SipAcceptLanguageEntry {
     language: String,
-    params: Vec<(String, String)>,
+    params: Vec<(String, Option<String>)>,
 }
 
 impl SipAcceptLanguageEntry {
@@ -22,29 +20,27 @@ impl SipAcceptLanguageEntry {
         &self.language
     }
 
-    /// All parameters as `(key, value)` pairs.
-    pub fn params(&self) -> &[(String, String)] {
+    /// All parameters as `(key, value)` pairs; keys lowercased, `None` for a flag.
+    pub fn params(&self) -> &[(String, Option<String>)] {
         &self.params
     }
 
-    /// Look up a parameter by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<&str> {
-        self.params
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.as_str())
+    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
+    pub fn param(&self, key: &str) -> Option<Option<&str>> {
+        crate::find_param(&self.params, key)
     }
 
     /// The `q` quality value, if present.
     pub fn q(&self) -> Option<&str> {
         self.param("q")
+            .flatten()
     }
 }
 
 impl fmt::Display for SipAcceptLanguageEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.language)?;
-        write_accept_params(f, &self.params)
+        crate::write_params(f, &self.params)
     }
 }
 
@@ -69,7 +65,7 @@ fn parse_entry(entry: &str) -> Result<SipAcceptLanguageEntry, ParseError> {
 
     Ok(SipAcceptLanguageEntry {
         language: lang_part.to_ascii_lowercase(),
-        params: read_accept_params(params_part.unwrap_or("")),
+        params: crate::read_params(params_part.unwrap_or("")),
     })
 }
 
@@ -193,7 +189,8 @@ mod tests {
     fn flag_param_roundtrip() {
         let raw = "en;foo";
         let al = SipAcceptLanguage::parse(raw).unwrap();
-        assert_eq!(al.entries()[0].param("foo"), Some(""));
+        assert_eq!(al.entries()[0].param("foo"), Some(None));
+        assert_eq!(al.entries()[0].params(), &[("foo".to_string(), None)]);
         assert_eq!(al.to_string(), raw);
     }
 
@@ -201,7 +198,7 @@ mod tests {
     fn quoted_param_keeps_semicolon() {
         let raw = r#"en;x="a;b";q=0.5"#;
         let al = SipAcceptLanguage::parse(raw).unwrap();
-        assert_eq!(al.entries()[0].param("x"), Some(r#""a;b""#));
+        assert_eq!(al.entries()[0].param("X"), Some(Some(r#""a;b""#)));
         assert_eq!(al.entries()[0].q(), Some("0.5"));
         assert_eq!(al.to_string(), raw);
     }

@@ -3,9 +3,7 @@
 use std::fmt;
 
 use crate::error::ParseError;
-use crate::replaces::{
-    parse_dialog_id, parse_uri_header_dialog_id, validate_call_id, write_params, DialogId,
-};
+use crate::replaces::{parse_dialog_id, parse_uri_header_dialog_id, validate_call_id, DialogId};
 
 /// A parsed `Target-Dialog` header value (RFC 4538 §7).
 ///
@@ -105,11 +103,7 @@ impl SipTargetDialog {
 
     /// Returns a specific generic parameter by key (case-insensitive).
     pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        let key_lower = key.to_ascii_lowercase();
-        self.params
-            .iter()
-            .find(|(k, _)| k == &key_lower)
-            .map(|(_, v)| v.as_deref())
+        crate::find_param(&self.params, key)
     }
 
     fn wire_form(&self) -> Result<String, fmt::Error> {
@@ -117,7 +111,7 @@ impl SipTargetDialog {
             "{};local-tag={};remote-tag={}",
             self.call_id, self.local_tag, self.remote_tag
         );
-        write_params(&mut s, &self.params)?;
+        crate::write_params(&mut s, &self.params)?;
         Ok(s)
     }
 }

@@ -51,11 +51,7 @@ impl SipViaEntry {
 
     /// Returns a specific parameter value by key (case-insensitive).
     pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        let key_lower = key.to_ascii_lowercase();
-        self.params
-            .iter()
-            .find(|(k, _)| k == &key_lower)
-            .map(|(_, v)| v.as_deref())
+        crate::find_param(&self.params, key)
     }
 
     /// Returns the `branch` parameter value, if present.
@@ -124,17 +120,7 @@ impl SipViaEntry {
                     }),
             })
             .transpose()?;
-        let params: Vec<(String, Option<String>)> = raw_params
-            .into_iter()
-            .map(|p| {
-                (
-                    p.key
-                        .to_ascii_lowercase(),
-                    p.value
-                        .map(str::to_string),
-                )
-            })
-            .collect();
+        let params = crate::stored_params(raw_params);
 
         Ok(Self {
             protocol_name,
@@ -221,11 +207,7 @@ impl fmt::Display for SipViaEntry {
             write!(f, ":{}", port)?;
         }
 
-        for (key, value) in &self.params {
-            crate::write_param(f, key, value.as_deref(), false)?;
-        }
-
-        Ok(())
+        crate::write_params(f, &self.params)
     }
 }
 

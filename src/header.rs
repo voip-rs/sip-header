@@ -1190,7 +1190,7 @@ mod tests {
             .unwrap();
         assert_eq!(ai.len(), 1);
         assert!(ai.entries()[0]
-            .data
+            .uri()
             .contains("moo.wav"));
     }
 
