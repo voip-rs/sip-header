@@ -558,11 +558,10 @@ struct Redacted<'a> {
 
 impl fmt::Display for Redacted<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Redaction exposes its user mask only through its builder and PartialEq.
-        let shows_user = self.how
-            == self
-                .how
-                .user(sip_uri::UserMask::Visible);
+        let shows_user = self
+            .how
+            .user_mask()
+            == sip_uri::UserMask::Visible;
         let name = self
             .addr
             .shown_display_name()
