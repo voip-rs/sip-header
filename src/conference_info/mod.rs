@@ -43,7 +43,7 @@ pub use endpoint::{
     CallInfo, DisconnectionMethod, Endpoint, EndpointStatus, JoiningMethod,
     ParseDisconnectionMethodError, ParseEndpointStatusError, ParseJoiningMethodError, SipDialogId,
 };
-pub use error::ConferenceInfoError;
+pub use error::{ConferenceInfoError, ConferenceInfoErrorKind};
 pub use media::{Media, MediaStatus, ParseMediaStatusError};
 pub use types::{
     AvailableMedia, ConferenceDescription, ConferenceState, HostInfo, MediaDescription,
@@ -183,13 +183,15 @@ impl ConferenceInfo {
     #[cfg(feature = "conference-info")]
     pub fn from_xml(xml: &str) -> Result<Self, ConferenceInfoError> {
         let normalized = normalize::strip_namespace_prefixes(xml)?;
-        quick_xml::de::from_str(&normalized).map_err(|e| ConferenceInfoError::Xml(e.to_string()))
+        quick_xml::de::from_str(&normalized)
+            .map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::Deserialize, e))
     }
 
     /// Serialize to XML (without namespace prefix).
     #[cfg(feature = "conference-info")]
     pub fn to_xml(&self) -> Result<String, ConferenceInfoError> {
-        quick_xml::se::to_string(self).map_err(|e| ConferenceInfoError::Xml(e.to_string()))
+        quick_xml::se::to_string(self)
+            .map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::Serialize, e))
     }
 }
 

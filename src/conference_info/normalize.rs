@@ -13,7 +13,7 @@ use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::reader::NsReader;
 use quick_xml::Writer;
 
-use super::error::ConferenceInfoError;
+use super::error::{ConferenceInfoError, ConferenceInfoErrorKind};
 
 const CONFERENCE_INFO_NS: &[u8] = b"urn:ietf:params:xml:ns:conference-info";
 
@@ -27,7 +27,7 @@ pub(super) fn strip_namespace_prefixes(xml: &str) -> Result<String, ConferenceIn
     loop {
         let (ns, event) = reader
             .read_resolved_event()
-            .map_err(xml_err)?;
+            .map_err(read_err)?;
         let bound = match ns {
             ResolveResult::Bound(Namespace(n)) => Some(n.to_vec()),
             ResolveResult::Unbound | ResolveResult::Unknown(_) => None,
@@ -40,37 +40,38 @@ pub(super) fn strip_namespace_prefixes(xml: &str) -> Result<String, ConferenceIn
             Event::Start(e) if foreign => {
                 reader
                     .read_to_end(e.name())
-                    .map_err(xml_err)?;
+                    .map_err(read_err)?;
             }
             Event::Empty(_) if foreign => {}
             Event::Start(e) => {
                 root_ns.get_or_insert(bound);
                 writer
                     .write_event(Event::Start(strip_start_element(&e)))
-                    .map_err(xml_err)?;
+                    .map_err(write_err)?;
             }
             Event::Empty(e) => {
                 root_ns.get_or_insert(bound);
                 writer
                     .write_event(Event::Empty(strip_start_element(&e)))
-                    .map_err(xml_err)?;
+                    .map_err(write_err)?;
             }
             Event::End(e) => {
                 let local = local_name_owned(e.name());
                 writer
                     .write_event(Event::End(BytesEnd::new(local)))
-                    .map_err(xml_err)?;
+                    .map_err(write_err)?;
             }
             Event::Eof => break,
             other => {
                 writer
                     .write_event(other)
-                    .map_err(xml_err)?;
+                    .map_err(write_err)?;
             }
         }
     }
 
-    String::from_utf8(writer.into_inner()).map_err(|e| ConferenceInfoError::Xml(e.to_string()))
+    String::from_utf8(writer.into_inner())
+        .map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::NotUtf8, e))
 }
 
 /// Strip the namespace prefix from an element name and filter out xmlns attributes.
@@ -119,8 +120,12 @@ fn is_xmlns_attr(attr: &Attribute<'_>) -> bool {
     key == "xmlns" || key.starts_with("xmlns:")
 }
 
-fn xml_err(e: impl std::fmt::Display) -> ConferenceInfoError {
-    ConferenceInfoError::Xml(e.to_string())
+fn read_err(e: quick_xml::Error) -> ConferenceInfoError {
+    ConferenceInfoError::new(ConferenceInfoErrorKind::Read, e)
+}
+
+fn write_err(e: std::io::Error) -> ConferenceInfoError {
+    ConferenceInfoError::new(ConferenceInfoErrorKind::Normalize, e)
 }
 
 #[cfg(test)]
