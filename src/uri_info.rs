@@ -127,6 +127,36 @@ list_type!(UriInfo, UriInfoEntry, sep: ",", entry: "<uri>;param=value");
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::WarningCode;
+    use sip_uri::WarningKind;
+
+    fn parse_entry(raw: &str) -> Option<UriInfoEntry> {
+        read_entry(raw, &mut Vec::new())
+    }
+
+    type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    /// Lenient value and warnings, after checking strict parsing refuses.
+    fn lenient(raw: &str) -> (UriInfo, Vec<Seen>) {
+        assert!(matches!(
+            UriInfo::parse_strict(raw),
+            Err(ParseError::NonConformant(_))
+        ));
+        let parsed = UriInfo::parse_with_warnings(raw).unwrap();
+        assert_eq!(UriInfo::parse(raw).as_ref(), Ok(&parsed.value));
+        let seen = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect();
+        (parsed.value, seen)
+    }
 
     // -- UriInfoEntry tests --
 
@@ -494,14 +524,105 @@ mod tests {
     }
 
     #[test]
-    fn empty_brackets_rejected() {
-        let missing = Err(ParseError::malformed(
-            Field::Addr,
-            FaultCode::Missing,
-            Some(1),
-        ));
-        assert_eq!(parse_entry(" <>"), missing);
-        assert_eq!(parse_entry(" <>;purpose=icon"), missing);
+    fn empty_brackets_yield_no_entry() {
+        assert_eq!(parse_entry(" <>"), None);
+        assert_eq!(parse_entry(" <>;purpose=icon"), None);
+    }
+
+    #[test]
+    fn unbracketed_entry_kept_with_missing_brackets() {
+        for second in [
+            " urn:example:1;purpose=icon",
+            " <urn:example:1;purpose=icon",
+            " <urn:example:1>junk;purpose=icon",
+        ] {
+            let (info, seen) = lenient(&format!("<urn:example:0>,{second}"));
+            assert_eq!(info.len(), 2);
+            assert_eq!(info.entries()[1].purpose(), Some("icon"));
+            assert_eq!(
+                seen,
+                vec![(
+                    Field::Entry,
+                    WarningCode::MissingBrackets,
+                    WarningKind::Recovered,
+                    Some(1),
+                    Some(1)
+                )],
+                "{second}"
+            );
+        }
+    }
+
+    #[test]
+    fn entry_without_value_is_skipped_with_warning() {
+        for second in [" <>;purpose=icon", " ;purpose=icon"] {
+            let (info, seen) = lenient(&format!("<urn:example:0>,{second}"));
+            assert_eq!(info.len(), 1);
+            let skipped = (
+                Field::Entry,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(1),
+                Some(1),
+            );
+            assert_eq!(seen.last(), Some(&skipped), "{second}");
+        }
+    }
+
+    #[test]
+    fn blank_entries_dropped_with_empty_entry() {
+        let empty = |entry| {
+            (
+                Field::Entry,
+                WarningCode::EmptyEntry,
+                WarningKind::Lost,
+                None,
+                Some(entry),
+            )
+        };
+        let (info, seen) = lenient(",<urn:example:0>,,<urn:example:1>, ");
+        assert_eq!(info.len(), 2);
+        assert_eq!(seen, vec![empty(0), empty(2), empty(4)]);
+    }
+
+    #[test]
+    fn nothing_valued_is_empty_error() {
+        assert_eq!(UriInfo::parse(",<>, ;x"), Err(ParseError::Empty));
+        assert_eq!(
+            UriInfo::from_entries_with_warnings(["<>"]),
+            Err(ParseError::Empty)
+        );
+    }
+
+    #[test]
+    fn param_quote_breaches_are_warned() {
+        let raw = r#"<urn:example:1>;note="a;purpose=icon"#;
+        let (info, seen) = lenient(raw);
+        assert_eq!(info.entries()[0].param("note"), Some(Some(r#""a"#)));
+        assert_eq!(info.entries()[0].purpose(), Some("icon"));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
+                Some(0)
+            )]
+        );
+
+        let raw = r#"<urn:example:1>;note="a\";purpose=icon"#;
+        let (_, seen) = lenient(raw);
+        assert_eq!(
+            seen[1],
+            (
+                Field::Param,
+                WarningCode::TrailingBackslash,
+                WarningKind::Lost,
+                raw.find('\\'),
+                Some(0)
+            )
+        );
     }
 
     #[test]
