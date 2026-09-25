@@ -107,7 +107,12 @@ pub struct ParseMediaStatusError(pub String);
 
 impl fmt::Display for ParseMediaStatusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid media status: {:?}", self.0)
+        write!(
+            f,
+            "invalid media status ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 

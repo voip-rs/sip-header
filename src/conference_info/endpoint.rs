@@ -201,7 +201,12 @@ pub struct ParseEndpointStatusError(pub String);
 
 impl fmt::Display for ParseEndpointStatusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid endpoint status: {:?}", self.0)
+        write!(
+            f,
+            "invalid endpoint status ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 
@@ -258,7 +263,12 @@ pub struct ParseJoiningMethodError(pub String);
 
 impl fmt::Display for ParseJoiningMethodError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid joining method: {:?}", self.0)
+        write!(
+            f,
+            "invalid joining method ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 
@@ -313,7 +323,12 @@ pub struct ParseDisconnectionMethodError(pub String);
 
 impl fmt::Display for ParseDisconnectionMethodError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid disconnection method: {:?}", self.0)
+        write!(
+            f,
+            "invalid disconnection method ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 

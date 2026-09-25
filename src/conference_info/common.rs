@@ -37,7 +37,12 @@ pub struct ParseStateError(pub String);
 
 impl fmt::Display for ParseStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid conference-info state: {:?}", self.0)
+        write!(
+            f,
+            "invalid conference-info state ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 
