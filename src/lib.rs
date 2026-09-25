@@ -436,26 +436,73 @@ mod tests {
         );
     }
 
+    fn unquoted(value: &str, quoted: bool, trailing_backslash: bool) -> Option<Unquoted> {
+        Some(Unquoted {
+            value: value.to_string(),
+            quoted,
+            trailing_backslash,
+        })
+    }
+
     #[test]
     fn params_escaped_quote_inside_value() {
         let p = parse_params(r#";t="say \"hi;\"";x=1"#);
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].value, Some(r#""say \"hi;\"""#));
-        assert_eq!(p[0].unquoted(), Some((r#"say "hi;""#.to_string(), true)));
+        assert_eq!(p[0].unquoted(), unquoted(r#"say "hi;""#, true, false));
         assert_eq!(p[1].value, Some("1"));
+        assert!(!p[0].unterminated);
     }
 
     #[test]
     fn params_empty_quoted_value() {
         let p = parse_params(r#";a="""#);
-        assert_eq!(p[0].unquoted(), Some((String::new(), true)));
+        assert_eq!(p[0].unquoted(), unquoted("", true, false));
     }
 
     #[test]
     fn params_unquoted_token_value() {
         let p = parse_params(";a=b");
-        assert_eq!(p[0].unquoted(), Some(("b".to_string(), false)));
+        assert_eq!(p[0].unquoted(), unquoted("b", false, false));
         assert_eq!(parse_params(";lr")[0].unquoted(), None);
+    }
+
+    #[test]
+    fn params_record_unterminated_quote() {
+        let p = parse_params(r#";x="a;to-tag=1;y=b"#);
+        assert_eq!(
+            p.iter()
+                .map(|p| p.unterminated)
+                .collect::<Vec<_>>(),
+            vec![true, false, false]
+        );
+        assert!(!parse_params(";lr")[0].unterminated);
+    }
+
+    #[test]
+    fn params_escaped_closing_quote_leaves_trailing_backslash() {
+        let p = parse_params(r#";x="a\";y=1"#);
+        assert_eq!(p[0].value, Some(r#""a\""#));
+        assert!(p[0].unterminated);
+        assert_eq!(p[0].unquoted(), unquoted("a", true, true));
+        assert_eq!(p[1].value, Some("1"));
+    }
+
+    #[test]
+    fn unescape_reports_lone_trailing_backslash() {
+        assert_eq!(
+            unescape_quoted_pair_checked(r"ab\"),
+            ("ab".to_string(), true)
+        );
+        assert_eq!(
+            unescape_quoted_pair_checked(r"a\\"),
+            (r"a\".to_string(), false)
+        );
+        assert_eq!(
+            unescape_quoted_pair_checked(r#"a\"b"#),
+            (r#"a"b"#.to_string(), false)
+        );
+        assert_eq!(unescape_quoted_pair(r"ab\"), "ab");
     }
 
     #[test]

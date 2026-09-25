@@ -268,6 +268,67 @@ mod param_tests {
     }
 
     #[test]
+    fn unterminated_quote_is_warned() {
+        use crate::diagnostic::{Field, WarningCode};
+
+        let entry = r#"digest;x="a;q=0.1"#;
+        let parsed = SipSecurity::parse_with_warnings(&format!("tls, {entry}")).unwrap();
+        let mech = &parsed
+            .value
+            .entries()[1];
+        assert_eq!(mech.param("x"), Some(Some(r#""a"#)));
+        assert_eq!(mech.q(), Some("0.1"));
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.entry, w.position),
+            (
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                Some(1),
+                Some(
+                    1 + entry
+                        .find('"')
+                        .unwrap()
+                )
+            )
+        );
+        assert!(SipSecurity::parse_strict(entry).is_err());
+    }
+
+    #[test]
+    fn trailing_backslash_is_warned() {
+        use crate::diagnostic::WarningCode;
+
+        let entry = r#"digest;x="a\";q=0.1"#;
+        let parsed = SipSecurity::parse_with_warnings(entry).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .entries()[0]
+                .param("x"),
+            Some(Some("a"))
+        );
+        let codes: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.code, w.position))
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                (WarningCode::UnterminatedQuote, entry.find('"')),
+                (WarningCode::TrailingBackslash, entry.find('\\')),
+            ]
+        );
+    }
+
+    #[test]
+    fn conformant_quoted_param_has_no_warning() {
+        let parsed = SipSecurity::parse_with_warnings(r#"digest;x="a\\";q=0.1"#).unwrap();
+        assert!(!parsed.has_warnings());
+    }
+
+    #[test]
     fn error_display_omits_input() {
         let err = SipSecurity::parse(";secret-value").unwrap_err();
         assert!(!err
