@@ -1331,6 +1331,115 @@ mod tests {
         assert_eq!(params[2], ("expires", Some("60")));
     }
 
+    fn warning_of(input: &str) -> (Field, WarningCode, sip_uri::WarningKind, Option<usize>) {
+        let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
+        let w = parsed.warnings[0];
+        assert!(matches!(
+            SipHeaderAddr::parse_strict(input),
+            Err(ParseError::NonConformant(first)) if first == w
+        ));
+        (w.field, w.code, w.kind, w.position)
+    }
+
+    #[test]
+    fn addr_spec_as_display_name_is_invalid_token() {
+        let input = "sip:a@example.com <sip:c@example.com>";
+        let addr: SipHeaderAddr = input
+            .parse()
+            .unwrap();
+        assert_eq!(addr.display_name(), Some("sip:a@example.com"));
+        assert_eq!(
+            warning_of(input),
+            (
+                Field::DisplayName,
+                WarningCode::InvalidToken,
+                sip_uri::WarningKind::Recovered,
+                input.find(':')
+            )
+        );
+        let input = "  José <sip:c@example.com>";
+        assert_eq!(warning_of(input).3, input.find('é'));
+    }
+
+    #[test]
+    fn token_lws_display_name_has_no_warning() {
+        let parsed =
+            SipHeaderAddr::parse_with_warnings("Alice  Q.\tSmith <sip:a@example.com>").unwrap();
+        assert!(parsed
+            .warnings
+            .is_empty());
+    }
+
+    #[test]
+    fn quoted_display_name_cannot_end_in_lone_backslash() {
+        assert_eq!(
+            r#""a\" <sip:a@example.com>"#.parse::<SipHeaderAddr>(),
+            Err(ParseError::malformed(
+                Field::DisplayName,
+                FaultCode::Unterminated,
+                Some(0)
+            ))
+        );
+        let parsed = SipHeaderAddr::parse_with_warnings(r#""a\\" <sip:a@example.com>"#).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .display_name(),
+            Some("a\\")
+        );
+        assert!(parsed
+            .warnings
+            .is_empty());
+    }
+
+    #[test]
+    fn param_unterminated_quote_warns_and_stays_raw() {
+        let input = r#"<sip:a@example.com>;x="p;tag=t"#;
+        let addr: SipHeaderAddr = input
+            .parse()
+            .unwrap();
+        assert_eq!(addr.param_raw("x"), Some(Some(r#""p"#)));
+        assert_eq!(addr.tag(), Some("t"));
+        assert_eq!(
+            warning_of(input),
+            (
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                sip_uri::WarningKind::Recovered,
+                input.find('"')
+            )
+        );
+    }
+
+    #[test]
+    fn param_trailing_backslash_warns_and_stays_raw() {
+        let input = r#"<sip:a@example.com>;x="a\";tag=t"#;
+        let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .param_raw("x"),
+            Some(Some(r#""a\""#))
+        );
+        assert_eq!(
+            parsed
+                .value
+                .tag(),
+            Some("t")
+        );
+        let w = parsed.warnings[1];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position),
+            (
+                Field::Param,
+                WarningCode::TrailingBackslash,
+                sip_uri::WarningKind::Lost,
+                input.find('\\')
+            )
+        );
+        assert!(SipHeaderAddr::parse_strict(input).is_err());
+    }
+
     #[test]
     fn redacted_masks_display_name_with_user() {
         use sip_uri::{Redaction, UserMask};
