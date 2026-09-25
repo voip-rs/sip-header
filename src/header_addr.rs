@@ -1266,4 +1266,50 @@ mod tests {
         assert_eq!(params[1], ("lr", None));
         assert_eq!(params[2], ("expires", Some("60")));
     }
+
+    #[test]
+    fn redacted_masks_display_name_with_user() {
+        use sip_uri::{Redaction, UserMask};
+
+        let addr: SipHeaderAddr = r#""Alice Smith" <sip:+15551234567@example.com>;tag=abc"#
+            .parse()
+            .unwrap();
+        assert_eq!(
+            addr.redacted(Redaction::default())
+                .to_string(),
+            "*** <sip:***@example.com>;tag=abc"
+        );
+        assert_eq!(
+            addr.redacted(Redaction::default().user(UserMask::KeepLast(4)))
+                .to_string(),
+            "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
+        );
+        assert_eq!(
+            addr.redacted(Redaction::default().user(UserMask::Visible))
+                .to_string(),
+            addr.to_string()
+        );
+    }
+
+    #[test]
+    fn redacted_without_display_name_and_tel() {
+        use sip_uri::Redaction;
+
+        let addr: SipHeaderAddr = "<sip:alice@example.com;transport=tcp>;expires=60"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            addr.redacted(Redaction::default())
+                .to_string(),
+            "<sip:***@example.com;transport=tcp>;expires=60"
+        );
+        let tel: SipHeaderAddr = "<tel:+15551234567>;tag=t"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            tel.redacted(Redaction::default())
+                .to_string(),
+            "<tel:***>;tag=t"
+        );
+    }
 }
