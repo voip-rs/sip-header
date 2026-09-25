@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::CommaList;
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,109 +101,35 @@ pub(crate) fn missing_entry() -> ParseError {
     ParseError::malformed(Field::Entry, FaultCode::Missing, None)
 }
 
-/// Parse each entry, attributing a failure to its index; shared by the
-/// Accept-* headers.
-pub(crate) fn parse_entries<'a, T>(
-    entries: Vec<&'a str>,
-    parse: impl Fn(&'a str) -> Result<T, ParseError>,
-) -> Result<Vec<T>, ParseError> {
-    entries
-        .into_iter()
-        .enumerate()
-        .map(|(i, e)| parse(e).map_err(|err| err.in_entry(i)))
-        .collect()
-}
-
-/// True when every entry is blank: the empty list `[ accept-range *(COMMA
-/// accept-range) ]` allows (RFC 3261 §25.1), shared by the Accept-* headers.
-pub(crate) fn all_blank(entries: &[&str]) -> bool {
-    entries
-        .iter()
-        .all(|e| {
-            e.trim()
-                .is_empty()
-        })
-}
-
 /// Parsed SIP Accept header value.
+///
+/// An empty value, or entries that are all blank, is the empty list
+/// (RFC 3261 §25.1); a blank entry beside a real one is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SipAccept(Vec<SipAcceptEntry>);
 
-impl SipAccept {
-    /// Parse a comma-separated Accept header value.
-    ///
-    /// An empty or whitespace-only value is the empty list (RFC 3261 §25.1).
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for SipAccept {
+    type Entry = SipAcceptEntry;
+    const BLANK_ENTRIES_ARE_EMPTY: bool = true;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipAcceptEntry>, ParseError> {
+        parse_accept_entry(entry).map(Some)
     }
 
-    /// Build from entries a transport already split; each is one `accept-range`.
-    ///
-    /// No entries, or only blank ones, is the empty list; a blank entry beside
-    /// a real one is an error. Error positions are relative to the entry.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries: Vec<&str> = entries
-            .into_iter()
-            .collect();
-        if all_blank(&entries) {
-            return Ok(Self(Vec::new()));
-        }
-        parse_entries(entries, parse_accept_entry).map(Self)
+    fn from_parsed(entries: Vec<SipAcceptEntry>) -> Result<Self, ParseError> {
+        Ok(Self(entries))
     }
 
-    /// The parsed entries as a slice.
-    pub fn entries(&self) -> &[SipAcceptEntry] {
-        &self.0
-    }
-
-    /// Consume self and return entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<SipAcceptEntry> {
-        self.0
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no entries.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
+    fn blank() -> Result<Self, ParseError> {
+        Ok(Self(Vec::new()))
     }
 }
 
-impl fmt::Display for SipAccept {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ", ")
-    }
-}
-
-impl_from_str_via_parse!(SipAccept, ParseError);
-
-impl<'a> IntoIterator for &'a SipAccept {
-    type Item = &'a SipAcceptEntry;
-    type IntoIter = std::slice::Iter<'a, SipAcceptEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for SipAccept {
-    type Item = SipAcceptEntry;
-    type IntoIter = std::vec::IntoIter<SipAcceptEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
-    }
-}
+list_type!(SipAccept, SipAcceptEntry, sep: ", ", entry: "accept-range");
 
 #[cfg(test)]
 mod tests {

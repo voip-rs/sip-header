@@ -5,8 +5,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::{non_empty, CommaList};
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +50,8 @@ impl fmt::Display for UriInfoEntry {
 
 /// Parsed `<absoluteURI> *(SEMI generic-param)` header value.
 ///
-/// Used by Call-Info, Alert-Info, and Error-Info. Contains one or more entries.
+/// Used by Call-Info, Alert-Info, and Error-Info. Contains one or more entries;
+/// entries that yield no URI are skipped, and `Err(Empty)` means none did.
 ///
 /// ```
 /// use sip_header::UriInfo;
@@ -105,87 +107,22 @@ fn parse_entry(entry: &str) -> Result<UriInfoEntry, ParseError> {
     })
 }
 
-use crate::split_comma_entries;
+impl CommaList for UriInfo {
+    type Entry = UriInfoEntry;
 
-impl UriInfo {
-    /// Parse a comma-separated `<absoluteURI> *(SEMI generic-param)` value.
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Self::from_entries(split_comma_entries(raw))
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<UriInfoEntry>, ParseError> {
+        Ok(parse_entry(entry).ok())
     }
 
-    /// Build from pre-split header entries.
-    ///
-    /// Each entry should be a single `<uri>;param=value` string. Use this
-    /// when entries have already been split by an external mechanism (e.g.
-    /// a transport-specific array encoding).
-    ///
-    /// Entries that fail to parse are skipped; returns `Err(Empty)` only
-    /// when none parse.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let parsed: Vec<_> = entries
-            .into_iter()
-            .filter_map(|raw| parse_entry(raw).ok())
-            .collect();
-        if parsed.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Ok(Self(parsed))
-    }
-
-    /// The parsed entries as a slice.
-    pub fn entries(&self) -> &[UriInfoEntry] {
-        &self.0
-    }
-
-    /// Consume self and return the entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<UriInfoEntry> {
-        self.0
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no entries.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
+    fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
+        non_empty(entries).map(Self)
     }
 }
 
-impl fmt::Display for UriInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ",")
-    }
-}
-
-impl<'a> IntoIterator for &'a UriInfo {
-    type Item = &'a UriInfoEntry;
-    type IntoIter = std::slice::Iter<'a, UriInfoEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for UriInfo {
-    type Item = UriInfoEntry;
-    type IntoIter = std::vec::IntoIter<UriInfoEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
-    }
-}
+list_type!(UriInfo, UriInfoEntry, sep: ",", entry: "<uri>;param=value");
 
 #[cfg(test)]
 mod tests {

@@ -30,6 +30,8 @@
 
 #[macro_use]
 mod macros;
+#[macro_use]
+mod list;
 
 pub use sip_uri;
 
@@ -61,7 +63,7 @@ pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};
 pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
 pub use auth::SipAuthValue;
 pub use call_id::SipCallId;
-pub use contact::ContactValue;
+pub use contact::{ContactList, ContactValue};
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use error::{Fault, FaultCode, ParseError};
 pub use geolocation::{SipGeolocation, SipGeolocationRef};

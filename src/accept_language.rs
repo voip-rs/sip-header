@@ -2,9 +2,10 @@
 
 use std::fmt;
 
-use crate::accept::{all_blank, missing_entry, parse_entries};
-use crate::diagnostic::Field;
+use crate::accept::missing_entry;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::CommaList;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,84 +71,34 @@ fn parse_entry(entry: &str) -> Result<SipAcceptLanguageEntry, ParseError> {
 }
 
 /// Parsed SIP Accept-Language header value.
+///
+/// An empty value, or entries that are all blank, is the empty list
+/// (RFC 3261 §25.1); a blank entry beside a real one is an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SipAcceptLanguage(Vec<SipAcceptLanguageEntry>);
 
-impl SipAcceptLanguage {
-    /// Parse a comma-separated Accept-Language header value.
-    ///
-    /// An empty or whitespace-only value is the empty list (RFC 3261 §25.1).
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for SipAcceptLanguage {
+    type Entry = SipAcceptLanguageEntry;
+    const BLANK_ENTRIES_ARE_EMPTY: bool = true;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipAcceptLanguageEntry>, ParseError> {
+        parse_entry(entry).map(Some)
     }
 
-    /// Build from entries a transport already split; each is one `language`.
-    ///
-    /// No entries, or only blank ones, is the empty list; a blank entry beside
-    /// a real one is an error. Error positions are relative to the entry.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries: Vec<&str> = entries
-            .into_iter()
-            .collect();
-        if all_blank(&entries) {
-            return Ok(Self(Vec::new()));
-        }
-        parse_entries(entries, parse_entry).map(Self)
+    fn from_parsed(entries: Vec<SipAcceptLanguageEntry>) -> Result<Self, ParseError> {
+        Ok(Self(entries))
     }
 
-    /// The parsed entries as a slice.
-    pub fn entries(&self) -> &[SipAcceptLanguageEntry] {
-        &self.0
-    }
-
-    /// Consume self and return entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<SipAcceptLanguageEntry> {
-        self.0
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no entries.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
+    fn blank() -> Result<Self, ParseError> {
+        Ok(Self(Vec::new()))
     }
 }
 
-impl fmt::Display for SipAcceptLanguage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ", ")
-    }
-}
-
-impl_from_str_via_parse!(SipAcceptLanguage, ParseError);
-
-impl<'a> IntoIterator for &'a SipAcceptLanguage {
-    type Item = &'a SipAcceptLanguageEntry;
-    type IntoIter = std::slice::Iter<'a, SipAcceptLanguageEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for SipAcceptLanguage {
-    type Item = SipAcceptLanguageEntry;
-    type IntoIter = std::vec::IntoIter<SipAcceptLanguageEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
-    }
-}
+list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", entry: "language");
 
 #[cfg(test)]
 mod tests {

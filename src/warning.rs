@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::{non_empty, CommaList};
 
 /// A single Warning header entry.
 ///
@@ -135,87 +136,24 @@ fn parse_quoted_string(entry: &str, s: &str) -> Result<String, ParseError> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct SipWarning {
-    entries: Vec<SipWarningEntry>,
-}
+pub struct SipWarning(Vec<SipWarningEntry>);
 
-impl SipWarning {
-    /// Parse a Warning header value.
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for SipWarning {
+    type Entry = SipWarningEntry;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipWarningEntry>, ParseError> {
+        SipWarningEntry::parse(entry).map(Some)
     }
 
-    /// Build from entries a transport already split; each is one `warning-value`.
-    ///
-    /// Error positions are relative to the entry, whose index the error carries.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries = entries
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| SipWarningEntry::parse(e).map_err(|err| err.in_entry(i)))
-            .collect::<Result<Vec<_>, _>>()?;
-        if entries.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Ok(SipWarning { entries })
-    }
-
-    /// All warning entries.
-    pub fn entries(&self) -> &[SipWarningEntry] {
-        &self.entries
-    }
-
-    /// Consume self and return entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<SipWarningEntry> {
-        self.entries
-    }
-
-    /// Number of warning entries.
-    pub fn len(&self) -> usize {
-        self.entries
-            .len()
-    }
-
-    /// Whether there are no warning entries.
-    pub fn is_empty(&self) -> bool {
-        self.entries
-            .is_empty()
+    fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {
+        non_empty(entries).map(Self)
     }
 }
 
-impl fmt::Display for SipWarning {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.entries, ", ")
-    }
-}
-
-impl_from_str_via_parse!(SipWarning, ParseError);
-
-impl IntoIterator for SipWarning {
-    type Item = SipWarningEntry;
-    type IntoIter = std::vec::IntoIter<SipWarningEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries
-            .into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a SipWarning {
-    type Item = &'a SipWarningEntry;
-    type IntoIter = std::slice::Iter<'a, SipWarningEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries
-            .iter()
-    }
-}
+list_type!(SipWarning, SipWarningEntry, sep: ", ", entry: "warning-value");
 
 #[cfg(test)]
 mod tests {

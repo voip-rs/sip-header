@@ -4,8 +4,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::{non_empty, CommaList};
 
 /// A parsed security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,83 +119,22 @@ fn parse_mechanism(entry: &str) -> Result<SipSecurityMechanism, ParseError> {
 #[non_exhaustive]
 pub struct SipSecurity(Vec<SipSecurityMechanism>);
 
-impl SipSecurity {
-    /// Parse a comma-separated security mechanism value.
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for SipSecurity {
+    type Entry = SipSecurityMechanism;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipSecurityMechanism>, ParseError> {
+        parse_mechanism(entry).map(Some)
     }
 
-    /// Build from entries a transport already split; each is one `sec-mechanism`.
-    ///
-    /// Error positions are relative to the entry, whose index the error carries.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries: Vec<_> = entries
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| parse_mechanism(e).map_err(|err| err.in_entry(i)))
-            .collect::<Result<_, _>>()?;
-        if entries.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Ok(Self(entries))
-    }
-
-    /// The parsed entries as a slice.
-    pub fn entries(&self) -> &[SipSecurityMechanism] {
-        &self.0
-    }
-
-    /// Consume self and return entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<SipSecurityMechanism> {
-        self.0
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no entries.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
+    fn from_parsed(entries: Vec<SipSecurityMechanism>) -> Result<Self, ParseError> {
+        non_empty(entries).map(Self)
     }
 }
 
-impl fmt::Display for SipSecurity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ", ")
-    }
-}
-
-impl_from_str_via_parse!(SipSecurity, ParseError);
-
-impl<'a> IntoIterator for &'a SipSecurity {
-    type Item = &'a SipSecurityMechanism;
-    type IntoIter = std::slice::Iter<'a, SipSecurityMechanism>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for SipSecurity {
-    type Item = SipSecurityMechanism;
-    type IntoIter = std::vec::IntoIter<SipSecurityMechanism>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
-    }
-}
+list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", entry: "sec-mechanism");
 
 #[cfg(test)]
 mod tests {

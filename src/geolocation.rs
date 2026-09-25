@@ -2,7 +2,9 @@
 
 use std::fmt;
 
+use crate::diagnostic::ParseWarning;
 use crate::error::ParseError;
+use crate::list::CommaList;
 
 /// A reference extracted from a SIP Geolocation header (RFC 6442).
 ///
@@ -55,6 +57,7 @@ fn parse_ref(entry: &str) -> Option<SipGeolocationRef> {
 ///
 /// Contains one or more `<uri>` references, comma-separated. Each reference
 /// is classified as either a `cid:` body-part reference or a dereference URL.
+/// Entries that are not a `<uri>` are skipped; only an empty value is an error.
 ///
 /// ```
 /// use sip_header::SipGeolocation;
@@ -69,21 +72,24 @@ fn parse_ref(entry: &str) -> Option<SipGeolocationRef> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipGeolocation(Vec<SipGeolocationRef>);
 
-impl SipGeolocation {
-    /// Parse a raw Geolocation header value into typed references.
-    ///
-    /// Entries that are not a `<uri>` are skipped; only an empty value is an
-    /// error.
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        if raw
-            .trim()
-            .is_empty()
-        {
-            return Err(ParseError::Empty);
-        }
-        Ok(Self::from_entries(crate::split_comma_entries(raw)))
+impl CommaList for SipGeolocation {
+    type Entry = SipGeolocationRef;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipGeolocationRef>, ParseError> {
+        Ok(parse_ref(entry))
     }
 
+    fn from_parsed(entries: Vec<SipGeolocationRef>) -> Result<Self, ParseError> {
+        Ok(Self(entries))
+    }
+}
+
+list_type!(SipGeolocation, SipGeolocationRef, sep: ", ", entry: "locationValue", infallible);
+
+impl SipGeolocation {
     /// Build from entries a transport already split; each is one
     /// `locationValue`. Entries that are not a `<uri>` are skipped, and
     /// geoloc-params after the `>` are dropped.
@@ -96,21 +102,9 @@ impl SipGeolocation {
         )
     }
 
-    /// The parsed references as a slice.
+    /// The parsed references as a slice; the same as [`entries`](Self::entries).
     pub fn refs(&self) -> &[SipGeolocationRef] {
         &self.0
-    }
-
-    /// Number of references.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no references.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
     }
 
     /// The first `cid:` reference, if any.
@@ -151,32 +145,6 @@ impl SipGeolocation {
                 SipGeolocationRef::Url(url) => Some(url.as_str()),
                 _ => None,
             })
-    }
-}
-
-impl fmt::Display for SipGeolocation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ", ")
-    }
-}
-
-impl<'a> IntoIterator for &'a SipGeolocation {
-    type Item = &'a SipGeolocationRef;
-    type IntoIter = std::slice::Iter<'a, SipGeolocationRef>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for SipGeolocation {
-    type Item = SipGeolocationRef;
-    type IntoIter = std::vec::IntoIter<SipGeolocationRef>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
     }
 }
 

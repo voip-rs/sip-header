@@ -5,9 +5,10 @@ use std::str::Utf8Error;
 
 use percent_encoding::percent_decode_str;
 
-use crate::diagnostic::Field;
-use crate::error::{FaultCode, ParseError};
-use crate::header_addr::SipHeaderAddr;
+use crate::diagnostic::ParseWarning;
+use crate::error::ParseError;
+use crate::header_addr::{parse_list_addr, SipHeaderAddr};
+use crate::list::{non_empty, CommaList};
 
 /// Parsed RFC 3326 Reason header value extracted from a History-Info URI.
 ///
@@ -158,97 +159,29 @@ impl fmt::Display for HistoryInfoEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 
-impl HistoryInfo {
-    /// Parse a standard comma-separated History-Info header value (RFC 7044).
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for HistoryInfo {
+    type Entry = HistoryInfoEntry;
+
+    fn parse_entry(
+        entry: &str,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Option<HistoryInfoEntry>, ParseError> {
+        let addr = parse_list_addr(entry, warnings)?;
+        Ok(Some(HistoryInfoEntry { addr }))
     }
 
-    /// Build from pre-split header entries.
-    ///
-    /// Each entry should be a single `<uri>;params` string. Use this
-    /// when entries have already been split by an external mechanism.
-    /// Error positions are relative to the entry, whose index the error carries.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries: Vec<_> = entries
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| parse_entry(e).map_err(|err| err.in_entry(i)))
-            .collect::<Result<_, _>>()?;
-        if entries.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Ok(Self(entries))
-    }
-
-    /// The parsed entries as a slice.
-    pub fn entries(&self) -> &[HistoryInfoEntry] {
-        &self.0
-    }
-
-    /// Consume self and return the entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<HistoryInfoEntry> {
-        self.0
-    }
-
-    /// Number of entries.
-    pub fn len(&self) -> usize {
-        self.0
-            .len()
-    }
-
-    /// Returns `true` if there are no entries.
-    pub fn is_empty(&self) -> bool {
-        self.0
-            .is_empty()
+    fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {
+        non_empty(entries).map(Self)
     }
 }
 
-fn parse_entry(raw: &str) -> Result<HistoryInfoEntry, ParseError> {
-    let addr: SipHeaderAddr = raw
-        .parse()
-        .map_err(|e| match e {
-            ParseError::Empty => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
-            other => other,
-        })?;
-    Ok(HistoryInfoEntry { addr })
-}
-
-impl fmt::Display for HistoryInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.0, ",")
-    }
-}
-
-impl<'a> IntoIterator for &'a HistoryInfo {
-    type Item = &'a HistoryInfoEntry;
-    type IntoIter = std::slice::Iter<'a, HistoryInfoEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .iter()
-    }
-}
-
-impl IntoIterator for HistoryInfo {
-    type Item = HistoryInfoEntry;
-    type IntoIter = std::vec::IntoIter<HistoryInfoEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0
-            .into_iter()
-    }
-}
+list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", entry: "hi-entry");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::Field;
+    use crate::error::FaultCode;
 
     const EXAMPLE_1: &str = "\
 <sip:user1@esrp.example.com?Reason=RouteAction%3Bcause%3D200%3Btext%3D%22Normal+Next+Hop%22>;index=1,\

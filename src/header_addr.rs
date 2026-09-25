@@ -8,6 +8,7 @@ use percent_encoding::percent_decode_str;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::list::CommaList;
 use crate::replaces::SipReplaces;
 
 /// Parsed SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
@@ -234,21 +235,10 @@ impl SipHeaderAddr {
     /// then parses each entry as a [`SipHeaderAddr`]. Returns an empty `Vec`
     /// for empty input. Fails on the first entry that yields no value.
     pub fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        if raw
-            .trim()
-            .is_empty()
-        {
-            return Ok(Vec::new());
-        }
-        crate::split_comma_entries(raw)
-            .into_iter()
-            .enumerate()
-            .map(|(i, entry)| {
-                entry
-                    .parse()
-                    .map_err(|e: ParseError| e.in_entry(i))
-            })
-            .collect()
+        AddrList::list_from_str(raw).map(|p| {
+            p.value
+                .0
+        })
     }
 
     /// Parse as [`FromStr`] does, reporting accepted grammar breaches beside
@@ -387,6 +377,43 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         params: crate::read_params(&tail[params_start..]),
     };
     Ok(Parsed::new(addr, warnings))
+}
+
+/// Parse one list entry as an address, forwarding its warnings; a blank
+/// entry is a missing one rather than an empty value.
+pub(crate) fn parse_list_addr(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipHeaderAddr, ParseError> {
+    let parsed = parse_addr(entry).map_err(|e| match e {
+        ParseError::Empty => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
+        other => other,
+    })?;
+    warnings.extend(parsed.warnings);
+    Ok(parsed.value)
+}
+
+/// A comma list of `name-addr / addr-spec` entries, as Route and
+/// P-Asserted-Identity carry; an empty value is the empty list.
+pub(crate) struct AddrList(pub(crate) Vec<SipHeaderAddr>);
+
+impl CommaList for AddrList {
+    type Entry = SipHeaderAddr;
+
+    fn parse_entry(
+        entry: &str,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipHeaderAddr>, ParseError> {
+        parse_list_addr(entry, warnings).map(Some)
+    }
+
+    fn from_parsed(entries: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {
+        Ok(Self(entries))
+    }
+
+    fn blank() -> Result<Self, ParseError> {
+        Ok(Self(Vec::new()))
+    }
 }
 
 /// RFC 3261 §25.1 `token` character.

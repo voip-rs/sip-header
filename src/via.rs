@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::list::{non_empty, CommaList};
 
 /// A single Via entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,87 +215,24 @@ impl fmt::Display for SipViaEntry {
 /// Parsed SIP Via header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct SipVia {
-    entries: Vec<SipViaEntry>,
-}
+pub struct SipVia(Vec<SipViaEntry>);
 
-impl SipVia {
-    /// Parses a Via header value.
-    pub fn parse(raw: &str) -> Result<Self, ParseError> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Self::from_entries(crate::split_comma_entries(raw))
+impl CommaList for SipVia {
+    type Entry = SipViaEntry;
+
+    fn parse_entry(
+        entry: &str,
+        _: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipViaEntry>, ParseError> {
+        SipViaEntry::parse(entry).map(Some)
     }
 
-    /// Build from entries a transport already split; each is one `via-parm`.
-    ///
-    /// Error positions are relative to the entry, whose index the error carries.
-    pub fn from_entries<'a>(
-        entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, ParseError> {
-        let entries = entries
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| SipViaEntry::parse(e).map_err(|err| err.in_entry(i)))
-            .collect::<Result<Vec<_>, _>>()?;
-        if entries.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        Ok(Self { entries })
-    }
-
-    /// Returns the Via entries.
-    pub fn entries(&self) -> &[SipViaEntry] {
-        &self.entries
-    }
-
-    /// Consume self and return entries as a `Vec`.
-    pub fn into_entries(self) -> Vec<SipViaEntry> {
-        self.entries
-    }
-
-    /// Returns the number of Via entries.
-    pub fn len(&self) -> usize {
-        self.entries
-            .len()
-    }
-
-    /// Returns `true` if there are no Via entries.
-    pub fn is_empty(&self) -> bool {
-        self.entries
-            .is_empty()
+    fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
+        non_empty(entries).map(Self)
     }
 }
 
-impl fmt::Display for SipVia {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::fmt_joined(f, &self.entries, ", ")
-    }
-}
-
-impl_from_str_via_parse!(SipVia, ParseError);
-
-impl IntoIterator for SipVia {
-    type Item = SipViaEntry;
-    type IntoIter = std::vec::IntoIter<SipViaEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries
-            .into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a SipVia {
-    type Item = &'a SipViaEntry;
-    type IntoIter = std::slice::Iter<'a, SipViaEntry>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries
-            .iter()
-    }
-}
+list_type!(SipVia, SipViaEntry, sep: ", ", entry: "via-parm");
 
 /// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon.
 fn parse_host_port(entry: &str, sent_by: &str) -> Result<(String, Option<u16>), ParseError> {

@@ -4,9 +4,10 @@
 //! or a comma-separated list of `name-addr / addr-spec` entries with
 //! optional parameters.
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
-use crate::header_addr::SipHeaderAddr;
+use crate::header_addr::{parse_list_addr, SipHeaderAddr};
+use crate::list::CommaList;
 use std::fmt;
 
 /// A single Contact header value: either the `*` wildcard or an address.
@@ -28,21 +29,52 @@ impl fmt::Display for ContactValue {
     }
 }
 
-/// Parse a single contact entry (after comma-splitting).
-fn parse_contact_entry(raw: &str) -> Result<ContactValue, ParseError> {
-    let trimmed = raw.trim();
-    if trimmed == "*" {
-        Ok(ContactValue::Wildcard)
-    } else {
-        trimmed
-            .parse::<SipHeaderAddr>()
-            .map(|a| ContactValue::Addr(Box::new(a)))
+/// Parsed Contact header value: `STAR / (contact-param *(COMMA contact-param))`
+/// (RFC 3261 §20.10).
+///
+/// `*` is only valid alone. An empty value is the empty list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ContactList(Vec<ContactValue>);
+
+impl CommaList for ContactList {
+    type Entry = ContactValue;
+
+    fn parse_entry(
+        entry: &str,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Option<ContactValue>, ParseError> {
+        if entry.trim() == "*" {
+            return Ok(Some(ContactValue::Wildcard));
+        }
+        let addr = parse_list_addr(entry, warnings)?;
+        Ok(Some(ContactValue::Addr(Box::new(addr))))
+    }
+
+    fn from_parsed(entries: Vec<ContactValue>) -> Result<Self, ParseError> {
+        if entries.len() > 1 {
+            if let Some(i) = entries
+                .iter()
+                .position(|v| matches!(v, ContactValue::Wildcard))
+            {
+                return Err(
+                    ParseError::malformed(Field::Entry, FaultCode::Misplaced, None).in_entry(i),
+                );
+            }
+        }
+        Ok(Self(entries))
+    }
+
+    fn blank() -> Result<Self, ParseError> {
+        Ok(Self(Vec::new()))
     }
 }
 
+list_type!(ContactList, ContactValue, sep: ", ", entry: "contact-param");
+
 /// Parse a comma-separated Contact header value into a list of [`ContactValue`].
 pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseError> {
-    parse_contact_entries(crate::split_comma_entries(raw.trim()))
+    ContactList::parse(raw).map(ContactList::into_entries)
 }
 
 /// Build from entries a transport already split; each is `*` or one `contact-param`.
@@ -51,22 +83,7 @@ pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseError> {
 pub fn parse_contact_entries<'a>(
     entries: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<ContactValue>, ParseError> {
-    let values: Vec<_> = entries
-        .into_iter()
-        .enumerate()
-        .map(|(i, raw)| parse_contact_entry(raw).map_err(|e| e.in_entry(i)))
-        .collect::<Result<_, _>>()?;
-    if values.len() > 1 {
-        if let Some(i) = values
-            .iter()
-            .position(|v| matches!(v, ContactValue::Wildcard))
-        {
-            return Err(
-                ParseError::malformed(Field::Entry, FaultCode::Misplaced, None).in_entry(i),
-            );
-        }
-    }
-    Ok(values)
+    ContactList::from_entries(entries).map(ContactList::into_entries)
 }
 
 #[cfg(test)]

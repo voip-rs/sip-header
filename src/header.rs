@@ -12,8 +12,9 @@ use crate::contact::ContactValue;
 use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
-use crate::header_addr::SipHeaderAddr;
+use crate::header_addr::{AddrList, SipHeaderAddr};
 use crate::history_info::HistoryInfo;
+use crate::list::CommaList;
 use crate::replaces::SipReplaces;
 use crate::security::SipSecurity;
 use crate::target_dialog::SipTargetDialog;
@@ -781,12 +782,10 @@ fn split_all(rows: Vec<&str>) -> impl Iterator<Item = &str> {
 }
 
 fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseError> {
-    split_all(rows)
-        .map(|s| {
-            s.trim()
-                .parse::<SipHeaderAddr>()
-        })
-        .collect()
+    AddrList::list_from_entries(split_all(rows)).map(|p| {
+        p.value
+            .0
+    })
 }
 
 fn split_trim(rows: Vec<&str>) -> Vec<&str> {
