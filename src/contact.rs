@@ -152,4 +152,54 @@ mod tests {
         assert!(parse_contact_entries(["<sip:alice@example.com>", "*"]).is_err());
         assert!(parse_contact_list("*, <sip:alice@example.com>").is_err());
     }
+
+    #[test]
+    fn contact_list_warnings_carry_entry_index() {
+        use crate::diagnostic::WarningCode;
+
+        let bad = "<sip:b@example.com>junk;expires=60";
+        let parsed =
+            ContactList::parse_with_warnings(&format!("<sip:a@example.com>, {bad}")).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            2
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.code, w.entry, w.position),
+            (
+                WarningCode::TrailingContent,
+                Some(1),
+                Some(
+                    1 + bad
+                        .find('j')
+                        .unwrap()
+                )
+            )
+        );
+        let split = ContactList::from_entries_with_warnings(["*"]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .entries(),
+            &[ContactValue::Wildcard]
+        );
+        assert!(ContactList::parse_strict(bad).is_err());
+        assert!(ContactList::parse("")
+            .unwrap()
+            .is_empty());
+        assert!(ContactList::from_entries(["*", "<sip:a@example.com>"]).is_err());
+        assert_eq!(
+            ContactList::from_entries(["<sip:a@example.com>", " "]),
+            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
+        );
+        assert_eq!(
+            "<sip:a@example.com>"
+                .parse::<ContactList>()
+                .map(ContactList::into_entries),
+            parse_contact_list("<sip:a@example.com>")
+        );
+    }
 }

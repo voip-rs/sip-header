@@ -294,4 +294,38 @@ mod tests {
             .collect();
         assert_eq!(urls, vec!["https://example.com/loc"]);
     }
+
+    #[test]
+    fn warnings_api_and_infallible_from_entries() {
+        let raw = "<cid:a>, <https://example.com/loc>";
+        let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(
+            SipGeolocation::parse_strict(raw),
+            Ok(parsed
+                .value
+                .clone())
+        );
+        let split = SipGeolocation::from_entries_with_warnings(["<cid:a>", "junk"]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .len(),
+            1
+        );
+        let lenient: SipGeolocation = SipGeolocation::from_entries(["junk"]);
+        assert!(lenient.is_empty());
+        assert_eq!(
+            parsed
+                .value
+                .entries(),
+            parsed
+                .value
+                .refs()
+        );
+        assert_eq!(
+            SipGeolocation::parse_with_warnings(" "),
+            Err(ParseError::Empty)
+        );
+    }
 }

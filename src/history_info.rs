@@ -572,4 +572,53 @@ mod tests {
             Err(ParseError::Malformed(f)) if f.entry == Some(1) && f.code == FaultCode::Unterminated
         ));
     }
+
+    #[test]
+    fn addr_warnings_carry_entry_index_and_entry_position() {
+        use crate::diagnostic::WarningCode;
+
+        let good = "<sip:a@example.com>;index=1";
+        let bad = "<sip:b@example.com>junk;index=1.1";
+        let parsed = HistoryInfo::parse_with_warnings(&format!("{good}, {bad}")).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            2
+        );
+        assert_eq!(
+            parsed
+                .value
+                .entries()[1]
+                .index(),
+            Some("1.1")
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.code, w.entry, w.position),
+            (
+                WarningCode::TrailingContent,
+                Some(1),
+                Some(
+                    1 + bad
+                        .find('j')
+                        .unwrap()
+                )
+            )
+        );
+
+        let split = HistoryInfo::from_entries_with_warnings([good, bad]).unwrap();
+        assert_eq!(split.warnings[0].position, bad.find('j'));
+        assert_eq!(split.warnings[0].entry, Some(1));
+        assert_eq!(
+            HistoryInfo::from_entries([good, bad])
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            HistoryInfo::parse_strict(&format!("{good}, {bad}")),
+            Err(ParseError::NonConformant(w))
+        );
+    }
 }

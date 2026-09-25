@@ -258,4 +258,19 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = "en;q=0.8, fr";
+        let parsed = SipAcceptLanguage::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(SipAcceptLanguage::parse_strict(raw), Ok(parsed.value));
+        let split = SipAcceptLanguage::from_entries_with_warnings(["en"]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .len(),
+            1
+        );
+    }
 }

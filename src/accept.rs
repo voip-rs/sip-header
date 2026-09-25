@@ -339,4 +339,19 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = "application/sdp, application/pidf+xml;q=0.5";
+        let parsed = SipAccept::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(SipAccept::parse_strict(raw), Ok(parsed.value));
+        let blank = SipAccept::from_entries_with_warnings(["", " "]).unwrap();
+        assert!(blank
+            .value
+            .is_empty());
+        assert!(SipAccept::parse_strict("")
+            .unwrap()
+            .is_empty());
+    }
 }

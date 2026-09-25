@@ -656,4 +656,21 @@ mod tests {
             Err(ParseError::Empty)
         );
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = "SIP/2.0/UDP 198.51.100.1:5060;branch=z9hG4bK1, SIP/2.0/TCP 203.0.113.5";
+        let parsed = SipVia::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(parsed.value, SipVia::parse(raw).unwrap());
+        assert_eq!(SipVia::parse_strict(raw), Ok(parsed.value));
+        let split = SipVia::from_entries_with_warnings(["SIP/2.0/UDP 198.51.100.1"]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .len(),
+            1
+        );
+        assert_eq!(SipVia::parse_with_warnings("  "), Err(ParseError::Empty));
+    }
 }

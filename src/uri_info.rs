@@ -566,4 +566,25 @@ mod tests {
         assert_eq!(parse_entry(" <>"), missing);
         assert_eq!(parse_entry(" <>;purpose=icon"), missing);
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let parsed = UriInfo::parse_with_warnings(SAMPLE_EMERGENCY).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            4
+        );
+        assert_eq!(UriInfo::parse_strict(SAMPLE_EMERGENCY), Ok(parsed.value));
+        let split = UriInfo::from_entries_with_warnings(["<urn:example:1>", "<>"]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .len(),
+            1
+        );
+        assert_eq!(UriInfo::parse_with_warnings(",,, "), Err(ParseError::Empty));
+    }
 }

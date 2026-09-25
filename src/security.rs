@@ -283,6 +283,18 @@ mod tests {
             Err(ParseError::Empty)
         );
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = "tls;q=0.2, digest;d-qop=auth;q=0.1";
+        let parsed = SipSecurity::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(SipSecurity::parse_strict(raw), Ok(parsed.value));
+        assert_eq!(
+            SipSecurity::from_entries_with_warnings(std::iter::empty::<&str>()),
+            Err(ParseError::Empty)
+        );
+    }
 }
 
 #[cfg(test)]

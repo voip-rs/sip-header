@@ -446,4 +446,23 @@ mod tests {
             Err(ParseError::Empty)
         );
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = r#"301 example.com "a", 399 example.org "b""#;
+        let parsed = SipWarning::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(SipWarning::parse_strict(raw), Ok(parsed.value));
+        let split = SipWarning::from_entries_with_warnings([r#"301 example.com "a""#]).unwrap();
+        assert_eq!(
+            split
+                .value
+                .len(),
+            1
+        );
+        assert_eq!(
+            SipWarning::parse_with_warnings("nope"),
+            Err(ParseError::malformed(Field::Agent, FaultCode::Missing, None).in_entry(0))
+        );
+    }
 }

@@ -257,4 +257,16 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+
+    #[test]
+    fn warnings_api_on_conformant_input() {
+        let raw = "gzip;q=0.8, identity";
+        let parsed = SipAcceptEncoding::parse_with_warnings(raw).unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(SipAcceptEncoding::parse_strict(raw), Ok(parsed.value));
+        assert_eq!(
+            SipAcceptEncoding::from_entries_with_warnings(["gzip", "   "]),
+            Err(missing_entry().in_entry(1))
+        );
+    }
 }
