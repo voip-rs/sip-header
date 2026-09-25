@@ -343,6 +343,13 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
                     .len());
         (Some(name), Some(open))
     } else if let Some(open) = s.find('<') {
+        if let Some(i) = s[..open].find(|c: char| !is_token_char(c) && !c.is_ascii_whitespace()) {
+            warnings.push(ParseWarning::new(
+                Field::DisplayName,
+                WarningCode::InvalidToken,
+                Some(lead + i),
+            ));
+        }
         let name = s[..open].trim();
         (Some(name.to_string()), Some(open))
     } else {
@@ -371,10 +378,19 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         tail.find(';')
             .unwrap_or(tail.len())
     };
+    let params = crate::parse_params(&tail[params_start..]);
+    for p in &params {
+        if p.value
+            .is_some_and(|v| v.starts_with('"'))
+        {
+            // Reported only: header param values stay raw.
+            p.unquoted_reporting(input, &mut warnings);
+        }
+    }
     let addr = SipHeaderAddr {
         display_name: display_name.filter(|n| !n.is_empty()),
         uri,
-        params: crate::read_params(&tail[params_start..]),
+        params: crate::stored_params(params),
     };
     Ok(Parsed::new(addr, warnings))
 }
