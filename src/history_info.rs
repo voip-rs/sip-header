@@ -64,7 +64,7 @@ fn parse_reason(decoded: &str) -> HistoryInfoReason {
         });
     let text = find("text")
         .and_then(|p| p.unquoted())
-        .map(|(text, _)| text);
+        .map(|u| u.value);
 
     HistoryInfoReason {
         protocol: protocol

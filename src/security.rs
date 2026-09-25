@@ -66,7 +66,10 @@ impl fmt::Display for SipSecurityMechanism {
     }
 }
 
-fn parse_mechanism(entry: &str) -> Result<SipSecurityMechanism, ParseError> {
+fn parse_mechanism(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipSecurityMechanism, ParseError> {
     let raw = entry.trim();
     if raw.is_empty() {
         return Err(ParseError::malformed(
@@ -94,8 +97,8 @@ fn parse_mechanism(entry: &str) -> Result<SipSecurityMechanism, ParseError> {
         .into_iter()
         .map(|p| {
             let (value, quoted) = p
-                .unquoted()
-                .map_or((None, false), |(v, q)| (Some(v), q));
+                .unquoted_reporting(entry, warnings)
+                .map_or((None, false), |u| (Some(u.value), u.quoted));
             (
                 (
                     p.key
@@ -124,9 +127,9 @@ impl CommaList for SipSecurity {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipSecurityMechanism>, ParseError> {
-        parse_mechanism(entry).map(Some)
+        parse_mechanism(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipSecurityMechanism>) -> Result<Self, ParseError> {

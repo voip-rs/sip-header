@@ -159,8 +159,14 @@ pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
 /// Operates on the content *between* surrounding double-quotes (caller strips
 /// them). Skips allocation when no backslash escapes are present.
 pub(crate) fn unescape_quoted_pair(s: &str) -> String {
+    unescape_quoted_pair_checked(s).0
+}
+
+/// [`unescape_quoted_pair`], plus whether a lone trailing `\`, which escapes
+/// nothing, was dropped.
+pub(crate) fn unescape_quoted_pair_checked(s: &str) -> (String, bool) {
     if !s.contains('\\') {
-        return s.to_string();
+        return (s.to_string(), false);
     }
     let mut result = String::with_capacity(s.len());
     let mut escaped = false;
@@ -174,7 +180,7 @@ pub(crate) fn unescape_quoted_pair(s: &str) -> String {
             result.push(ch);
         }
     }
-    result
+    (result, escaped)
 }
 
 /// A control character `qdtext` excludes but `quoted-pair` carries
@@ -221,18 +227,66 @@ pub(crate) struct RawParam<'a> {
     pub(crate) key: &'a str,
     /// Value, SWS-trimmed, quotes and escapes intact; `None` for a flag.
     pub(crate) value: Option<&'a str>,
+    /// Whether the value opens a quote that never closes.
+    pub(crate) unterminated: bool,
+}
+
+/// A parameter value without its surrounding quotes, `quoted-pair` unescaped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unquoted {
+    pub(crate) value: String,
+    /// Whether the value arrived as a quoted-string.
+    pub(crate) quoted: bool,
+    /// Whether a lone `\` before the closing quote was dropped.
+    pub(crate) trailing_backslash: bool,
 }
 
 impl RawParam<'_> {
-    /// The value without its surrounding quotes and with `quoted-pair`
-    /// unescaped, plus whether it was quoted.
-    pub(crate) fn unquoted(&self) -> Option<(String, bool)> {
+    /// The value without its surrounding quotes and with `quoted-pair` unescaped.
+    pub(crate) fn unquoted(&self) -> Option<Unquoted> {
         let v = self.value?;
         Some(if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
-            (unescape_quoted_pair(&v[1..v.len() - 1]), true)
+            let (value, trailing_backslash) = unescape_quoted_pair_checked(&v[1..v.len() - 1]);
+            Unquoted {
+                value,
+                quoted: true,
+                trailing_backslash,
+            }
         } else {
-            (v.to_string(), false)
+            Unquoted {
+                value: v.to_string(),
+                quoted: false,
+                trailing_backslash: false,
+            }
         })
+    }
+
+    /// [`unquoted`](Self::unquoted), raising [`WarningCode::UnterminatedQuote`]
+    /// and [`WarningCode::TrailingBackslash`] at their position in `input`, the
+    /// string the parameter was read from.
+    pub(crate) fn unquoted_reporting(
+        &self,
+        input: &str,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Option<Unquoted> {
+        let v = self.value?;
+        let at = offset_in(input, v);
+        if self.unterminated {
+            warnings.push(ParseWarning::new(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                Some(at),
+            ));
+        }
+        let unquoted = self.unquoted()?;
+        if unquoted.trailing_backslash {
+            warnings.push(ParseWarning::new(
+                Field::Param,
+                WarningCode::TrailingBackslash,
+                Some(at + v.len() - 2),
+            ));
+        }
+        Some(unquoted)
     }
 }
 
@@ -255,16 +309,17 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
             params.push(RawParam {
                 key: rest[..segment_end].trim_end(),
                 value: None,
+                unterminated: false,
             });
             rest = &rest[segment_end..];
             continue;
         };
         let key = rest[..eq].trim_end();
         let value = rest[eq + 1..].trim_start();
-        let value_end = match value
+        let close = value
             .strip_prefix('"')
-            .and_then(closing_quote)
-        {
+            .map(closing_quote);
+        let value_end = match close.flatten() {
             Some(close) => {
                 let after = close + 2;
                 after
@@ -279,6 +334,7 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
         params.push(RawParam {
             key,
             value: Some(value[..value_end].trim_end()),
+            unterminated: close == Some(None),
         });
         rest = &value[value_end..];
     }
