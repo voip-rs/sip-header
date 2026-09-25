@@ -2,9 +2,10 @@
 
 use std::fmt;
 
-use crate::diagnostic::ParseWarning;
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
+use crate::uri_info::read_params_reporting;
 
 /// A reference extracted from a SIP Geolocation header (RFC 6442).
 ///
@@ -32,32 +33,98 @@ impl fmt::Display for SipGeolocationRef {
     }
 }
 
-/// Read `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
-/// (RFC 6442 §4.1), keeping only the URI.
-fn parse_ref(entry: &str) -> Option<SipGeolocationRef> {
-    let (inner, _) = entry
-        .trim()
-        .strip_prefix('<')?
-        .split_once('>')?;
-    if inner.is_empty() {
+/// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
+/// (RFC 6442 §4.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SipGeolocationEntry {
+    reference: SipGeolocationRef,
+    params: Vec<(String, Option<String>)>,
+}
+
+impl SipGeolocationEntry {
+    /// The location reference inside the angle brackets.
+    pub fn reference(&self) -> &SipGeolocationRef {
+        &self.reference
+    }
+
+    /// All geoloc-params as `(key, value)` pairs; keys lowercased, values as
+    /// sent, `None` for a flag.
+    pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        crate::iter_params(&self.params)
+    }
+
+    /// Look up a geoloc-param by key (case-insensitive); `Some(None)` for a flag.
+    pub fn param(&self, key: &str) -> Option<Option<&str>> {
+        crate::find_param(&self.params, key)
+    }
+}
+
+impl fmt::Display for SipGeolocationEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.reference)?;
+        crate::write_params(f, &self.params)
+    }
+}
+
+/// Read one `locationValue`, positions relative to `entry`; `None` when it
+/// is not a non-empty `<uri>`.
+fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeolocationEntry> {
+    let raw = entry.trim();
+    if raw.is_empty() {
+        warnings.push(ParseWarning::new(
+            Field::Entry,
+            WarningCode::EmptyEntry,
+            None,
+        ));
         return None;
     }
-    Some(
-        match inner
-            .get(..4)
-            .filter(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-        {
-            Some(_) => SipGeolocationRef::Cid(inner[4..].to_string()),
-            None => SipGeolocationRef::Url(inner.to_string()),
-        },
-    )
+    let Some((inner, tail)) = raw
+        .strip_prefix('<')
+        .and_then(|s| s.split_once('>'))
+        .filter(|(inner, _)| !inner.is_empty())
+    else {
+        warnings.push(ParseWarning::new(
+            Field::Entry,
+            WarningCode::SkippedEntry,
+            Some(crate::offset_in(entry, raw)),
+        ));
+        return None;
+    };
+    let junk = tail.trim_start();
+    let params = if junk.is_empty() || junk.starts_with(';') {
+        tail
+    } else {
+        warnings.push(ParseWarning::new(
+            Field::Param,
+            WarningCode::TrailingContent,
+            Some(crate::offset_in(entry, junk)),
+        ));
+        &junk[junk
+            .find(';')
+            .unwrap_or(junk.len())..]
+    };
+    let reference = match inner
+        .get(..4)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("cid:"))
+    {
+        Some(_) => SipGeolocationRef::Cid(inner[4..].to_string()),
+        None => SipGeolocationRef::Url(inner.to_string()),
+    };
+    Some(SipGeolocationEntry {
+        reference,
+        params: read_params_reporting(entry, params, warnings),
+    })
 }
 
 /// Parsed SIP Geolocation header value (RFC 6442).
 ///
-/// Contains one or more `<uri>` references, comma-separated. Each reference
-/// is classified as either a `cid:` body-part reference or a dereference URL.
-/// Entries that are not a `<uri>` are skipped; only an empty value is an error.
+/// Contains one or more `locationValue` entries, comma-separated. Each
+/// reference is classified as either a `cid:` body-part reference or a
+/// dereference URL. An entry that is not a non-empty `<uri>` is dropped with
+/// [`SkippedEntry`](crate::WarningCode::SkippedEntry), a blank one with
+/// [`EmptyEntry`](crate::WarningCode::EmptyEntry); only an empty value is an
+/// error.
 ///
 /// ```
 /// use sip_header::SipGeolocation;
@@ -70,67 +137,48 @@ fn parse_ref(entry: &str) -> Option<SipGeolocationRef> {
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SipGeolocation(Vec<SipGeolocationRef>);
+pub struct SipGeolocation(Vec<SipGeolocationEntry>);
 
 impl CommaList for SipGeolocation {
-    type Entry = SipGeolocationRef;
+    type Entry = SipGeolocationEntry;
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipGeolocationRef>, ParseError> {
-        Ok(parse_ref(entry))
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipGeolocationEntry>, ParseError> {
+        Ok(read_entry(entry, warnings))
     }
 
-    fn from_parsed(entries: Vec<SipGeolocationRef>) -> Result<Self, ParseError> {
+    fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {
         Ok(Self(entries))
     }
 }
 
-list_type!(SipGeolocation, SipGeolocationRef, sep: ", ", entry: "locationValue", infallible);
+list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", entry: "locationValue");
 
 impl SipGeolocation {
-    /// Build from entries a transport already split; each is one
-    /// `locationValue`. Entries that are not a `<uri>` are skipped, and
-    /// geoloc-params after the `>` are dropped.
-    pub fn from_entries<'a>(entries: impl IntoIterator<Item = &'a str>) -> Self {
-        Self(
-            entries
-                .into_iter()
-                .filter_map(parse_ref)
-                .collect(),
-        )
-    }
-
-    /// The parsed references as a slice; the same as [`entries`](Self::entries).
-    pub fn refs(&self) -> &[SipGeolocationRef] {
-        &self.0
+    /// Every entry's reference, in order.
+    pub fn refs(&self) -> impl Iterator<Item = &SipGeolocationRef> {
+        self.0
+            .iter()
+            .map(SipGeolocationEntry::reference)
     }
 
     /// The first `cid:` reference, if any.
     pub fn cid(&self) -> Option<&str> {
-        self.0
-            .iter()
-            .find_map(|r| match r {
-                SipGeolocationRef::Cid(id) => Some(id.as_str()),
-                _ => None,
-            })
+        self.cids()
+            .next()
     }
 
     /// The first URL reference, if any.
     pub fn url(&self) -> Option<&str> {
-        self.0
-            .iter()
-            .find_map(|r| match r {
-                SipGeolocationRef::Url(url) => Some(url.as_str()),
-                _ => None,
-            })
+        self.urls()
+            .next()
     }
 
     /// Iterate over all `cid:` references.
     pub fn cids(&self) -> impl Iterator<Item = &str> {
-        self.0
-            .iter()
+        self.refs()
             .filter_map(|r| match r {
                 SipGeolocationRef::Cid(id) => Some(id.as_str()),
                 _ => None,
@@ -139,8 +187,7 @@ impl SipGeolocation {
 
     /// Iterate over all URL references.
     pub fn urls(&self) -> impl Iterator<Item = &str> {
-        self.0
-            .iter()
+        self.refs()
             .filter_map(|r| match r {
                 SipGeolocationRef::Url(url) => Some(url.as_str()),
                 _ => None,
