@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 
 /// Parsed SIP authentication value.
@@ -84,8 +84,26 @@ impl SipAuthValue {
 }
 
 impl SipAuthValue {
-    /// Parse an authentication header value.
+    /// Parse an authentication header value leniently, as
+    /// [`FromStr`](std::str::FromStr) does.
     pub fn parse(input: &str) -> Result<Self, ParseError> {
+        Self::parse_with_warnings(input).map(|p| p.value)
+    }
+
+    /// Parse, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
+    pub fn parse_strict(input: &str) -> Result<Self, ParseError> {
+        Self::parse_with_warnings(input)?.into_strict()
+    }
+
+    /// Parse as [`parse`](Self::parse) does, reporting accepted grammar
+    /// breaches beside the value.
+    pub fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        let mut warnings = Vec::new();
+        Self::parse_reporting(input, &mut warnings).map(|v| Parsed::new(v, warnings))
+    }
+
+    fn parse_reporting(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
         let s = input.trim();
         if s.is_empty() {
             return Err(ParseError::Empty);
@@ -122,8 +140,8 @@ impl SipAuthValue {
                 continue;
             }
 
-            let (key, value) = param_str
-                .split_once('=')
+            let eq = param_str
+                .find('=')
                 .ok_or_else(|| {
                     ParseError::malformed(
                         Field::Credentials,
@@ -132,17 +150,36 @@ impl SipAuthValue {
                     )
                 })?;
 
-            let key = key
+            let key = param_str[..eq]
                 .trim()
                 .to_ascii_lowercase();
-            let value = value.trim();
+            let value = param_str[eq + 1..].trim();
+            let at = crate::offset_in(input, value);
+
+            // An empty key before the `=` lets the shared reader judge quote termination.
+            if crate::parse_params(&param_str[eq..])
+                .first()
+                .is_some_and(|p| p.unterminated)
+            {
+                warnings.push(ParseWarning::new(
+                    Field::Credentials,
+                    WarningCode::UnterminatedQuote,
+                    Some(at),
+                ));
+            }
 
             let (value, was_quoted) =
                 if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                    (
-                        crate::unescape_quoted_pair(&value[1..value.len() - 1]),
-                        true,
-                    )
+                    let (unescaped, trailing_backslash) =
+                        crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
+                    if trailing_backslash {
+                        warnings.push(ParseWarning::new(
+                            Field::Credentials,
+                            WarningCode::TrailingBackslash,
+                            Some(at + value.len() - 2),
+                        ));
+                    }
+                    (unescaped, true)
                 } else {
                     (value.to_string(), false)
                 };
