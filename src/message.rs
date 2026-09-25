@@ -60,59 +60,24 @@ pub fn extract_body(message: &str) -> Option<&str> {
     (!body.is_empty()).then_some(body)
 }
 
-/// RFC 3261 §7.3.3 compact form equivalences.
-///
-/// Each pair is `(compact_char, canonical_name)`. Used by [`extract_header`]
-/// to match both compact and full header names transparently.
-const COMPACT_FORMS: &[(u8, &str)] = &[
-    (b'a', "Accept-Contact"),
-    (b'b', "Referred-By"),
-    (b'c', "Content-Type"),
-    (b'd', "Request-Disposition"),
-    (b'e', "Content-Encoding"),
-    (b'f', "From"),
-    (b'i', "Call-ID"),
-    (b'j', "Reject-Contact"),
-    (b'k', "Supported"),
-    (b'l', "Content-Length"),
-    (b'm', "Contact"),
-    (b'n', "Identity-Info"),
-    (b'o', "Event"),
-    (b'r', "Refer-To"),
-    (b's', "Subject"),
-    (b't', "To"),
-    (b'u', "Allow-Events"),
-    (b'v', "Via"),
-    (b'x', "Session-Expires"),
-    (b'y', "Identity"),
-];
-
-/// Check if a header name on the wire matches the target name, considering
-/// RFC 3261 §7.3.3 compact forms.
-fn matches_header_name(wire_name: &str, target: &str) -> bool {
-    if wire_name.eq_ignore_ascii_case(target) {
-        return true;
-    }
-    // Find the compact form equivalence for the target
-    let equiv = if target.len() == 1 {
-        let ch = target.as_bytes()[0].to_ascii_lowercase();
-        COMPACT_FORMS
+/// The RFC 3261 §7.3.3 compact letter a header name, full or compact, shares.
+fn compact_letter(name: &str) -> Option<char> {
+    let header = match name.as_bytes() {
+        [c] => SipHeader::from_compact(*c)?,
+        _ => *SipHeader::ALL
             .iter()
-            .find(|(c, _)| *c == ch)
-    } else {
-        COMPACT_FORMS
-            .iter()
-            .find(|(_, full)| full.eq_ignore_ascii_case(target))
+            .find(|h| {
+                h.as_str()
+                    .eq_ignore_ascii_case(name)
+            })?,
     };
-    if let Some(&(compact, full)) = equiv {
-        if wire_name.len() == 1 {
-            wire_name.as_bytes()[0].to_ascii_lowercase() == compact
-        } else {
-            wire_name.eq_ignore_ascii_case(full)
-        }
-    } else {
-        false
-    }
+    header.compact_form()
+}
+
+/// Whether a header name on the wire names `target`, compact forms included.
+fn matches_header_name(wire_name: &str, target: &str) -> bool {
+    wire_name.eq_ignore_ascii_case(target)
+        || compact_letter(wire_name).is_some_and(|c| compact_letter(target) == Some(c))
 }
 
 /// Unfold a continuation line into `value`, replacing the folding LWS with
@@ -143,43 +108,11 @@ fn append_folded(value: &mut String, line: &str) {
 ///
 /// Returns an empty `Vec` if no header with the given name is found.
 pub fn extract_header(message: &str, name: &str) -> Vec<String> {
-    let mut values: Vec<String> = Vec::new();
-    let mut current_match = false;
-    let (header_block, _) = split_at_blank_line(message);
-
-    for line in header_block.split('\n') {
-        let line = line
-            .strip_suffix('\r')
-            .unwrap_or(line);
-
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if current_match {
-                if let Some(last) = values.last_mut() {
-                    append_folded(last, line);
-                }
-            }
-            continue;
-        }
-
-        current_match = false;
-
-        if let Some((hdr_name, hdr_value)) = line.split_once(':') {
-            let hdr_name = hdr_name.trim_end();
-            // RFC 3261: header names are tokens — no whitespace allowed.
-            // This rejects request/status lines like "INVITE sip:..." where
-            // the text before the first colon contains spaces.
-            if !hdr_name.contains(' ') && matches_header_name(hdr_name, name) {
-                current_match = true;
-                values.push(
-                    hdr_value
-                        .trim()
-                        .to_string(),
-                );
-            }
-        }
-    }
-
-    values
+    extract_all_headers(message)
+        .into_iter()
+        .filter(|(hdr_name, _)| matches_header_name(hdr_name, name))
+        .map(|(_, value)| value)
+        .collect()
 }
 
 /// Extract all headers from a raw SIP message as name-value pairs.
@@ -193,6 +126,8 @@ pub fn extract_header(message: &str, name: &str) -> Vec<String> {
 pub fn extract_all_headers(message: &str) -> Vec<(String, String)> {
     let mut headers: Vec<(String, String)> = Vec::new();
     let (header_block, _) = split_at_blank_line(message);
+    // A continuation folds into the line above it only when that line was a header.
+    let mut folding = false;
 
     for line in header_block.split('\n') {
         let line = line
@@ -200,18 +135,23 @@ pub fn extract_all_headers(message: &str) -> Vec<(String, String)> {
             .unwrap_or(line);
 
         if line.starts_with(' ') || line.starts_with('\t') {
-            if let Some((_, value)) = headers.last_mut() {
+            if let Some((_, value)) = headers
+                .last_mut()
+                .filter(|_| folding)
+            {
                 append_folded(value, line);
             }
             continue;
         }
 
+        folding = false;
         if let Some((hdr_name, hdr_value)) = line.split_once(':') {
             let hdr_name = hdr_name.trim_end();
             // RFC 3261: header names are tokens — no whitespace allowed.
             // This rejects request/status lines like "INVITE sip:..." where
             // the text before the first colon contains spaces.
             if !hdr_name.contains(' ') {
+                folding = true;
                 headers.push((
                     hdr_name.to_string(),
                     hdr_value
@@ -885,5 +825,19 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             headers[0],
             ("From".into(), "Alice <sip:alice@example.com>".into())
         );
+    }
+
+    #[test]
+    fn continuation_after_non_header_line_not_folded() {
+        let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\
+                   From: <sip:alice@example.com>\r\n\
+                   not a header\r\n\
+                   \x20continued\r\n\
+                   \r\n";
+        assert_eq!(
+            extract_all_headers(msg),
+            vec![("From".into(), "<sip:alice@example.com>".into())]
+        );
+        assert_eq!(extract_header(msg, "f"), vec!["<sip:alice@example.com>"]);
     }
 }
