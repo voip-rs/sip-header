@@ -38,15 +38,23 @@ Namespace prefixes are stripped before deserialization, so an element is matched
 
 ## Mutators validate against the grammar their parser does not enforce
 
-A parser's leniency is what makes real traffic survivable; a value handed to a mutator never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Public mutators therefore return `Result` and check the RFC production for the field they set, and the resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a mutator. A builder whose signature cannot return `Result` is deprecated in favour of a `try_` form that does.
+A parser's leniency is what makes real traffic survivable; a value handed to a mutator never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Public mutators and builders therefore return `Result` and check the RFC production for the field they set, and the resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a mutator.
 
-## Accepted non-conformance stays accepted until it can be reported
+## Parsers are lenient; warnings report what strict parsing would refuse
 
-Input a released version accepts is not turned into an `Err` by a later compatible release. Tightening goes through parse warnings, which report the breach and keep the value; until a type can report one, it keeps accepting. The exceptions are a rejection the RFC mandates of the receiver and a case whose current result is corrupt, where accepting only hands the caller a wrong answer.
+Every header-value type parses the way sip-uri does, so the two crates read one way: `FromStr` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions.
+
+## FromStr fails only where no value exists
+
+`FromStr` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection.
+
+## One error type for every header value
+
+Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
 
 ## Multi-occurrence headers stay one entry per occurrence
 
-`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. `SipHeaderLookup` exposes every occurrence through `sip_header_all_str` / `sip_header_all`, and every list accessor reads through them, splitting each row untrimmed. A present row that is only whitespace therefore surfaces the entry parser's error rather than an empty list. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
+`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. `SipHeaderLookup` exposes every occurrence through `sip_header_all_str` / `sip_header_all`, and every list accessor reads through them, splitting each row untrimmed. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
 
 ## Error Display never carries the rejected bytes
 
@@ -54,4 +62,4 @@ An error renders a label, the field or position at fault, and the length of the 
 
 ## List-valued types take pre-split entries
 
-Every comma-list type has a `from_entries` constructor beside `parse`, each keeping that type's strictness. A caller holding entries a transport already delimited never re-joins them for `parse`: the second split is a guess over boundaries already drawn, and it hides which layer produced a bad entry.
+Every comma-list type has a `from_entries` constructor beside `parse`, and a problem in one entry surfaces as a warning carrying that entry's index. A caller holding entries a transport already delimited never re-joins them for `parse`: the second split is a guess over boundaries already drawn, and it hides which layer produced a bad entry.

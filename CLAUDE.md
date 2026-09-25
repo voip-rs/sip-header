@@ -7,15 +7,16 @@ and extensions. `Cargo.lock` is gitignored per Cargo convention for libraries.
 ## RFC Compliance Is Non-Negotiable
 
 This crate parses SIP header field values per the RFCs. Every parser must
-follow the grammar from its defining RFC. If a real-world SIP implementation
-sends non-conformant data, we can accept it permissively **only if**:
+follow the grammar from its defining RFC. Non-conformant input is accepted
+**only as a reported relaxation**:
 
-1. A comment cites the RFC section being relaxed
-2. The relaxation is clearly bounded (not open-ended leniency)
-3. A test proves the non-conformant input is accepted
+1. It raises a `WarningCode` whose rustdoc cites the RFC production relaxed
+2. The relaxation is bounded (not open-ended leniency)
+3. A test proves `FromStr` accepts it, `parse_with_warnings` reports it,
+   and `parse_strict` refuses it
 
-Never invent syntax. Never guess at encoding. If an RFC doesn't define
-behavior for a given input, return `Err`.
+Never invent syntax. Never guess at encoding. Input that yields no usable
+value returns `Err`; nothing is relaxed silently.
 
 ## No FreeSWITCH Coupling
 
@@ -83,8 +84,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
 ## API Boundary Rules
 
 - **`sip-uri` is the only accepted public dependency.** The `pub use sip_uri;`
-  re-export and `SipHeaderAddr` returning `sip_uri::Uri` are intentional
-  (same author, narrow scope, stable).
+  re-export, `SipHeaderAddr` returning `sip_uri::Uri`, and sip-uri's warning
+  types inside ours (`Component`, `WarningCode`, `WarningKind`, `ParseError`
+  as a source) are intentional (same author, narrow scope, stable).
 - **Never expose other dependency types in public signatures.** Wrap them
   or return `impl Trait`.
 - **`FromStr` uses `eq_ignore_ascii_case`** for case-insensitive matching.
@@ -92,29 +94,21 @@ etc.) get typed accessor methods. Simple string headers are accessed via
 
 ## Build & Test
 
-```sh
-cargo fmt --all
-cargo check --message-format=short
-cargo check --features serde --message-format=short
-cargo check --features draft --message-format=short
-cargo check --features conference-info --message-format=short
-cargo clippy --fix --allow-dirty --message-format=short
-cargo test --lib
-```
-
-The pre-commit hook enforces: formatting, clippy, `-D missing_docs`,
-broken intra-doc links, all tests (including doctests), IANA sync, and
-gitleaks.
+Before committing run `cargo clippy --fix --allow-dirty --message-format=short && cargo fmt`;
+the pre-commit hook is the verification: formatting, clippy (with and without
+`draft`), `-D missing_docs`, broken intra-doc links, all tests (including
+doctests), IANA sync, and gitleaks. It does not enable `conference-info`;
+run `cargo test --release --features conference-info` after touching it.
 
 ## Library Code Rules
 
 **No `assert!`/`panic!`/`unwrap()` in library code** outside of tests.
 Return `Result` or `Option` instead.
 
-**Correctness over recovery.** Never silently absorb parse errors. If a
-header value doesn't conform to the RFC grammar, return `Err`. Never use
-`.parse().ok()` to collapse parse failures into `None` where they become
-indistinguishable from absent headers.
+**Recovery is always reported.** Never silently absorb parse errors: a
+breach the parser survives is a `ParseWarning`, one it cannot is `Err`.
+Never use `.parse().ok()` to collapse parse failures into `None` where they
+become indistinguishable from absent values.
 
 ## Release Workflow
 
