@@ -408,6 +408,34 @@ mod tests {
             assert!(result.is_err());
         }
 
+        fn source_text(e: &ConferenceInfoError) -> String {
+            std::error::Error::source(e)
+                .map(ToString::to_string)
+                .unwrap_or_default()
+        }
+
+        #[test]
+        fn ill_formed_xml_keeps_reader_source() {
+            let xml = r#"<conference-info entity="sip:conf@example.com"><users></secretname></conference-info>"#;
+            let e = ConferenceInfo::from_xml(xml).unwrap_err();
+            assert_eq!(e.kind(), ConferenceInfoErrorKind::Read);
+            assert!(!e
+                .to_string()
+                .contains("secretname"));
+            assert!(source_text(&e).contains("secretname"));
+        }
+
+        #[test]
+        fn schema_mismatch_keeps_deserializer_source() {
+            let xml = r#"<conference-info entity="sip:conf@example.com" version="secret1"/>"#;
+            let e = ConferenceInfo::from_xml(xml).unwrap_err();
+            assert_eq!(e.kind(), ConferenceInfoErrorKind::Deserialize);
+            assert!(!e
+                .to_string()
+                .contains("secret1"));
+            assert!(!source_text(&e).is_empty());
+        }
+
         #[test]
         fn round_trip() {
             let doc = ConferenceInfo::from_xml(PREFIXED_XML).unwrap();
