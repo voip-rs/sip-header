@@ -102,7 +102,10 @@ list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", entry: "encodin
 
 #[cfg(test)]
 mod tests {
+    use sip_uri::WarningKind;
+
     use super::*;
+    use crate::diagnostic::WarningCode;
 
     #[test]
     fn single_encoding() {
@@ -207,6 +210,99 @@ mod tests {
         assert!(SipAcceptEncoding::from_entries(["", "  "])
             .unwrap()
             .is_empty());
+    }
+
+    type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    fn seen(raw: &str) -> Vec<Seen> {
+        SipAcceptEncoding::parse_with_warnings(raw)
+            .unwrap()
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect()
+    }
+
+    fn assert_strict_refuses(raw: &str) {
+        let parsed = SipAcceptEncoding::parse_with_warnings(raw).unwrap();
+        assert_eq!(parsed.value, SipAcceptEncoding::parse(raw).unwrap());
+        assert_eq!(
+            SipAcceptEncoding::parse_strict(raw),
+            Err(ParseError::NonConformant(parsed.warnings[0]))
+        );
+    }
+
+    #[test]
+    fn invalid_coding_token_is_warned() {
+        let raw = "gzip, gz/ip";
+        assert_eq!(
+            SipAcceptEncoding::parse(raw)
+                .unwrap()
+                .entries()[1]
+                .encoding(),
+            "gz/ip"
+        );
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Coding,
+                WarningCode::InvalidToken,
+                WarningKind::Recovered,
+                Some(1),
+                Some(1)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn invalid_qvalue_is_warned() {
+        let raw = "gzip;q=0.1234";
+        assert_eq!(
+            SipAcceptEncoding::parse(raw)
+                .unwrap()
+                .entries()[0]
+                .q(),
+            Some("0.1234")
+        );
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Qvalue,
+                WarningCode::InvalidQvalue,
+                WarningKind::Recovered,
+                Some("gzip;q=".len()),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn unterminated_param_quote_is_warned() {
+        let raw = r#"gzip;x="a"#;
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn wildcard_is_conformant() {
+        assert!(seen("*;q=0, identity;q=1.0").is_empty());
     }
 
     #[test]

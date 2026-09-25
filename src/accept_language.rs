@@ -102,7 +102,10 @@ list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", entry: "languag
 
 #[cfg(test)]
 mod tests {
+    use sip_uri::WarningKind;
+
     use super::*;
+    use crate::diagnostic::WarningCode;
 
     #[test]
     fn single_language() {
@@ -208,6 +211,114 @@ mod tests {
         assert!(SipAcceptLanguage::from_entries(["", "  "])
             .unwrap()
             .is_empty());
+    }
+
+    type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    fn seen(raw: &str) -> Vec<Seen> {
+        SipAcceptLanguage::parse_with_warnings(raw)
+            .unwrap()
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect()
+    }
+
+    fn assert_strict_refuses(raw: &str) {
+        let parsed = SipAcceptLanguage::parse_with_warnings(raw).unwrap();
+        assert_eq!(parsed.value, SipAcceptLanguage::parse(raw).unwrap());
+        assert_eq!(
+            SipAcceptLanguage::parse_strict(raw),
+            Err(ParseError::NonConformant(parsed.warnings[0]))
+        );
+    }
+
+    #[test]
+    fn language_range_grammar() {
+        for ok in ["*", "en", "en-us", "abcdefgh", "i-abcdefgh-x"] {
+            assert!(is_language_range(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "en_us",
+            "en-",
+            "-en",
+            "en--us",
+            "abcdefghi",
+            "en-abcdefghi",
+            "es-419",
+            "e*",
+        ] {
+            assert!(!is_language_range(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn invalid_language_range_is_warned() {
+        let raw = "fr, en_US;q=0.5";
+        assert_eq!(
+            SipAcceptLanguage::parse(raw)
+                .unwrap()
+                .entries()[1]
+                .language(),
+            "en_us"
+        );
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Language,
+                WarningCode::InvalidToken,
+                WarningKind::Recovered,
+                Some(1),
+                Some(1)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn invalid_qvalue_is_warned() {
+        let raw = "en;q=2";
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Qvalue,
+                WarningCode::InvalidQvalue,
+                WarningKind::Recovered,
+                Some("en;q=".len()),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn unterminated_param_quote_is_warned() {
+        let raw = r#"en;x="a;q=0.5"#;
+        assert_eq!(
+            SipAcceptLanguage::parse(raw)
+                .unwrap()
+                .entries()[0]
+                .q(),
+            Some("0.5")
+        );
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
     }
 
     #[test]

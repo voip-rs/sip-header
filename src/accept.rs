@@ -133,7 +133,10 @@ list_type!(SipAccept, SipAcceptEntry, sep: ", ", entry: "accept-range");
 
 #[cfg(test)]
 mod tests {
+    use sip_uri::WarningKind;
+
     use super::*;
+    use crate::diagnostic::WarningCode;
 
     #[test]
     fn single_media_type() {
@@ -265,6 +268,127 @@ mod tests {
         assert!(SipAccept::from_entries(["", "  "])
             .unwrap()
             .is_empty());
+    }
+
+    type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    fn seen(raw: &str) -> Vec<Seen> {
+        SipAccept::parse_with_warnings(raw)
+            .unwrap()
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect()
+    }
+
+    fn assert_strict_refuses(raw: &str) {
+        let parsed = SipAccept::parse_with_warnings(raw).unwrap();
+        assert_eq!(parsed.value, SipAccept::parse(raw).unwrap());
+        assert_eq!(
+            SipAccept::parse_strict(raw),
+            Err(ParseError::NonConformant(parsed.warnings[0]))
+        );
+    }
+
+    #[test]
+    fn qvalue_grammar() {
+        for ok in ["0", "0.", "0.5", "0.123", "1", "1.", "1.0", "1.000"] {
+            assert!(is_qvalue(ok), "{ok}");
+        }
+        for bad in [
+            "", "2", ".5", "0.1234", "1.001", "1.5", "01", "0,5", "\"0.5\"",
+        ] {
+            assert!(!is_qvalue(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn invalid_qvalue_is_warned() {
+        let raw = "application/sdp, text/plain;q=1.5";
+        let accept = SipAccept::parse(raw).unwrap();
+        assert_eq!(accept.entries()[1].q(), Some("1.5"));
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Qvalue,
+                WarningCode::InvalidQvalue,
+                WarningKind::Recovered,
+                Some(" text/plain;q=".len()),
+                Some(1)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn invalid_media_type_token_is_warned() {
+        let raw = "appl(x)/sdp";
+        assert_eq!(
+            SipAccept::parse(raw)
+                .unwrap()
+                .entries()[0]
+                .media_type(),
+            "appl(x)"
+        );
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::MediaRange,
+                WarningCode::InvalidToken,
+                WarningKind::Recovered,
+                Some(0),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn invalid_subtype_token_is_warned() {
+        let raw = "application/sd@p;q=0.5";
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::MediaRange,
+                WarningCode::InvalidToken,
+                WarningKind::Recovered,
+                Some("application/".len()),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn unterminated_param_quote_is_warned() {
+        let raw = r#"application/sdp;x="a;q=0.5"#;
+        let accept = SipAccept::parse(raw).unwrap();
+        assert_eq!(accept.entries()[0].param("x"), Some(Some(r#""a"#)));
+        assert_eq!(accept.entries()[0].q(), Some("0.5"));
+        assert_eq!(
+            seen(raw),
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
+                Some(0)
+            )]
+        );
+        assert_strict_refuses(raw);
+    }
+
+    #[test]
+    fn wildcards_and_sws_are_conformant() {
+        for raw in ["*/*", "application/*;q=0", "application / sdp ;q=1.000"] {
+            assert!(seen(raw).is_empty(), "{raw}");
+        }
     }
 
     #[test]
