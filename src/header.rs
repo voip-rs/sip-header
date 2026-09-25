@@ -9,8 +9,9 @@ use crate::accept_encoding::{SipAcceptEncoding, SipAcceptEncodingError};
 use crate::accept_language::{SipAcceptLanguage, SipAcceptLanguageError};
 use crate::auth::{SipAuthError, SipAuthValue};
 use crate::contact::ContactValue;
+use crate::error::ParseError;
 use crate::geolocation::SipGeolocation;
-use crate::header_addr::{ParseSipHeaderAddrError, SipHeaderAddr};
+use crate::header_addr::SipHeaderAddr;
 use crate::history_info::{HistoryInfo, HistoryInfoError};
 use crate::replaces::{SipReplaces, SipReplacesError};
 use crate::security::{SipSecurity, SipSecurityError};
@@ -522,32 +523,32 @@ pub trait SipHeaderLookup {
     ///
     /// PAI is multi-valued per RFC 3325 — a message may assert up to two
     /// identities. Returns an empty `Vec` if the header is absent.
-    fn p_asserted_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn p_asserted_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::PAssertedIdentity))
     }
 
     /// Parse `P-Preferred-Identity` into a list of [`SipHeaderAddr`] (RFC 3325).
-    fn p_preferred_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn p_preferred_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::PPreferredIdentity))
     }
 
     /// Parse `Route` into a list of [`SipHeaderAddr`] (RFC 3261 §20.34).
-    fn route(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::Route))
     }
 
     /// Parse `Record-Route` into a list of [`SipHeaderAddr`] (RFC 3261 §20.30).
-    fn record_route(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn record_route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::RecordRoute))
     }
 
     /// Parse `Path` into a list of [`SipHeaderAddr`] (RFC 3327).
-    fn path(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn path(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::Path))
     }
 
     /// Parse `Service-Route` into a list of [`SipHeaderAddr`] (RFC 3608).
-    fn service_route(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn service_route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::ServiceRoute))
     }
 
@@ -555,7 +556,7 @@ pub trait SipHeaderLookup {
     ///
     /// The Contact header may contain `*` (wildcard, used in REGISTER) or
     /// a comma-separated list of name-addr/addr-spec entries.
-    fn contact(&self) -> Result<Vec<ContactValue>, ParseSipHeaderAddrError> {
+    fn contact(&self) -> Result<Vec<ContactValue>, ParseError> {
         crate::contact::parse_contact_entries(split_all(self.sip_header_all(SipHeader::Contact)))
     }
 
@@ -777,13 +778,13 @@ pub trait SipHeaderLookup {
 
     /// Parse `Diversion` into a list of [`SipHeaderAddr`] (draft-levy-sip-diversion-08).
     #[cfg(feature = "draft")]
-    fn diversion(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn diversion(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::Diversion))
     }
 
     /// Parse `Remote-Party-ID` into a list of [`SipHeaderAddr`] (draft-ietf-sip-privacy-01).
     #[cfg(feature = "draft")]
-    fn remote_party_id(&self) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    fn remote_party_id(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_all(SipHeader::RemotePartyId))
     }
 }
@@ -793,7 +794,7 @@ fn split_all(rows: Vec<&str>) -> impl Iterator<Item = &str> {
         .flat_map(crate::split_comma_entries)
 }
 
-fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseError> {
     split_all(rows)
         .map(|s| {
             s.trim()

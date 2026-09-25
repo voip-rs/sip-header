@@ -6,6 +6,8 @@ use std::str::{FromStr, Utf8Error};
 
 use percent_encoding::percent_decode_str;
 
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
+use crate::error::{FaultCode, ParseError};
 use crate::replaces::{SipReplaces, SipReplacesError};
 
 /// Parsed SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
@@ -30,9 +32,9 @@ use crate::replaces::{SipReplaces, SipReplacesError};
 /// This type handles the full production including those trailing
 /// parameters (`;tag=`, `;expires=`, `;serviceurn=`, etc.).
 ///
-/// Unlike [`sip_uri::NameAddr`] (which only handles the `name-addr` portion),
-/// this type also parses header-level parameters after `>` and can
-/// round-trip real SIP header values.
+/// [`FromStr`] is lenient like sip-uri's parsers;
+/// [`parse_with_warnings`](Self::parse_with_warnings) reports what it
+/// accepted and [`parse_strict`](Self::parse_strict) refuses it.
 ///
 /// ```
 /// use sip_header::SipHeaderAddr;
@@ -53,30 +55,6 @@ pub struct SipHeaderAddr {
     params: Vec<(String, Option<String>)>,
 }
 
-/// Error returned when parsing a SIP header address value fails.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseSipHeaderAddrError(pub String);
-
-impl fmt::Display for ParseSipHeaderAddrError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid SIP header address: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseSipHeaderAddrError {}
-
-impl From<sip_uri::ParseUriError> for ParseSipHeaderAddrError {
-    fn from(e: sip_uri::ParseUriError) -> Self {
-        Self(e.to_string())
-    }
-}
-
-impl From<sip_uri::ParseSipUriError> for ParseSipHeaderAddrError {
-    fn from(e: sip_uri::ParseSipUriError) -> Self {
-        Self(e.to_string())
-    }
-}
-
 impl SipHeaderAddr {
     /// Create a new `SipHeaderAddr` with the given URI and no display name or params.
     pub fn new(uri: sip_uri::Uri) -> Self {
@@ -85,13 +63,6 @@ impl SipHeaderAddr {
             uri,
             params: Vec::new(),
         }
-    }
-
-    /// Set the display name, unchecked; prefer
-    /// [`try_with_display_name`](Self::try_with_display_name), which rejects CR/LF.
-    pub fn with_display_name(mut self, name: impl Into<String>) -> Self {
-        self.display_name = Some(name.into());
-        self
     }
 
     /// Set the display name, rejecting what an RFC 3261 §25.1
@@ -105,37 +76,24 @@ impl SipHeaderAddr {
     /// use sip_header::SipHeaderAddr;
     ///
     /// let addr = SipHeaderAddr::new("sip:alice@example.com".parse()?)
-    ///     .try_with_display_name("Alice Smith")?;
+    ///     .with_display_name("Alice Smith")?;
     /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
     /// assert!(SipHeaderAddr::new("sip:alice@example.com".parse()?)
-    ///     .try_with_display_name("a\r\nb")
+    ///     .with_display_name("a\r\nb")
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn try_with_display_name(
-        mut self,
-        name: impl Into<String>,
-    ) -> Result<Self, ParseSipHeaderAddrError> {
+    pub fn with_display_name(mut self, name: impl Into<String>) -> Result<Self, ParseError> {
         let name = name.into();
-        if name.contains(['\r', '\n']) {
-            return Err(ParseSipHeaderAddrError(
-                "display name contains CR or LF".to_string(),
+        if let Some(pos) = name.find(['\r', '\n']) {
+            return Err(ParseError::malformed(
+                Field::DisplayName,
+                FaultCode::InvalidChar,
+                Some(pos),
             ));
         }
         self.display_name = Some(name);
         Ok(self)
-    }
-
-    /// Add a header-level parameter, unchecked, lowercasing the key; prefer
-    /// [`try_with_param`](Self::try_with_param), which validates both.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        self.params
-            .push((
-                key.into()
-                    .to_ascii_lowercase(),
-                value.map(Into::into),
-            ));
-        self
     }
 
     /// Add a header-level `generic-param` (RFC 3261 §25.1), lowercasing the key.
@@ -149,27 +107,32 @@ impl SipHeaderAddr {
     /// use sip_header::SipHeaderAddr;
     ///
     /// let addr = SipHeaderAddr::new("sip:alice@example.com".parse()?)
-    ///     .try_with_param("tag", Some("abc123"))?
-    ///     .try_with_param("lr", None::<&str>)?;
+    ///     .with_param("tag", Some("abc123"))?
+    ///     .with_param("lr", None::<&str>)?;
     /// assert_eq!(addr.to_string(), "<sip:alice@example.com>;tag=abc123;lr");
     /// assert!(SipHeaderAddr::new("sip:alice@example.com".parse()?)
-    ///     .try_with_param("tag", Some("a;b"))
+    ///     .with_param("tag", Some("a;b"))
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn try_with_param(
+    pub fn with_param(
         mut self,
         key: impl Into<String>,
         value: Option<impl Into<String>>,
-    ) -> Result<Self, ParseSipHeaderAddrError> {
+    ) -> Result<Self, ParseError> {
         let key = key.into();
-        if key.is_empty()
-            || !key
-                .chars()
-                .all(is_token_char)
-        {
-            return Err(ParseSipHeaderAddrError(
-                "parameter name is not a token".to_string(),
+        if key.is_empty() {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::Missing,
+                None,
+            ));
+        }
+        if let Some(pos) = key.find(|c| !is_token_char(c)) {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::InvalidChar,
+                Some(pos),
             ));
         }
         let value = value.map(Into::into);
@@ -278,8 +241,8 @@ impl SipHeaderAddr {
     ///
     /// Splits on commas at bracket depth zero (via [`split_comma_entries`](crate::split_comma_entries)),
     /// then parses each entry as a [`SipHeaderAddr`]. Returns an empty `Vec`
-    /// for empty input. Fails on the first unparseable entry.
-    pub fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseSipHeaderAddrError> {
+    /// for empty input. Fails on the first entry that yields no value.
+    pub fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseError> {
         if raw
             .trim()
             .is_empty()
@@ -288,12 +251,25 @@ impl SipHeaderAddr {
         }
         crate::split_comma_entries(raw)
             .into_iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(i, entry)| {
                 entry
-                    .trim()
                     .parse()
+                    .map_err(|e: ParseError| e.in_entry(i))
             })
             .collect()
+    }
+
+    /// Parse as [`FromStr`] does, reporting accepted grammar breaches beside
+    /// the value. Positions are byte offsets into `input`.
+    pub fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        parse_addr(input)
+    }
+
+    /// Parse, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
+    pub fn parse_strict(input: &str) -> Result<Self, ParseError> {
+        Self::parse_with_warnings(input)?.into_strict()
     }
 
     /// The `tag` parameter value, if present.
@@ -306,40 +282,120 @@ impl SipHeaderAddr {
     }
 }
 
-/// Parse a quoted string, returning (unescaped content, rest after closing quote).
-fn parse_quoted_string(s: &str) -> Result<(String, &str), String> {
-    if !s.starts_with('"') {
-        return Err("expected opening quote".into());
-    }
-
+/// Read the quoted string opening `s`, returning its unescaped content and
+/// the byte index just past the closing quote; `None` when it never closes.
+fn parse_quoted_string(s: &str) -> Option<(String, usize)> {
     let mut result = String::new();
-    let mut chars = s[1..].char_indices();
+    let mut chars = s
+        .char_indices()
+        .skip(1);
 
     while let Some((i, c)) = chars.next() {
         match c {
-            '"' => {
-                return Ok((result, &s[i + 2..]));
-            }
-            '\\' => {
-                let (_, escaped) = chars
-                    .next()
-                    .ok_or("unterminated escape in quoted string")?;
-                result.push(escaped);
-            }
-            _ => {
-                result.push(c);
-            }
+            '"' => return Some((result, i + 1)),
+            '\\' => result.push(
+                chars
+                    .next()?
+                    .1,
+            ),
+            _ => result.push(c),
         }
     }
-
-    Err("unterminated quoted string".into())
+    None
 }
 
-/// Extract the URI from `<...>`, returning `(uri_str, rest_after_>)`.
-fn extract_angle_uri(s: &str) -> Option<(&str, &str)> {
-    let s = s.strip_prefix('<')?;
-    let end = s.find('>')?;
-    Some((&s[..end], &s[end + 1..]))
+/// Byte range of the URI inside the `<...>` opening `s[open..]`, and the
+/// index just past `>`.
+fn angle_uri(s: &str, open: usize, offset: usize) -> Result<(usize, usize, usize), ParseError> {
+    if !s[open..].starts_with('<') {
+        return Err(ParseError::malformed(
+            Field::Addr,
+            FaultCode::Missing,
+            Some(offset + open),
+        ));
+    }
+    let close = s[open..]
+        .find('>')
+        .map(|i| open + i)
+        .ok_or_else(|| {
+            ParseError::malformed(Field::Addr, FaultCode::Unterminated, Some(offset + open))
+        })?;
+    Ok((open + 1, close, close + 1))
+}
+
+/// Parse the URI at `text`, which starts `offset` bytes into the caller's
+/// input, forwarding its warnings.
+fn parse_uri(
+    text: &str,
+    offset: usize,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<sip_uri::Uri, ParseError> {
+    let parsed = sip_uri::Uri::parse_with_warnings(text).map_err(|e| ParseError::uri(e, offset))?;
+    warnings.extend(
+        parsed
+            .warnings
+            .into_iter()
+            .map(|w| ParseWarning::from_uri(w, offset)),
+    );
+    Ok(parsed.value)
+}
+
+fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
+    let lead = input.len()
+        - input
+            .trim_start()
+            .len();
+    let s = input.trim();
+    if s.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let mut warnings = Vec::new();
+
+    let (display_name, open) = if s.starts_with('"') {
+        let (name, end) = parse_quoted_string(s).ok_or_else(|| {
+            ParseError::malformed(Field::DisplayName, FaultCode::Unterminated, Some(lead))
+        })?;
+        let open = end
+            + (s[end..].len()
+                - s[end..]
+                    .trim_start()
+                    .len());
+        (Some(name), Some(open))
+    } else if let Some(open) = s.find('<') {
+        let name = s[..open].trim();
+        (Some(name.to_string()), Some(open))
+    } else {
+        (None, None)
+    };
+
+    let Some(open) = open else {
+        let uri = parse_uri(s, lead, &mut warnings)?;
+        return Ok(Parsed::new(SipHeaderAddr::new(uri), warnings));
+    };
+    let (start, end, after) = angle_uri(s, open, lead)?;
+    let uri = parse_uri(&s[start..end], lead + start, &mut warnings)?;
+    let tail = &s[after..];
+    let junk = tail.len()
+        - tail
+            .trim_start()
+            .len();
+    let params_start = if tail[junk..].is_empty() || tail[junk..].starts_with(';') {
+        0
+    } else {
+        warnings.push(ParseWarning::new(
+            Field::Param,
+            WarningCode::TrailingContent,
+            Some(lead + after + junk),
+        ));
+        tail.find(';')
+            .unwrap_or(tail.len())
+    };
+    let addr = SipHeaderAddr {
+        display_name: display_name.filter(|n| !n.is_empty()),
+        uri,
+        params: parse_header_params(&tail[params_start..]),
+    };
+    Ok(Parsed::new(addr, warnings))
 }
 
 /// Parse header-level parameters from the trailing portion after `>`.
@@ -399,10 +455,12 @@ fn is_quoted_string(v: &str) -> bool {
     false
 }
 
-fn validate_param_value(v: &str) -> Result<(), ParseSipHeaderAddrError> {
+fn validate_param_value(v: &str) -> Result<(), ParseError> {
     if v.is_empty() {
-        return Err(ParseSipHeaderAddrError(
-            "parameter value is empty".to_string(),
+        return Err(ParseError::malformed(
+            Field::Param,
+            FaultCode::Missing,
+            None,
         ));
     }
     let host_like = v
@@ -411,84 +469,21 @@ fn validate_param_value(v: &str) -> Result<(), ParseSipHeaderAddrError> {
     if host_like || is_quoted_string(v) {
         Ok(())
     } else {
-        Err(ParseSipHeaderAddrError(format!(
-            "parameter value ({} bytes) is not a token, host or quoted-string",
-            v.len()
-        )))
+        Err(ParseError::malformed(
+            Field::Param,
+            FaultCode::InvalidChar,
+            None,
+        ))
     }
 }
 
 impl FromStr for SipHeaderAddr {
-    type Err = ParseSipHeaderAddrError;
+    type Err = ParseError;
 
+    /// Parse leniently; an addr-spec without angle brackets keeps any `;params`
+    /// as URI parameters (RFC 3261 §20.10).
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let err = |msg: &str| ParseSipHeaderAddrError(msg.to_string());
-        let s = input.trim();
-
-        if s.is_empty() {
-            return Err(err("empty input"));
-        }
-
-        // Case 1: quoted display name followed by <URI> and optional params
-        if s.starts_with('"') {
-            let (display_name, rest) = parse_quoted_string(s).map_err(|e| err(&e))?;
-            let rest = rest.trim_start();
-            let (uri_str, trailing) = extract_angle_uri(rest)
-                .ok_or_else(|| err("expected '<URI>' after quoted display name"))?;
-            let uri: sip_uri::Uri = uri_str.parse()?;
-            let display_name = if display_name.is_empty() {
-                None
-            } else {
-                Some(display_name)
-            };
-            let params = parse_header_params(trailing);
-            return Ok(SipHeaderAddr {
-                display_name,
-                uri,
-                params,
-            });
-        }
-
-        // Case 2: <URI> without display name, with optional params
-        if s.starts_with('<') {
-            let (uri_str, trailing) = extract_angle_uri(s).ok_or_else(|| err("unclosed '<'"))?;
-            let uri: sip_uri::Uri = uri_str.parse()?;
-            let params = parse_header_params(trailing);
-            return Ok(SipHeaderAddr {
-                display_name: None,
-                uri,
-                params,
-            });
-        }
-
-        // Case 3: unquoted display name followed by <URI> and optional params
-        if let Some(angle_start) = s.find('<') {
-            let display_name = s[..angle_start].trim();
-            let display_name = if display_name.is_empty() {
-                None
-            } else {
-                Some(display_name.to_string())
-            };
-            let (uri_str, trailing) =
-                extract_angle_uri(&s[angle_start..]).ok_or_else(|| err("unclosed '<'"))?;
-            let uri: sip_uri::Uri = uri_str.parse()?;
-            let params = parse_header_params(trailing);
-            return Ok(SipHeaderAddr {
-                display_name,
-                uri,
-                params,
-            });
-        }
-
-        // Case 4: bare addr-spec (no angle brackets, no display name)
-        // RFC 3261 mandates angle brackets when URI has params, so all
-        // ;params are parsed as part of the URI itself.
-        let uri: sip_uri::Uri = s.parse()?;
-        Ok(SipHeaderAddr {
-            display_name: None,
-            uri,
-            params: Vec::new(),
-        })
+        Ok(parse_addr(input)?.value)
     }
 }
 
@@ -598,6 +593,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "esrp.example.com"
         );
@@ -619,7 +615,7 @@ mod tests {
             .sip_uri()
             .unwrap();
         assert_eq!(sip.user(), Some("+15551234567"));
-        assert_eq!(sip.param("user"), Some(&Some("phone".to_string())));
+        assert_eq!(sip.param("user"), Some(Some("phone")));
     }
 
     #[test]
@@ -783,13 +779,13 @@ mod tests {
     }
 
     #[test]
-    fn try_builder_display_name_and_params() {
+    fn builder_display_name_and_params() {
         let addr = example_addr()
-            .try_with_display_name("Alice")
+            .with_display_name("Alice")
             .unwrap()
-            .try_with_param("Tag", Some("abc123"))
+            .with_param("Tag", Some("abc123"))
             .unwrap()
-            .try_with_param("lr", None::<String>)
+            .with_param("lr", None::<String>)
             .unwrap();
         assert_eq!(addr.display_name(), Some("Alice"));
         assert_eq!(addr.tag(), Some("abc123"));
@@ -800,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn try_with_display_name_accepts_qdtext_and_quoted_pair() {
+    fn with_display_name_accepts_qdtext_and_quoted_pair() {
         for name in [
             "José",
             r#"Say "Hi""#,
@@ -811,7 +807,7 @@ mod tests {
             "",
         ] {
             let addr = example_addr()
-                .try_with_display_name(name)
+                .with_display_name(name)
                 .unwrap();
             let reparsed: SipHeaderAddr = addr
                 .to_string()
@@ -825,16 +821,16 @@ mod tests {
     #[test]
     fn display_escapes_control_chars_as_quoted_pair() {
         let addr = example_addr()
-            .try_with_display_name("a\u{1}b")
+            .with_display_name("a\u{1}b")
             .unwrap();
         assert_eq!(addr.to_string(), "\"a\\\u{1}b\" <sip:alice@example.com>");
     }
 
     #[test]
-    fn try_with_display_name_rejects_line_breaks() {
+    fn with_display_name_rejects_line_breaks() {
         for name in ["a\r\nSubject: evil", "a\nSubject: evil", "a\rSubject: evil"] {
             let e = example_addr()
-                .try_with_display_name(name)
+                .with_display_name(name)
                 .unwrap_err();
             assert!(
                 !e.to_string()
@@ -845,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn try_with_param_accepts_token_host_and_quoted() {
+    fn with_param_accepts_token_host_and_quoted() {
         for (key, value) in [
             ("tag", Some("abc123")),
             ("lr", None),
@@ -858,7 +854,7 @@ mod tests {
             ("e", Some(r#""""#)),
         ] {
             let addr = example_addr()
-                .try_with_param(key, value)
+                .with_param(key, value)
                 .unwrap();
             assert_eq!(addr.param_raw(key), Some(value), "{key}");
             let reparsed: SipHeaderAddr = addr
@@ -870,10 +866,10 @@ mod tests {
     }
 
     #[test]
-    fn try_with_param_rejects_bad_key() {
+    fn with_param_rejects_bad_key() {
         for key in ["", "a b", "a;b", "a=b", "a\r\nSubject: evil", "a\"b"] {
             let e = example_addr()
-                .try_with_param(key, Some("x"))
+                .with_param(key, Some("x"))
                 .unwrap_err();
             assert!(
                 !e.to_string()
@@ -884,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn try_with_param_rejects_bad_value() {
+    fn with_param_rejects_bad_value() {
         for value in [
             "",
             "a;b",
@@ -899,7 +895,7 @@ mod tests {
             "\"a\\\nb\"",
         ] {
             let e = example_addr()
-                .try_with_param("k", Some(value))
+                .with_param("k", Some(value))
                 .unwrap_err();
             assert!(
                 !e.to_string()
@@ -916,7 +912,9 @@ mod tests {
             .unwrap();
         let addr = SipHeaderAddr::new(uri)
             .with_display_name("Alice")
-            .with_param("tag", Some("abc123"));
+            .unwrap()
+            .with_param("tag", Some("abc123"))
+            .unwrap();
         assert_eq!(addr.display_name(), Some("Alice"));
         assert_eq!(addr.tag(), Some("abc123"));
         assert_eq!(addr.to_string(), "Alice <sip:alice@example.com>;tag=abc123");
@@ -927,7 +925,9 @@ mod tests {
         let uri: sip_uri::Uri = "sip:proxy@example.com"
             .parse()
             .unwrap();
-        let addr = SipHeaderAddr::new(uri).with_param("lr", None::<String>);
+        let addr = SipHeaderAddr::new(uri)
+            .with_param("lr", None::<String>)
+            .unwrap();
         assert_eq!(
             addr.param("lr")
                 .unwrap()
@@ -1041,8 +1041,62 @@ mod tests {
     }
 
     #[test]
-    fn parse_list_propagates_parse_error() {
-        assert!(SipHeaderAddr::parse_list("not-a-uri, <sip:ok@example.com>").is_err());
+    fn scheme_less_entry_is_lenient_but_not_strict() {
+        let addrs = SipHeaderAddr::parse_list("not-a-uri, <sip:ok@example.com>").unwrap();
+        assert_eq!(addrs.len(), 2);
+        let parsed = SipHeaderAddr::parse_with_warnings("not-a-uri").unwrap();
+        assert_eq!(
+            parsed.warnings[0].code,
+            WarningCode::Uri(sip_uri::WarningCode::MissingScheme)
+        );
+        assert!(matches!(
+            SipHeaderAddr::parse_strict("not-a-uri"),
+            Err(ParseError::NonConformant(_))
+        ));
+    }
+
+    #[test]
+    fn uri_warning_position_is_relative_to_header_value() {
+        let parsed = SipHeaderAddr::parse_with_warnings("Bob <sip:b@example.com:65536>").unwrap();
+        let w = parsed.warnings[0];
+        assert_eq!(w.field, Field::Uri(sip_uri::Component::Port));
+        assert!(w
+            .position
+            .is_some_and(|p| p >= "Bob <".len()));
+    }
+
+    #[test]
+    fn text_after_bracket_is_dropped_with_warning() {
+        let input = "<sip:a@example.com>garbage;tag=x";
+        let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .tag(),
+            Some("x")
+        );
+        assert_eq!(
+            parsed
+                .value
+                .params()
+                .count(),
+            1
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position),
+            (
+                Field::Param,
+                WarningCode::TrailingContent,
+                sip_uri::WarningKind::Lost,
+                Some(
+                    input
+                        .find('g')
+                        .unwrap()
+                )
+            )
+        );
+        assert!(SipHeaderAddr::parse_strict(input).is_err());
     }
 
     #[test]
@@ -1059,6 +1113,12 @@ mod tests {
         assert_eq!(r.host(), Some("203.0.113.5"));
         assert_eq!(r.to_tag(), "t1");
         assert_eq!(r.from_tag(), "f1");
+        assert_eq!(
+            Some(r.to_string()),
+            addr.sip_uri()
+                .and_then(|u| u.header("Replaces"))
+                .map(str::to_string)
+        );
     }
 
     #[test]
@@ -1084,11 +1144,12 @@ mod tests {
         assert_eq!(sip.user(), None);
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "198.51.100.7"
         );
         assert_eq!(sip.port(), Some(5060));
-        assert_eq!(sip.param("transport"), Some(&Some("udp".to_string())));
+        assert_eq!(sip.param("transport"), Some(Some("udp")));
         assert_eq!(
             addr.param_raw("+urn%3Aemergency%3Amedia-feature.psap-call-control"),
             Some(None),
@@ -1108,6 +1169,7 @@ mod tests {
         assert_eq!(sip.user(), None);
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "[2001:db8::7]"
         );
@@ -1129,6 +1191,7 @@ mod tests {
                 .sip_uri()
                 .unwrap()
                 .host()
+                .unwrap()
                 .to_string(),
             "198.51.100.7"
         );

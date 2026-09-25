@@ -15,6 +15,8 @@
 //! - [`warning`] — RFC 3261 Warning header parser
 //! - [`auth`] — SIP authentication value parser (Authorization, WWW-Authenticate, etc.)
 //! - [`contact`] — RFC 3261 Contact header parser
+//! - [`diagnostic`] — [`Parsed`] results and [`ParseWarning`]s for accepted grammar breaches
+//! - [`error`] — [`ParseError`], returned by every header-value parser
 //! - [`accept`] — RFC 3261 Accept header parser
 //! - [`accept_encoding`] — RFC 3261 Accept-Encoding header parser
 //! - [`accept_language`] — RFC 3261 Accept-Language header parser
@@ -39,6 +41,8 @@ pub mod call_id;
 #[cfg(feature = "conference-info")]
 pub mod conference_info;
 pub mod contact;
+pub mod diagnostic;
+pub mod error;
 pub mod geolocation;
 pub mod header;
 pub mod header_addr;
@@ -58,9 +62,11 @@ pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry, SipAcceptLa
 pub use auth::{SipAuthError, SipAuthValue};
 pub use call_id::{SipCallId, SipCallIdError};
 pub use contact::ContactValue;
+pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
+pub use error::{Fault, FaultCode, ParseError};
 pub use geolocation::{SipGeolocation, SipGeolocationRef};
 pub use header::{ParseSipHeaderError, SipHeader, SipHeaderLookup};
-pub use header_addr::{ParseSipHeaderAddrError, SipHeaderAddr};
+pub use header_addr::SipHeaderAddr;
 pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoError, HistoryInfoReason};
 #[cfg(feature = "message")]
 pub use message::{extract_all_headers, extract_body, extract_header, extract_request_uri};

@@ -5,7 +5,8 @@ use std::str::Utf8Error;
 
 use percent_encoding::percent_decode_str;
 
-use crate::header_addr::{ParseSipHeaderAddrError, SipHeaderAddr};
+use crate::error::ParseError;
+use crate::header_addr::SipHeaderAddr;
 
 /// Errors from parsing a History-Info header value (RFC 7044).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +15,7 @@ pub enum HistoryInfoError {
     /// The input string was empty or whitespace-only.
     Empty,
     /// An entry could not be parsed as a SIP name-addr.
-    InvalidEntry(ParseSipHeaderAddrError),
+    InvalidEntry(ParseError),
     /// The value could not be decoded into entries (transport or framing
     /// failure before per-entry parsing).
     Malformed(String),
@@ -39,8 +40,8 @@ impl std::error::Error for HistoryInfoError {
     }
 }
 
-impl From<ParseSipHeaderAddrError> for HistoryInfoError {
-    fn from(e: ParseSipHeaderAddrError) -> Self {
+impl From<ParseError> for HistoryInfoError {
+    fn from(e: ParseError) -> Self {
         Self::InvalidEntry(e)
     }
 }
@@ -352,6 +353,7 @@ mod tests {
         assert_eq!(sip.user(), Some("user1"));
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "esrp.example.com"
         );
@@ -366,6 +368,7 @@ mod tests {
         assert_eq!(sip.user(), None);
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "lsrg.example.com"
         );
@@ -380,13 +383,14 @@ mod tests {
         assert_eq!(sip.user(), Some("user1"));
         assert_eq!(
             sip.host()
+                .unwrap()
                 .to_string(),
             "esrp2.example.com"
         );
         assert!(sip
             .param("lr")
             .is_some());
-        assert_eq!(sip.param("transport"), Some(&Some("udp".to_string())));
+        assert_eq!(sip.param("transport"), Some(Some("udp")));
     }
 
     // -- Reason accessor tests --

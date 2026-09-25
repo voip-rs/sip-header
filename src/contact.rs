@@ -4,7 +4,9 @@
 //! or a comma-separated list of `name-addr / addr-spec` entries with
 //! optional parameters.
 
-use crate::header_addr::{ParseSipHeaderAddrError, SipHeaderAddr};
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
+use crate::header_addr::SipHeaderAddr;
 use std::fmt;
 
 /// A single Contact header value: either the `*` wildcard or an address.
@@ -27,7 +29,7 @@ impl fmt::Display for ContactValue {
 }
 
 /// Parse a single contact entry (after comma-splitting).
-fn parse_contact_entry(raw: &str) -> Result<ContactValue, ParseSipHeaderAddrError> {
+fn parse_contact_entry(raw: &str) -> Result<ContactValue, ParseError> {
     let trimmed = raw.trim();
     if trimmed == "*" {
         Ok(ContactValue::Wildcard)
@@ -39,7 +41,7 @@ fn parse_contact_entry(raw: &str) -> Result<ContactValue, ParseSipHeaderAddrErro
 }
 
 /// Parse a comma-separated Contact header value into a list of [`ContactValue`].
-pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseSipHeaderAddrError> {
+pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseError> {
     parse_contact_entries(crate::split_comma_entries(raw.trim()))
 }
 
@@ -48,19 +50,21 @@ pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseSipHeader
 /// `*` is only valid alone (RFC 3261 §20.10 `STAR / (contact-param *(COMMA contact-param))`).
 pub fn parse_contact_entries<'a>(
     entries: impl IntoIterator<Item = &'a str>,
-) -> Result<Vec<ContactValue>, ParseSipHeaderAddrError> {
+) -> Result<Vec<ContactValue>, ParseError> {
     let values: Vec<_> = entries
         .into_iter()
-        .map(parse_contact_entry)
+        .enumerate()
+        .map(|(i, raw)| parse_contact_entry(raw).map_err(|e| e.in_entry(i)))
         .collect::<Result<_, _>>()?;
-    if values.len() > 1
-        && values
+    if values.len() > 1 {
+        if let Some(i) = values
             .iter()
-            .any(|v| matches!(v, ContactValue::Wildcard))
-    {
-        return Err(ParseSipHeaderAddrError(
-            "Contact wildcard must be the only value".to_string(),
-        ));
+            .position(|v| matches!(v, ContactValue::Wildcard))
+        {
+            return Err(
+                ParseError::malformed(Field::Entry, FaultCode::Misplaced, None).in_entry(i),
+            );
+        }
     }
     Ok(values)
 }
