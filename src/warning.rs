@@ -385,6 +385,119 @@ mod tests {
         );
     }
 
+    fn only_warning(raw: &str) -> (SipWarningEntry, crate::ParseWarning) {
+        let parsed = SipWarning::parse_with_warnings(raw).unwrap();
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1,
+            "{raw}"
+        );
+        assert!(matches!(
+            SipWarning::parse_strict(raw),
+            Err(ParseError::NonConformant(_))
+        ));
+        (
+            parsed
+                .value
+                .entries()[0]
+                .clone(),
+            parsed.warnings[0],
+        )
+    }
+
+    #[test]
+    fn agent_with_space_is_kept_with_invalid_token() {
+        let raw = r#"301 example.com "ok", 399 a b "x""#;
+        let entry = SipWarning::parse(raw)
+            .unwrap()
+            .entries()[1]
+            .clone();
+        assert_eq!(entry.agent(), "a b");
+        assert_eq!(entry.text(), "x");
+        let parsed = SipWarning::parse_with_warnings(raw).unwrap();
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position, w.entry),
+            (
+                Field::Agent,
+                crate::WarningCode::InvalidToken,
+                sip_uri::WarningKind::Recovered,
+                Some(5),
+                Some(1)
+            )
+        );
+        assert!(matches!(
+            SipWarning::parse_strict(raw),
+            Err(ParseError::NonConformant(_))
+        ));
+    }
+
+    #[test]
+    fn agent_neither_hostport_nor_token_is_warned() {
+        for raw in [
+            r#"399 2001:db8::1 "bare ipv6""#,
+            r#"399 [2001:db8::1]:x "bad port""#,
+            r#"399 exa/mple "slash""#,
+        ] {
+            let (entry, w) = only_warning(raw);
+            assert_eq!(
+                entry.agent(),
+                &raw[4..raw
+                    .find(" \"")
+                    .unwrap()]
+            );
+            assert_eq!(
+                (w.field, w.code, w.position),
+                (Field::Agent, crate::WarningCode::InvalidToken, Some(4)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostport_and_pseudonym_agents_are_conformant() {
+        for raw in [
+            r#"399 example.com "a""#,
+            r#"399 example.com:5060 "a""#,
+            r#"399 198.51.100.1:5060 "a""#,
+            r#"399 [2001:db8::1] "a""#,
+            r#"399 [2001:db8::1]:5060 "a""#,
+            r#"399 my_pseudonym~1 "a""#,
+        ] {
+            assert!(
+                !SipWarning::parse_with_warnings(raw)
+                    .unwrap()
+                    .has_warnings(),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_ending_in_lone_backslash_is_dropped_with_warning() {
+        let raw = r#"399 example.com "C:\""#;
+        assert_eq!(
+            SipWarning::parse(raw)
+                .unwrap()
+                .entries()[0]
+                .text(),
+            "C:"
+        );
+        let (entry, w) = only_warning(raw);
+        assert_eq!(entry.text(), "C:");
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position),
+            (
+                Field::Text,
+                crate::WarningCode::TrailingBackslash,
+                sip_uri::WarningKind::Lost,
+                raw.find('\\')
+            )
+        );
+    }
+
     #[test]
     fn warnings_api_on_conformant_input() {
         let raw = r#"301 example.com "a", 399 example.org "b""#;
