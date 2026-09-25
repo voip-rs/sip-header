@@ -5,46 +5,9 @@ use std::str::Utf8Error;
 
 use percent_encoding::percent_decode_str;
 
-use crate::error::ParseError;
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 use crate::header_addr::SipHeaderAddr;
-
-/// Errors from parsing a History-Info header value (RFC 7044).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HistoryInfoError {
-    /// The input string was empty or whitespace-only.
-    Empty,
-    /// An entry could not be parsed as a SIP name-addr.
-    InvalidEntry(ParseError),
-    /// The value could not be decoded into entries (transport or framing
-    /// failure before per-entry parsing).
-    Malformed(String),
-}
-
-impl fmt::Display for HistoryInfoError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty History-Info header"),
-            Self::InvalidEntry(e) => write!(f, "invalid History-Info entry: {e}"),
-            Self::Malformed(reason) => write!(f, "malformed History-Info value: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for HistoryInfoError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidEntry(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<ParseError> for HistoryInfoError {
-    fn from(e: ParseError) -> Self {
-        Self::InvalidEntry(e)
-    }
-}
 
 /// Parsed RFC 3326 Reason header value extracted from a History-Info URI.
 ///
@@ -197,10 +160,10 @@ pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 
 impl HistoryInfo {
     /// Parse a standard comma-separated History-Info header value (RFC 7044).
-    pub fn parse(raw: &str) -> Result<Self, HistoryInfoError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err(HistoryInfoError::Empty);
+            return Err(ParseError::Empty);
         }
         Self::from_entries(crate::split_comma_entries(raw))
     }
@@ -209,15 +172,17 @@ impl HistoryInfo {
     ///
     /// Each entry should be a single `<uri>;params` string. Use this
     /// when entries have already been split by an external mechanism.
+    /// Error positions are relative to the entry, whose index the error carries.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, HistoryInfoError> {
+    ) -> Result<Self, ParseError> {
         let entries: Vec<_> = entries
             .into_iter()
-            .map(parse_entry)
+            .enumerate()
+            .map(|(i, e)| parse_entry(e).map_err(|err| err.in_entry(i)))
             .collect::<Result<_, _>>()?;
         if entries.is_empty() {
-            return Err(HistoryInfoError::Empty);
+            return Err(ParseError::Empty);
         }
         Ok(Self(entries))
     }
@@ -245,10 +210,13 @@ impl HistoryInfo {
     }
 }
 
-fn parse_entry(raw: &str) -> Result<HistoryInfoEntry, HistoryInfoError> {
+fn parse_entry(raw: &str) -> Result<HistoryInfoEntry, ParseError> {
     let addr: SipHeaderAddr = raw
-        .trim()
-        .parse()?;
+        .parse()
+        .map_err(|e| match e {
+            ParseError::Empty => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
+            other => other,
+        })?;
     Ok(HistoryInfoEntry { addr })
 }
 
@@ -313,10 +281,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert!(matches!(
-            HistoryInfo::parse(""),
-            Err(HistoryInfoError::Empty)
-        ));
+        assert_eq!(HistoryInfo::parse(""), Err(ParseError::Empty));
     }
 
     // -- Index accessor tests --
@@ -596,23 +561,15 @@ mod tests {
         assert_eq!(reason.text(), Some("a+b+c"));
     }
 
-    // -- Error variant tests --
-
     #[test]
-    fn malformed_display() {
-        let e = HistoryInfoError::Malformed("too many entries".to_string());
+    fn bad_entry_error_carries_index() {
         assert_eq!(
-            e.to_string(),
-            "malformed History-Info value: too many entries"
+            HistoryInfo::from_entries(["<sip:a@example.com>;index=1", " "]),
+            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
         );
-    }
-
-    #[test]
-    fn malformed_no_source() {
-        use std::error::Error;
-        let e = HistoryInfoError::Malformed("framing failure".to_string());
-        assert!(e
-            .source()
-            .is_none());
+        assert!(matches!(
+            HistoryInfo::parse("<sip:a@example.com>;index=1, <sip:b@example.com"),
+            Err(ParseError::Malformed(f)) if f.entry == Some(1) && f.code == FaultCode::Unterminated
+        ));
     }
 }

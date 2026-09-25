@@ -8,7 +8,7 @@ use percent_encoding::percent_decode_str;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
-use crate::replaces::{SipReplaces, SipReplacesError};
+use crate::replaces::SipReplaces;
 
 /// Parsed SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
@@ -230,7 +230,7 @@ impl SipHeaderAddr {
     /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
     /// `Replaces` header; `Some(Err)` when the value doesn't conform to
     /// RFC 3891 §6.1.
-    pub fn replaces(&self) -> Option<Result<SipReplaces, SipReplacesError>> {
+    pub fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
         let value = self
             .sip_uri()?
             .header("Replaces")?;

@@ -2,7 +2,11 @@
 
 use std::fmt;
 
-use crate::accept::{all_blank, read_accept_params, write_accept_params};
+use crate::accept::{
+    all_blank, missing_entry, parse_entries, read_accept_params, write_accept_params,
+};
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,34 +48,10 @@ impl fmt::Display for SipAcceptEncodingEntry {
     }
 }
 
-/// Errors from parsing an Accept-Encoding header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipAcceptEncodingError {
-    /// An empty value. Not returned by parsing, which reads an empty value as
-    /// the empty list RFC 3261 §25.1 allows.
-    Empty,
-    /// An entry could not be parsed.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipAcceptEncodingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty Accept-Encoding header value"),
-            Self::InvalidFormat(raw) => {
-                write!(f, "invalid Accept-Encoding entry ({} bytes)", raw.len())
-            }
-        }
-    }
-}
-
-impl std::error::Error for SipAcceptEncodingError {}
-
-fn parse_entry(raw: &str) -> Result<SipAcceptEncodingEntry, SipAcceptEncodingError> {
-    let raw = raw.trim();
+fn parse_entry(entry: &str) -> Result<SipAcceptEncodingEntry, ParseError> {
+    let raw = entry.trim();
     if raw.is_empty() {
-        return Err(SipAcceptEncodingError::InvalidFormat(raw.to_string()));
+        return Err(missing_entry());
     }
 
     let (encoding_part, params_part) = match raw.split_once(';') {
@@ -80,7 +60,11 @@ fn parse_entry(raw: &str) -> Result<SipAcceptEncodingEntry, SipAcceptEncodingErr
     };
 
     if encoding_part.is_empty() {
-        return Err(SipAcceptEncodingError::InvalidFormat(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Coding,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, raw)),
+        ));
     }
 
     Ok(SipAcceptEncodingEntry {
@@ -98,28 +82,24 @@ impl SipAcceptEncoding {
     /// Parse a comma-separated Accept-Encoding header value.
     ///
     /// An empty or whitespace-only value is the empty list (RFC 3261 §25.1).
-    pub fn parse(raw: &str) -> Result<Self, SipAcceptEncodingError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         Self::from_entries(crate::split_comma_entries(raw))
     }
 
     /// Build from entries a transport already split; each is one `encoding`.
     ///
     /// No entries, or only blank ones, is the empty list; a blank entry beside
-    /// a real one is an error.
+    /// a real one is an error. Error positions are relative to the entry.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, SipAcceptEncodingError> {
+    ) -> Result<Self, ParseError> {
         let entries: Vec<&str> = entries
             .into_iter()
             .collect();
         if all_blank(&entries) {
             return Ok(Self(Vec::new()));
         }
-        entries
-            .into_iter()
-            .map(parse_entry)
-            .collect::<Result<_, _>>()
-            .map(Self)
+        parse_entries(entries, parse_entry).map(Self)
     }
 
     /// The parsed entries as a slice.
@@ -151,7 +131,7 @@ impl fmt::Display for SipAcceptEncoding {
     }
 }
 
-impl_from_str_via_parse!(SipAcceptEncoding, SipAcceptEncodingError);
+impl_from_str_via_parse!(SipAcceptEncoding, ParseError);
 
 impl<'a> IntoIterator for &'a SipAcceptEncoding {
     type Item = &'a SipAcceptEncodingEntry;
@@ -257,10 +237,18 @@ mod tests {
 
     #[test]
     fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
+        assert_eq!(
             SipAcceptEncoding::from_entries(["gzip", "   "]),
-            Err(SipAcceptEncodingError::InvalidFormat(_))
-        ));
+            Err(missing_entry().in_entry(1))
+        );
+    }
+
+    #[test]
+    fn params_without_coding_is_error() {
+        assert_eq!(
+            SipAcceptEncoding::parse(" ;q=1"),
+            Err(ParseError::malformed(Field::Coding, FaultCode::Missing, Some(1)).in_entry(0))
+        );
     }
 
     #[test]

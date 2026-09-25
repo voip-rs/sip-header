@@ -56,26 +56,26 @@ pub mod uri_info;
 pub mod via;
 pub mod warning;
 
-pub use accept::{SipAccept, SipAcceptEntry, SipAcceptError};
-pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEncodingError};
-pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry, SipAcceptLanguageError};
-pub use auth::{SipAuthError, SipAuthValue};
-pub use call_id::{SipCallId, SipCallIdError};
+pub use accept::{SipAccept, SipAcceptEntry};
+pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};
+pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
+pub use auth::SipAuthValue;
+pub use call_id::SipCallId;
 pub use contact::ContactValue;
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use error::{Fault, FaultCode, ParseError};
 pub use geolocation::{SipGeolocation, SipGeolocationRef};
 pub use header::{ParseSipHeaderError, SipHeader, SipHeaderLookup};
 pub use header_addr::SipHeaderAddr;
-pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoError, HistoryInfoReason};
+pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 #[cfg(feature = "message")]
 pub use message::{extract_all_headers, extract_body, extract_header, extract_request_uri};
-pub use replaces::{SipReplaces, SipReplacesError};
-pub use security::{SipSecurity, SipSecurityError, SipSecurityMechanism};
-pub use target_dialog::{SipTargetDialog, SipTargetDialogError};
-pub use uri_info::{UriInfo, UriInfoEntry, UriInfoError};
-pub use via::{SipVia, SipViaEntry, SipViaError};
-pub use warning::{SipWarning, SipWarningEntry, SipWarningError};
+pub use replaces::SipReplaces;
+pub use security::{SipSecurity, SipSecurityMechanism};
+pub use target_dialog::SipTargetDialog;
+pub use uri_info::{UriInfo, UriInfoEntry};
+pub use via::{SipVia, SipViaEntry};
+pub use warning::{SipWarning, SipWarningEntry};
 
 /// Format a slice of displayable items as a separated list.
 pub(crate) fn fmt_joined<T: std::fmt::Display>(
@@ -93,6 +93,11 @@ pub(crate) fn fmt_joined<T: std::fmt::Display>(
         write!(f, "{item}")?;
     }
     Ok(())
+}
+
+/// Byte offset of `inner`, a subslice of `outer`, within `outer`.
+pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
+    (inner.as_ptr() as usize).saturating_sub(outer.as_ptr() as usize)
 }
 
 /// Unescape RFC 3261 §25.1 `quoted-pair` sequences: `\"` → `"`, `\\` → `\`.

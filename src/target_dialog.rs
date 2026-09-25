@@ -2,39 +2,10 @@
 
 use std::fmt;
 
+use crate::error::ParseError;
 use crate::replaces::{
-    decode_uri_header_value, parse_dialog_id, validate_call_id, write_params, DialogIdError,
+    parse_dialog_id, parse_uri_header_dialog_id, validate_call_id, write_params, DialogId,
 };
-
-/// Error parsing a Target-Dialog header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipTargetDialogError {
-    /// The Target-Dialog header value is empty.
-    Empty,
-    /// The Target-Dialog header value has an invalid format.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipTargetDialogError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "Target-Dialog header is empty"),
-            Self::InvalidFormat(msg) => write!(f, "Invalid Target-Dialog format: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for SipTargetDialogError {}
-
-impl From<DialogIdError> for SipTargetDialogError {
-    fn from(e: DialogIdError) -> Self {
-        match e {
-            DialogIdError::Empty => Self::Empty,
-            DialogIdError::Invalid(msg) => Self::InvalidFormat(msg),
-        }
-    }
-}
 
 /// A parsed `Target-Dialog` header value (RFC 4538 §7).
 ///
@@ -52,15 +23,19 @@ pub struct SipTargetDialog {
 
 impl SipTargetDialog {
     /// Parse a wire-form header value: `callid;local-tag=x;remote-tag=y`.
-    pub fn parse(raw: &str) -> Result<Self, SipTargetDialogError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let id = parse_dialog_id(raw, "local-tag", "remote-tag", false)?;
-        Ok(Self {
+        Ok(Self::from_id(id, false))
+    }
+
+    fn from_id(id: DialogId, uri_header_framing: bool) -> Self {
+        Self {
             call_id: id.call_id,
             local_tag: id.first_tag,
             remote_tag: id.second_tag,
             params: id.params,
-            uri_header_framing: false,
-        })
+            uri_header_framing,
+        }
     }
 
     /// Parse the percent-encoded framing found in a URI header,
@@ -69,11 +44,11 @@ impl SipTargetDialog {
     /// Accepts the canonicalised value returned by
     /// [`sip_uri::SipUri::header`]; [`Display`](fmt::Display) re-encodes to
     /// that same canonical form (uppercase hex).
-    pub fn parse_uri_header(raw: &str) -> Result<Self, SipTargetDialogError> {
-        let decoded = decode_uri_header_value(raw)?;
-        let mut parsed = Self::parse(&decoded)?;
-        parsed.uri_header_framing = true;
-        Ok(parsed)
+    ///
+    /// Error positions are dropped: they would point into the decoded text.
+    pub fn parse_uri_header(raw: &str) -> Result<Self, ParseError> {
+        let id = parse_uri_header_dialog_id(raw, "local-tag", "remote-tag", false)?;
+        Ok(Self::from_id(id, true))
     }
 
     /// The Call-ID of the target dialog.
@@ -97,12 +72,9 @@ impl SipTargetDialog {
     /// let t = SipTargetDialog::parse("abc@203.0.113.5;local-tag=l1;remote-tag=r1")?
     ///     .with_call_id("abc@example.com")?;
     /// assert_eq!(t.to_string(), "abc@example.com;local-tag=l1;remote-tag=r1");
-    /// # Ok::<(), sip_header::SipTargetDialogError>(())
+    /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    pub fn with_call_id(
-        mut self,
-        call_id: impl Into<String>,
-    ) -> Result<Self, SipTargetDialogError> {
+    pub fn with_call_id(mut self, call_id: impl Into<String>) -> Result<Self, ParseError> {
         let call_id = call_id.into();
         validate_call_id(&call_id)?;
         self.call_id = call_id;
@@ -161,7 +133,7 @@ impl fmt::Display for SipTargetDialog {
     }
 }
 
-impl_from_str_via_parse!(SipTargetDialog, SipTargetDialogError);
+impl_from_str_via_parse!(SipTargetDialog, ParseError);
 
 #[cfg(test)]
 mod tests {
@@ -188,10 +160,7 @@ mod tests {
 
     #[test]
     fn empty_fails() {
-        assert!(matches!(
-            SipTargetDialog::parse(""),
-            Err(SipTargetDialogError::Empty)
-        ));
+        assert_eq!(SipTargetDialog::parse(""), Err(ParseError::Empty));
     }
 
     #[test]

@@ -170,6 +170,8 @@ pub enum Field {
     Qvalue,
     /// A Geolocation `locationValue`.
     Reference,
+    /// The header value as a whole.
+    Value,
 }
 
 impl fmt::Display for Field {
@@ -197,6 +199,7 @@ impl fmt::Display for Field {
             Field::Language => "language-range",
             Field::Qvalue => "qvalue",
             Field::Reference => "location",
+            Field::Value => "value",
         };
         f.write_str(name)
     }

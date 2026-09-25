@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
+
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -53,48 +56,33 @@ impl fmt::Display for SipAcceptEntry {
     }
 }
 
-/// Errors from parsing an Accept header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipAcceptError {
-    /// An empty value. Not returned by parsing, which reads an empty value as
-    /// the empty list RFC 3261 §25.1 allows.
-    Empty,
-    /// An entry could not be parsed.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipAcceptError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty Accept header value"),
-            Self::InvalidFormat(raw) => write!(f, "invalid Accept entry ({} bytes)", raw.len()),
-        }
-    }
-}
-
-impl std::error::Error for SipAcceptError {}
-
-fn parse_accept_entry(raw: &str) -> Result<SipAcceptEntry, SipAcceptError> {
-    let raw = raw.trim();
+fn parse_accept_entry(entry: &str) -> Result<SipAcceptEntry, ParseError> {
+    let raw = entry.trim();
     if raw.is_empty() {
-        return Err(SipAcceptError::InvalidFormat(raw.to_string()));
+        return Err(missing_entry());
     }
 
     let (media_part, params_part) = match raw.split_once(';') {
         Some((m, p)) => (m.trim(), Some(p)),
         None => (raw, None),
     };
+    let bad_range = || {
+        ParseError::malformed(
+            Field::MediaRange,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, media_part)),
+        )
+    };
 
     let (type_str, subtype_str) = media_part
         .split_once('/')
-        .ok_or_else(|| SipAcceptError::InvalidFormat(raw.to_string()))?;
+        .ok_or_else(bad_range)?;
 
     let type_str = type_str.trim();
     let subtype_str = subtype_str.trim();
 
     if type_str.is_empty() || subtype_str.is_empty() {
-        return Err(SipAcceptError::InvalidFormat(raw.to_string()));
+        return Err(bad_range());
     }
 
     let mut media_range = type_str.to_ascii_lowercase();
@@ -141,6 +129,24 @@ pub(crate) fn write_accept_params(
     Ok(())
 }
 
+/// A blank entry beside a real one, shared by the Accept-* headers.
+pub(crate) fn missing_entry() -> ParseError {
+    ParseError::malformed(Field::Entry, FaultCode::Missing, None)
+}
+
+/// Parse each entry, attributing a failure to its index; shared by the
+/// Accept-* headers.
+pub(crate) fn parse_entries<'a, T>(
+    entries: Vec<&'a str>,
+    parse: impl Fn(&'a str) -> Result<T, ParseError>,
+) -> Result<Vec<T>, ParseError> {
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| parse(e).map_err(|err| err.in_entry(i)))
+        .collect()
+}
+
 /// True when every entry is blank: the empty list `[ accept-range *(COMMA
 /// accept-range) ]` allows (RFC 3261 §25.1), shared by the Accept-* headers.
 pub(crate) fn all_blank(entries: &[&str]) -> bool {
@@ -161,28 +167,24 @@ impl SipAccept {
     /// Parse a comma-separated Accept header value.
     ///
     /// An empty or whitespace-only value is the empty list (RFC 3261 §25.1).
-    pub fn parse(raw: &str) -> Result<Self, SipAcceptError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         Self::from_entries(crate::split_comma_entries(raw))
     }
 
     /// Build from entries a transport already split; each is one `accept-range`.
     ///
     /// No entries, or only blank ones, is the empty list; a blank entry beside
-    /// a real one is an error.
+    /// a real one is an error. Error positions are relative to the entry.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, SipAcceptError> {
+    ) -> Result<Self, ParseError> {
         let entries: Vec<&str> = entries
             .into_iter()
             .collect();
         if all_blank(&entries) {
             return Ok(Self(Vec::new()));
         }
-        entries
-            .into_iter()
-            .map(parse_accept_entry)
-            .collect::<Result<_, _>>()
-            .map(Self)
+        parse_entries(entries, parse_accept_entry).map(Self)
     }
 
     /// The parsed entries as a slice.
@@ -214,7 +216,7 @@ impl fmt::Display for SipAccept {
     }
 }
 
-impl_from_str_via_parse!(SipAccept, SipAcceptError);
+impl_from_str_via_parse!(SipAccept, ParseError);
 
 impl<'a> IntoIterator for &'a SipAccept {
     type Item = &'a SipAcceptEntry;
@@ -307,10 +309,10 @@ mod tests {
 
     #[test]
     fn missing_slash() {
-        assert!(matches!(
+        assert_eq!(
             SipAccept::parse("application"),
-            Err(SipAcceptError::InvalidFormat(_))
-        ));
+            Err(ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(0)).in_entry(0))
+        );
     }
 
     #[test]
@@ -339,10 +341,18 @@ mod tests {
 
     #[test]
     fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
-            SipAccept::from_entries(["application/sdp", "noslash"]),
-            Err(SipAcceptError::InvalidFormat(_))
-        ));
+        assert_eq!(
+            SipAccept::from_entries(["application/sdp", " noslash"]),
+            Err(ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(1)).in_entry(1))
+        );
+    }
+
+    #[test]
+    fn blank_entry_beside_real_one_is_error() {
+        assert_eq!(
+            SipAccept::parse("application/sdp, "),
+            Err(missing_entry().in_entry(1))
+        );
     }
 
     #[test]

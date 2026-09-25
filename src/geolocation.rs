@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::error::ParseError;
+
 /// A reference extracted from a SIP Geolocation header (RFC 6442).
 ///
 /// Each entry is either a `cid:` reference to a MIME body part
@@ -58,10 +60,11 @@ fn parse_ref(entry: &str) -> Option<SipGeolocationRef> {
 /// use sip_header::SipGeolocation;
 ///
 /// let raw = "<cid:abc-123>, <https://lis.example.com/held/abc>";
-/// let geo = SipGeolocation::parse(raw);
+/// let geo = SipGeolocation::parse(raw)?;
 /// assert_eq!(geo.len(), 2);
 /// assert!(geo.cid().is_some());
 /// assert!(geo.url().is_some());
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipGeolocation(Vec<SipGeolocationRef>);
@@ -69,9 +72,16 @@ pub struct SipGeolocation(Vec<SipGeolocationRef>);
 impl SipGeolocation {
     /// Parse a raw Geolocation header value into typed references.
     ///
-    /// Entries that are not a `<uri>` are skipped.
-    pub fn parse(raw: &str) -> Self {
-        Self::from_entries(crate::split_comma_entries(raw))
+    /// Entries that are not a `<uri>` are skipped; only an empty value is an
+    /// error.
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
+        if raw
+            .trim()
+            .is_empty()
+        {
+            return Err(ParseError::Empty);
+        }
+        Ok(Self::from_entries(crate::split_comma_entries(raw)))
     }
 
     /// Build from entries a transport already split; each is one
@@ -174,10 +184,14 @@ impl IntoIterator for SipGeolocation {
 mod tests {
     use super::*;
 
+    fn parse(raw: &str) -> SipGeolocation {
+        SipGeolocation::parse(raw).unwrap()
+    }
+
     #[test]
     fn parse_cid_and_url() {
         let raw = "<cid:32863354-18b4-4069-bd00-7bced5fc6c9b>, <https://lis.example.com/api/v1/held/test>";
-        let geo = SipGeolocation::parse(raw);
+        let geo = parse(raw);
         assert_eq!(geo.len(), 2);
         assert_eq!(geo.cid(), Some("32863354-18b4-4069-bd00-7bced5fc6c9b"));
         assert!(geo
@@ -188,7 +202,7 @@ mod tests {
 
     #[test]
     fn single_cid() {
-        let geo = SipGeolocation::parse("<cid:abc-123>");
+        let geo = parse("<cid:abc-123>");
         assert_eq!(geo.len(), 1);
         assert_eq!(geo.cid(), Some("abc-123"));
         assert!(geo
@@ -198,7 +212,7 @@ mod tests {
 
     #[test]
     fn single_url() {
-        let geo = SipGeolocation::parse("<https://lis.example.com/location>");
+        let geo = parse("<https://lis.example.com/location>");
         assert_eq!(geo.len(), 1);
         assert!(geo
             .cid()
@@ -208,13 +222,14 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        let geo = SipGeolocation::parse("");
-        assert!(geo.is_empty());
+        assert_eq!(SipGeolocation::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipGeolocation::parse(" \t"), Err(ParseError::Empty));
+        assert!(parse("junk").is_empty());
     }
 
     #[test]
     fn empty_brackets_skipped() {
-        let geo = SipGeolocation::parse("<>, <cid:test>");
+        let geo = parse("<>, <cid:test>");
         assert_eq!(geo.len(), 1);
         assert_eq!(geo.cid(), Some("test"));
     }
@@ -222,13 +237,13 @@ mod tests {
     #[test]
     fn display_roundtrip() {
         let raw = "<cid:abc-123>, <https://lis.example.com/test>";
-        let geo = SipGeolocation::parse(raw);
+        let geo = parse(raw);
         assert_eq!(geo.to_string(), raw);
     }
 
     #[test]
     fn geoloc_params_dropped() {
-        let geo = SipGeolocation::parse("<cid:x@example.com>;inserted-by=y");
+        let geo = parse("<cid:x@example.com>;inserted-by=y");
         assert_eq!(
             geo.refs(),
             &[SipGeolocationRef::Cid("x@example.com".into())]
@@ -237,7 +252,7 @@ mod tests {
 
     #[test]
     fn comma_inside_brackets_not_split() {
-        let geo = SipGeolocation::parse("<https://example.com/a,b>");
+        let geo = parse("<https://example.com/a,b>");
         assert_eq!(
             geo.refs(),
             &[SipGeolocationRef::Url("https://example.com/a,b".into())]
@@ -246,13 +261,13 @@ mod tests {
 
     #[test]
     fn cid_scheme_case_insensitive() {
-        let geo = SipGeolocation::parse("<CID:x@example.com>");
+        let geo = parse("<CID:x@example.com>");
         assert_eq!(geo.cid(), Some("x@example.com"));
     }
 
     #[test]
     fn unbracketed_entry_skipped() {
-        let geo = SipGeolocation::parse("cid:x@example.com, <https://example.com/loc>");
+        let geo = parse("cid:x@example.com, <https://example.com/loc>");
         assert_eq!(geo.len(), 1);
         assert_eq!(geo.url(), Some("https://example.com/loc"));
     }
@@ -261,7 +276,7 @@ mod tests {
     fn from_entries_matches_parse() {
         let split =
             SipGeolocation::from_entries(["<cid:a>;inserted-by=x", "<https://example.com/a,b>"]);
-        let joined = SipGeolocation::parse("<cid:a>;inserted-by=x, <https://example.com/a,b>");
+        let joined = parse("<cid:a>;inserted-by=x, <https://example.com/a,b>");
         assert_eq!(split, joined);
         assert_eq!(split.len(), 2);
     }
@@ -269,7 +284,7 @@ mod tests {
     #[test]
     fn multiple_cids() {
         let raw = "<cid:first>, <cid:second>, <https://example.com/loc>";
-        let geo = SipGeolocation::parse(raw);
+        let geo = parse(raw);
         let cids: Vec<_> = geo
             .cids()
             .collect();

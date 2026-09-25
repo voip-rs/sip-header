@@ -557,7 +557,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
         let raw = extract_header(NG911_INVITE, "Geolocation");
         assert_eq!(raw.len(), 1);
-        let geo = SipGeolocation::parse(&raw[0]);
+        let geo = SipGeolocation::parse(&raw[0]).unwrap();
         assert_eq!(geo.len(), 2);
         assert_eq!(geo.cid(), Some("loc-id-1234"));
         assert!(geo

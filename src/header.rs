@@ -4,21 +4,22 @@
 //! plus a [`SipHeaderLookup`] trait providing typed convenience accessors for
 //! any key-value store that can look up headers by name.
 
-use crate::accept::{SipAccept, SipAcceptError};
-use crate::accept_encoding::{SipAcceptEncoding, SipAcceptEncodingError};
-use crate::accept_language::{SipAcceptLanguage, SipAcceptLanguageError};
-use crate::auth::{SipAuthError, SipAuthValue};
+use crate::accept::SipAccept;
+use crate::accept_encoding::SipAcceptEncoding;
+use crate::accept_language::SipAcceptLanguage;
+use crate::auth::SipAuthValue;
 use crate::contact::ContactValue;
-use crate::error::ParseError;
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
 use crate::header_addr::SipHeaderAddr;
-use crate::history_info::{HistoryInfo, HistoryInfoError};
-use crate::replaces::{SipReplaces, SipReplacesError};
-use crate::security::{SipSecurity, SipSecurityError};
-use crate::target_dialog::{SipTargetDialog, SipTargetDialogError};
-use crate::uri_info::{UriInfo, UriInfoError};
-use crate::via::{SipVia, SipViaError};
-use crate::warning::{SipWarning, SipWarningError};
+use crate::history_info::HistoryInfo;
+use crate::replaces::SipReplaces;
+use crate::security::SipSecurity;
+use crate::target_dialog::SipTargetDialog;
+use crate::uri_info::UriInfo;
+use crate::via::SipVia;
+use crate::warning::SipWarning;
 
 define_header_enum! {
     tests_mod: sip_header_generated_tests,
@@ -500,7 +501,7 @@ pub trait SipHeaderLookup {
     /// Parse the `Call-Info` header into a [`UriInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
-    fn call_info(&self) -> Result<Option<UriInfo>, UriInfoError> {
+    fn call_info(&self) -> Result<Option<UriInfo>, ParseError> {
         let rows = self.sip_header_all(SipHeader::CallInfo);
         if rows.is_empty() {
             return Ok(None);
@@ -511,7 +512,7 @@ pub trait SipHeaderLookup {
     /// Parse the `History-Info` header into a [`HistoryInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
-    fn history_info(&self) -> Result<Option<HistoryInfo>, HistoryInfoError> {
+    fn history_info(&self) -> Result<Option<HistoryInfo>, ParseError> {
         let rows = self.sip_header_all(SipHeader::HistoryInfo);
         if rows.is_empty() {
             return Ok(None);
@@ -561,7 +562,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Alert-Info` into a [`UriInfo`] (RFC 3261 §20.4).
-    fn alert_info(&self) -> Result<Option<UriInfo>, UriInfoError> {
+    fn alert_info(&self) -> Result<Option<UriInfo>, ParseError> {
         let rows = self.sip_header_all(SipHeader::AlertInfo);
         if rows.is_empty() {
             return Ok(None);
@@ -570,7 +571,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Error-Info` into a [`UriInfo`] (RFC 3261 §20.18).
-    fn error_info(&self) -> Result<Option<UriInfo>, UriInfoError> {
+    fn error_info(&self) -> Result<Option<UriInfo>, ParseError> {
         let rows = self.sip_header_all(SipHeader::ErrorInfo);
         if rows.is_empty() {
             return Ok(None);
@@ -624,7 +625,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Via` into a [`SipVia`] (RFC 3261 §20.42).
-    fn via(&self) -> Result<Option<SipVia>, SipViaError> {
+    fn via(&self) -> Result<Option<SipVia>, ParseError> {
         let rows = self.sip_header_all(SipHeader::Via);
         if rows.is_empty() {
             return Ok(None);
@@ -636,8 +637,8 @@ pub trait SipHeaderLookup {
     ///
     /// More than one occurrence is `Err`: RFC 3891 §3 has the receiver
     /// reject such a request with a 400.
-    fn replaces(&self) -> Result<Option<SipReplaces>, SipReplacesError> {
-        single_row(self, SipHeader::Replaces, SipReplacesError::InvalidFormat)?
+    fn replaces(&self) -> Result<Option<SipReplaces>, ParseError> {
+        single_row(self, SipHeader::Replaces)?
             .map(SipReplaces::parse)
             .transpose()
     }
@@ -646,8 +647,8 @@ pub trait SipHeaderLookup {
     ///
     /// Join shares the Replaces grammar (`callid;to-tag=x;from-tag=y`), so
     /// it reuses the same type. More than one occurrence is `Err` (RFC 3911 §4).
-    fn join(&self) -> Result<Option<SipReplaces>, SipReplacesError> {
-        single_row(self, SipHeader::Join, SipReplacesError::InvalidFormat)?
+    fn join(&self) -> Result<Option<SipReplaces>, ParseError> {
+        single_row(self, SipHeader::Join)?
             .map(SipReplaces::parse)
             .transpose()
     }
@@ -656,53 +657,38 @@ pub trait SipHeaderLookup {
     ///
     /// More than one occurrence is `Err`: the RFC 4538 §7 grammar is a single
     /// value, not a comma list (RFC 3261 §7.3.1).
-    fn target_dialog(&self) -> Result<Option<SipTargetDialog>, SipTargetDialogError> {
-        single_row(
-            self,
-            SipHeader::TargetDialog,
-            SipTargetDialogError::InvalidFormat,
-        )?
-        .map(SipTargetDialog::parse)
-        .transpose()
+    fn target_dialog(&self) -> Result<Option<SipTargetDialog>, ParseError> {
+        single_row(self, SipHeader::TargetDialog)?
+            .map(SipTargetDialog::parse)
+            .transpose()
     }
 
     /// Parse `Authorization` into a list of [`SipAuthValue`] (RFC 3261 §20.7).
     ///
     /// Auth headers MUST NOT be comma-combined (RFC 3261 §7.3.1), so each
-    /// occurrence is parsed separately via [`sip_header_all`](SipHeaderLookup::sip_header_all).
-    fn authorization(&self) -> Result<Vec<SipAuthValue>, SipAuthError> {
-        self.sip_header_all(SipHeader::Authorization)
-            .into_iter()
-            .map(|s| s.parse::<SipAuthValue>())
-            .collect()
+    /// occurrence is parsed separately via [`sip_header_all`](SipHeaderLookup::sip_header_all);
+    /// an error's entry index is the occurrence.
+    fn authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
+        parse_auth_rows(self.sip_header_all(SipHeader::Authorization))
     }
 
     /// Parse `Proxy-Authorization` into a list of [`SipAuthValue`] (RFC 3261 §20.28).
-    fn proxy_authorization(&self) -> Result<Vec<SipAuthValue>, SipAuthError> {
-        self.sip_header_all(SipHeader::ProxyAuthorization)
-            .into_iter()
-            .map(|s| s.parse::<SipAuthValue>())
-            .collect()
+    fn proxy_authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
+        parse_auth_rows(self.sip_header_all(SipHeader::ProxyAuthorization))
     }
 
     /// Parse `WWW-Authenticate` into a list of [`SipAuthValue`] (RFC 3261 §20.44).
-    fn www_authenticate(&self) -> Result<Vec<SipAuthValue>, SipAuthError> {
-        self.sip_header_all(SipHeader::WwwAuthenticate)
-            .into_iter()
-            .map(|s| s.parse::<SipAuthValue>())
-            .collect()
+    fn www_authenticate(&self) -> Result<Vec<SipAuthValue>, ParseError> {
+        parse_auth_rows(self.sip_header_all(SipHeader::WwwAuthenticate))
     }
 
     /// Parse `Proxy-Authenticate` into a list of [`SipAuthValue`] (RFC 3261 §20.27).
-    fn proxy_authenticate(&self) -> Result<Vec<SipAuthValue>, SipAuthError> {
-        self.sip_header_all(SipHeader::ProxyAuthenticate)
-            .into_iter()
-            .map(|s| s.parse::<SipAuthValue>())
-            .collect()
+    fn proxy_authenticate(&self) -> Result<Vec<SipAuthValue>, ParseError> {
+        parse_auth_rows(self.sip_header_all(SipHeader::ProxyAuthenticate))
     }
 
     /// Parse `Warning` into a [`SipWarning`] (RFC 3261 §20.43).
-    fn warning(&self) -> Result<Option<SipWarning>, SipWarningError> {
+    fn warning(&self) -> Result<Option<SipWarning>, ParseError> {
         let rows = self.sip_header_all(SipHeader::Warning);
         if rows.is_empty() {
             return Ok(None);
@@ -711,7 +697,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Security-Client` into a [`SipSecurity`] (RFC 3329).
-    fn security_client(&self) -> Result<Option<SipSecurity>, SipSecurityError> {
+    fn security_client(&self) -> Result<Option<SipSecurity>, ParseError> {
         let rows = self.sip_header_all(SipHeader::SecurityClient);
         if rows.is_empty() {
             return Ok(None);
@@ -720,7 +706,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Security-Server` into a [`SipSecurity`] (RFC 3329).
-    fn security_server(&self) -> Result<Option<SipSecurity>, SipSecurityError> {
+    fn security_server(&self) -> Result<Option<SipSecurity>, ParseError> {
         let rows = self.sip_header_all(SipHeader::SecurityServer);
         if rows.is_empty() {
             return Ok(None);
@@ -729,7 +715,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Security-Verify` into a [`SipSecurity`] (RFC 3329).
-    fn security_verify(&self) -> Result<Option<SipSecurity>, SipSecurityError> {
+    fn security_verify(&self) -> Result<Option<SipSecurity>, ParseError> {
         let rows = self.sip_header_all(SipHeader::SecurityVerify);
         if rows.is_empty() {
             return Ok(None);
@@ -738,7 +724,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Accept` into a [`SipAccept`] (RFC 3261 §20.1).
-    fn accept(&self) -> Result<Option<SipAccept>, SipAcceptError> {
+    fn accept(&self) -> Result<Option<SipAccept>, ParseError> {
         let rows = self.sip_header_all(SipHeader::Accept);
         if rows.is_empty() {
             return Ok(None);
@@ -747,7 +733,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Accept-Encoding` into a [`SipAcceptEncoding`] (RFC 3261 §20.2).
-    fn accept_encoding(&self) -> Result<Option<SipAcceptEncoding>, SipAcceptEncodingError> {
+    fn accept_encoding(&self) -> Result<Option<SipAcceptEncoding>, ParseError> {
         let rows = self.sip_header_all(SipHeader::AcceptEncoding);
         if rows.is_empty() {
             return Ok(None);
@@ -756,7 +742,7 @@ pub trait SipHeaderLookup {
     }
 
     /// Parse `Accept-Language` into a [`SipAcceptLanguage`] (RFC 3261 §20.3).
-    fn accept_language(&self) -> Result<Option<SipAcceptLanguage>, SipAcceptLanguageError> {
+    fn accept_language(&self) -> Result<Option<SipAcceptLanguage>, ParseError> {
         let rows = self.sip_header_all(SipHeader::AcceptLanguage);
         if rows.is_empty() {
             return Ok(None);
@@ -766,14 +752,14 @@ pub trait SipHeaderLookup {
 
     /// Parse every `Geolocation` row into a [`SipGeolocation`] (RFC 6442).
     ///
-    /// Returns `None` if the header is absent; entries that are not a
+    /// Returns `Ok(None)` if the header is absent; entries that are not a
     /// `<uri>` are skipped, as in [`SipGeolocation::parse`].
-    fn geolocation(&self) -> Option<SipGeolocation> {
+    fn geolocation(&self) -> Result<Option<SipGeolocation>, ParseError> {
         let rows = self.sip_header_all(SipHeader::Geolocation);
         if rows.is_empty() {
-            return None;
+            return Ok(None);
         }
-        Some(SipGeolocation::from_entries(split_all(rows)))
+        Ok(Some(SipGeolocation::from_entries(split_all(rows))))
     }
 
     /// Parse `Diversion` into a list of [`SipHeaderAddr`] (draft-levy-sip-diversion-08).
@@ -810,12 +796,15 @@ fn split_trim(rows: Vec<&str>) -> Vec<&str> {
         .collect()
 }
 
+fn parse_auth_rows(rows: Vec<&str>) -> Result<Vec<SipAuthValue>, ParseError> {
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, s)| SipAuthValue::parse(s).map_err(|e| e.in_entry(i)))
+        .collect()
+}
+
 /// The one occurrence of a header whose grammar admits a single value.
-fn single_row<L, E>(
-    lookup: &L,
-    name: SipHeader,
-    invalid: impl FnOnce(String) -> E,
-) -> Result<Option<&str>, E>
+fn single_row<L>(lookup: &L, name: SipHeader) -> Result<Option<&str>, ParseError>
 where
     L: SipHeaderLookup + ?Sized,
 {
@@ -825,7 +814,11 @@ where
     {
         [] => Ok(None),
         [row] => Ok(Some(*row)),
-        _ => Err(invalid(format!("more than one {name} header"))),
+        _ => Err(ParseError::malformed(
+            Field::Value,
+            FaultCode::Duplicate,
+            None,
+        )),
     }
 }
 
@@ -1430,6 +1423,7 @@ mod tests {
         );
         let geo = h
             .geolocation()
+            .unwrap()
             .unwrap();
         assert_eq!(geo.len(), 2);
         assert_eq!(geo.cid(), Some("loc@example.com"));
@@ -1439,9 +1433,7 @@ mod tests {
     #[test]
     fn geolocation_absent() {
         let h = headers_with(&[]);
-        assert!(h
-            .geolocation()
-            .is_none());
+        assert_eq!(h.geolocation(), Ok(None));
     }
 }
 
@@ -1754,9 +1746,12 @@ mod multi_row_tests {
     #[test]
     fn via_blank_rows() {
         let h = rows(&[("Via", &[""])]);
-        assert!(matches!(h.via(), Err(SipViaError::Empty)));
+        assert_eq!(h.via(), Err(ParseError::Empty));
         let h = rows(&[("Via", &["   "])]);
-        assert!(matches!(h.via(), Err(SipViaError::InvalidFormat(_))));
+        assert_eq!(
+            h.via(),
+            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(0))
+        );
     }
 
     #[test]
@@ -1975,17 +1970,12 @@ mod multi_row_tests {
     fn dialog_id_headers_reject_multiple_rows() {
         let r = "abc@example.com;to-tag=t1;from-tag=f1";
         let h = rows(&[("Replaces", &[r, r]), ("Join", &[r, r])]);
-        assert!(matches!(
-            h.replaces(),
-            Err(SipReplacesError::InvalidFormat(_))
-        ));
-        assert!(matches!(h.join(), Err(SipReplacesError::InvalidFormat(_))));
+        let duplicate = ParseError::malformed(Field::Value, FaultCode::Duplicate, None);
+        assert_eq!(h.replaces(), Err(duplicate.clone()));
+        assert_eq!(h.join(), Err(duplicate.clone()));
         let t = "abc@example.com;local-tag=l1;remote-tag=r1";
         let h = rows(&[("Target-Dialog", &[t, t])]);
-        assert!(matches!(
-            h.target_dialog(),
-            Err(SipTargetDialogError::InvalidFormat(_))
-        ));
+        assert_eq!(h.target_dialog(), Err(duplicate));
     }
 
     #[test]

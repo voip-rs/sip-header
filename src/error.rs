@@ -48,6 +48,26 @@ impl ParseError {
         }
     }
 
+    /// Drop the byte position, for input that was decoded before parsing.
+    pub(crate) fn without_position(self) -> Self {
+        match self {
+            ParseError::Malformed(fault) => ParseError::Malformed(Fault {
+                position: None,
+                ..fault
+            }),
+            ParseError::Uri { entry, source, .. } => ParseError::Uri {
+                position: None,
+                entry,
+                source,
+            },
+            ParseError::NonConformant(w) => ParseError::NonConformant(ParseWarning {
+                position: None,
+                ..w
+            }),
+            ParseError::Empty => ParseError::Empty,
+        }
+    }
+
     /// Attribute this error to list entry `index`.
     pub(crate) fn in_entry(self, index: usize) -> Self {
         match self {

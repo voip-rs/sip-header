@@ -4,6 +4,9 @@
 
 use std::fmt;
 
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
+
 /// A parsed security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -65,33 +68,14 @@ impl fmt::Display for SipSecurityMechanism {
     }
 }
 
-/// Errors from parsing a security mechanism header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipSecurityError {
-    /// The input string was empty or whitespace-only.
-    Empty,
-    /// A mechanism entry could not be parsed.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipSecurityError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty security mechanism value"),
-            Self::InvalidFormat(raw) => {
-                write!(f, "invalid security mechanism ({} bytes)", raw.len())
-            }
-        }
-    }
-}
-
-impl std::error::Error for SipSecurityError {}
-
-fn parse_mechanism(raw: &str) -> Result<SipSecurityMechanism, SipSecurityError> {
-    let raw = raw.trim();
+fn parse_mechanism(entry: &str) -> Result<SipSecurityMechanism, ParseError> {
+    let raw = entry.trim();
     if raw.is_empty() {
-        return Err(SipSecurityError::InvalidFormat(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Missing,
+            None,
+        ));
     }
 
     let (mechanism_part, params_part) = match raw.split_once(';') {
@@ -100,7 +84,11 @@ fn parse_mechanism(raw: &str) -> Result<SipSecurityMechanism, SipSecurityError> 
     };
 
     if mechanism_part.is_empty() {
-        return Err(SipSecurityError::InvalidFormat(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Mechanism,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, raw)),
+        ));
     }
 
     let mechanism = mechanism_part.to_ascii_lowercase();
@@ -135,24 +123,27 @@ pub struct SipSecurity(Vec<SipSecurityMechanism>);
 
 impl SipSecurity {
     /// Parse a comma-separated security mechanism value.
-    pub fn parse(raw: &str) -> Result<Self, SipSecurityError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err(SipSecurityError::Empty);
+            return Err(ParseError::Empty);
         }
         Self::from_entries(crate::split_comma_entries(raw))
     }
 
     /// Build from entries a transport already split; each is one `sec-mechanism`.
+    ///
+    /// Error positions are relative to the entry, whose index the error carries.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, SipSecurityError> {
+    ) -> Result<Self, ParseError> {
         let entries: Vec<_> = entries
             .into_iter()
-            .map(parse_mechanism)
+            .enumerate()
+            .map(|(i, e)| parse_mechanism(e).map_err(|err| err.in_entry(i)))
             .collect::<Result<_, _>>()?;
         if entries.is_empty() {
-            return Err(SipSecurityError::Empty);
+            return Err(ParseError::Empty);
         }
         Ok(Self(entries))
     }
@@ -186,7 +177,7 @@ impl fmt::Display for SipSecurity {
     }
 }
 
-impl_from_str_via_parse!(SipSecurity, SipSecurityError);
+impl_from_str_via_parse!(SipSecurity, ParseError);
 
 impl<'a> IntoIterator for &'a SipSecurity {
     type Item = &'a SipSecurityMechanism;
@@ -241,10 +232,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert!(matches!(
-            SipSecurity::parse(""),
-            Err(SipSecurityError::Empty)
-        ));
+        assert_eq!(SipSecurity::parse(""), Err(ParseError::Empty));
     }
 
     #[test]
@@ -277,18 +265,26 @@ mod tests {
 
     #[test]
     fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
+        assert_eq!(
             SipSecurity::from_entries(["tls", "   "]),
-            Err(SipSecurityError::InvalidFormat(_))
-        ));
+            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
+        );
+    }
+
+    #[test]
+    fn params_without_mechanism_is_error() {
+        assert_eq!(
+            SipSecurity::parse(";q=1"),
+            Err(ParseError::malformed(Field::Mechanism, FaultCode::Missing, Some(0)).in_entry(0))
+        );
     }
 
     #[test]
     fn from_entries_empty_is_empty_error() {
-        assert!(matches!(
+        assert_eq!(
             SipSecurity::from_entries(std::iter::empty::<&str>()),
-            Err(SipSecurityError::Empty)
-        ));
+            Err(ParseError::Empty)
+        );
     }
 }
 

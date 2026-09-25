@@ -2,32 +2,8 @@
 
 use std::fmt;
 
-/// Why a value is not a `callid`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipCallIdError {
-    /// A word of the value is empty.
-    Empty,
-    /// A character outside the `word` production.
-    NotWord(char),
-}
-
-impl fmt::Display for SipCallIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty call-id word"),
-            Self::NotWord(c) => {
-                write!(
-                    f,
-                    "call-id contains {:?}, not an RFC 3261 word character",
-                    c
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for SipCallIdError {}
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// RFC 3261 section 25.1 `word`.
 fn is_word_char(c: char) -> bool {
@@ -78,7 +54,7 @@ fn is_word_char(c: char) -> bool {
 ///
 /// let bare = SipCallId::parse("f81d4fae7dec11d0a76500a0c91e6bf6")?;
 /// assert_eq!(bare.host(), None);
-/// # Ok::<(), sip_header::SipCallIdError>(())
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SipCallId<'a> {
@@ -93,20 +69,29 @@ impl<'a> SipCallId<'a> {
     /// Errors on an empty word or a character outside `word` — including a
     /// second `@`, whitespace, and the separators that would let a value carry
     /// a parameter or a second header line.
-    pub fn parse(raw: &'a str) -> Result<Self, SipCallIdError> {
+    pub fn parse(raw: &'a str) -> Result<Self, ParseError> {
+        if raw.is_empty() {
+            return Err(ParseError::Empty);
+        }
         let (local, host) = match raw.split_once('@') {
             Some((local, host)) => (local, Some(host)),
             None => (raw, None),
         };
-        for word in std::iter::once(local).chain(host) {
+        let words = std::iter::once((0, local)).chain(host.map(|h| (local.len() + 1, h)));
+        for (offset, word) in words {
             if word.is_empty() {
-                return Err(SipCallIdError::Empty);
+                return Err(ParseError::malformed(
+                    Field::CallId,
+                    FaultCode::Missing,
+                    Some(offset),
+                ));
             }
-            if let Some(c) = word
-                .chars()
-                .find(|c| !is_word_char(*c))
-            {
-                return Err(SipCallIdError::NotWord(c));
+            if let Some(i) = word.find(|c| !is_word_char(c)) {
+                return Err(ParseError::malformed(
+                    Field::CallId,
+                    FaultCode::InvalidChar,
+                    Some(offset + i),
+                ));
             }
         }
         Ok(Self { raw, local, host })
@@ -181,13 +166,29 @@ mod tests {
 
     #[test]
     fn a_second_at_is_not_a_call_id() {
-        assert_eq!(SipCallId::parse("a@b@c"), Err(SipCallIdError::NotWord('@')));
+        assert_eq!(
+            SipCallId::parse("a@b@c"),
+            Err(ParseError::malformed(
+                Field::CallId,
+                FaultCode::InvalidChar,
+                Some(3)
+            ))
+        );
     }
 
     #[test]
     fn an_empty_word_is_not_a_call_id() {
-        for raw in ["", "abc@", "@example.com"] {
-            assert_eq!(SipCallId::parse(raw), Err(SipCallIdError::Empty), "{raw:?}");
+        assert_eq!(SipCallId::parse(""), Err(ParseError::Empty));
+        for (raw, pos) in [("abc@", 4), ("@example.com", 0)] {
+            assert_eq!(
+                SipCallId::parse(raw),
+                Err(ParseError::malformed(
+                    Field::CallId,
+                    FaultCode::Missing,
+                    Some(pos)
+                )),
+                "{raw:?}"
+            );
         }
     }
 

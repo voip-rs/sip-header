@@ -7,40 +7,8 @@ use std::fmt;
 
 use percent_encoding::percent_decode_str;
 
-/// Error parsing a Replaces header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipReplacesError {
-    /// The Replaces header value is empty.
-    Empty,
-    /// The Replaces header value has an invalid format.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipReplacesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "Replaces header is empty"),
-            Self::InvalidFormat(msg) => write!(f, "Invalid Replaces format: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for SipReplacesError {}
-
-impl From<DialogIdError> for SipReplacesError {
-    fn from(e: DialogIdError) -> Self {
-        match e {
-            DialogIdError::Empty => Self::Empty,
-            DialogIdError::Invalid(msg) => Self::InvalidFormat(msg),
-        }
-    }
-}
-
-pub(crate) enum DialogIdError {
-    Empty,
-    Invalid(String),
-}
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 pub(crate) struct DialogId {
     pub call_id: String,
@@ -59,10 +27,10 @@ pub(crate) fn parse_dialog_id(
     first_tag_name: &str,
     second_tag_name: &str,
     with_early_only: bool,
-) -> Result<DialogId, DialogIdError> {
+) -> Result<DialogId, ParseError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(DialogIdError::Empty);
+        return Err(ParseError::Empty);
     }
 
     // A call-id `word` may contain `"`, so it ends at the first raw `;`.
@@ -71,7 +39,11 @@ pub(crate) fn parse_dialog_id(
         .unwrap_or((trimmed, ""));
     let call_id = call_id.trim();
     if call_id.is_empty() {
-        return Err(DialogIdError::Invalid("missing call-id".to_string()));
+        return Err(ParseError::malformed(
+            Field::CallId,
+            FaultCode::Missing,
+            Some(crate::offset_in(raw, trimmed)),
+        ));
     }
 
     let mut first_tag: Option<String> = None;
@@ -94,13 +66,21 @@ pub(crate) fn parse_dialog_id(
             match slot {
                 Some(slot) => {
                     if value.is_empty() {
-                        return Err(DialogIdError::Invalid(format!("empty {}", key)));
+                        return Err(ParseError::malformed(
+                            Field::Tag,
+                            FaultCode::Missing,
+                            Some(crate::offset_in(raw, value)),
+                        ));
                     }
                     if slot
                         .replace(value.to_string())
                         .is_some()
                     {
-                        return Err(DialogIdError::Invalid(format!("duplicate {}", key)));
+                        return Err(ParseError::malformed(
+                            Field::Tag,
+                            FaultCode::Duplicate,
+                            Some(crate::offset_in(raw, param.key)),
+                        ));
                     }
                 }
                 None => params.push((key, Some(value.to_string()))),
@@ -114,10 +94,9 @@ pub(crate) fn parse_dialog_id(
         }
     }
 
-    let first_tag =
-        first_tag.ok_or_else(|| DialogIdError::Invalid(format!("missing {}", first_tag_name)))?;
-    let second_tag =
-        second_tag.ok_or_else(|| DialogIdError::Invalid(format!("missing {}", second_tag_name)))?;
+    let missing_tag = || ParseError::malformed(Field::Tag, FaultCode::Missing, None);
+    let first_tag = first_tag.ok_or_else(missing_tag)?;
+    let second_tag = second_tag.ok_or_else(missing_tag)?;
 
     Ok(DialogId {
         call_id: call_id.to_string(),
@@ -129,18 +108,29 @@ pub(crate) fn parse_dialog_id(
 }
 
 /// Validate `callid = word [ "@" word ]` (RFC 3261 §25.1).
-pub(crate) fn validate_call_id(raw: &str) -> Result<(), DialogIdError> {
-    crate::call_id::SipCallId::parse(raw)
-        .map(|_| ())
-        .map_err(|e| DialogIdError::Invalid(e.to_string()))
+pub(crate) fn validate_call_id(raw: &str) -> Result<(), ParseError> {
+    crate::call_id::SipCallId::parse(raw).map(|_| ())
 }
 
 /// Decode a percent-encoded URI-header value for dialog-id parsing.
-pub(crate) fn decode_uri_header_value(raw: &str) -> Result<String, DialogIdError> {
+pub(crate) fn decode_uri_header_value(raw: &str) -> Result<String, ParseError> {
     percent_decode_str(raw)
         .decode_utf8()
         .map(|s| s.into_owned())
-        .map_err(|e| DialogIdError::Invalid(format!("percent-decoded value is not UTF-8: {}", e)))
+        .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
+}
+
+/// Parse the URI-header framing of a dialog identifier; positions in the
+/// decoded text do not point into `raw`, so they are dropped.
+pub(crate) fn parse_uri_header_dialog_id(
+    raw: &str,
+    first_tag_name: &str,
+    second_tag_name: &str,
+    with_early_only: bool,
+) -> Result<DialogId, ParseError> {
+    let decoded = decode_uri_header_value(raw)?;
+    parse_dialog_id(&decoded, first_tag_name, second_tag_name, with_early_only)
+        .map_err(ParseError::without_position)
 }
 
 /// A parsed `Replaces` header value (RFC 3891 §6.1).
@@ -161,16 +151,20 @@ pub struct SipReplaces {
 
 impl SipReplaces {
     /// Parse a wire-form header value: `callid;to-tag=x;from-tag=y`.
-    pub fn parse(raw: &str) -> Result<Self, SipReplacesError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let id = parse_dialog_id(raw, "to-tag", "from-tag", true)?;
-        Ok(Self {
+        Ok(Self::from_id(id, false))
+    }
+
+    fn from_id(id: DialogId, uri_header_framing: bool) -> Self {
+        Self {
             call_id: id.call_id,
             to_tag: id.first_tag,
             from_tag: id.second_tag,
             early_only: id.early_only,
             params: id.params,
-            uri_header_framing: false,
-        })
+            uri_header_framing,
+        }
     }
 
     /// Parse the percent-encoded framing found in a URI header
@@ -179,11 +173,11 @@ impl SipReplaces {
     /// Accepts the canonicalised value returned by
     /// [`sip_uri::SipUri::header`]; [`Display`](fmt::Display) re-encodes to
     /// that same canonical form (uppercase hex).
-    pub fn parse_uri_header(raw: &str) -> Result<Self, SipReplacesError> {
-        let decoded = decode_uri_header_value(raw)?;
-        let mut parsed = Self::parse(&decoded)?;
-        parsed.uri_header_framing = true;
-        Ok(parsed)
+    ///
+    /// Error positions are dropped: they would point into the decoded text.
+    pub fn parse_uri_header(raw: &str) -> Result<Self, ParseError> {
+        let id = parse_uri_header_dialog_id(raw, "to-tag", "from-tag", true)?;
+        Ok(Self::from_id(id, true))
     }
 
     /// The Call-ID of the dialog being replaced.
@@ -207,9 +201,9 @@ impl SipReplaces {
     /// let r = SipReplaces::parse("abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only")?
     ///     .with_call_id("abc@example.com")?;
     /// assert_eq!(r.to_string(), "abc@example.com;to-tag=t1;from-tag=f1;early-only");
-    /// # Ok::<(), sip_header::SipReplacesError>(())
+    /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    pub fn with_call_id(mut self, call_id: impl Into<String>) -> Result<Self, SipReplacesError> {
+    pub fn with_call_id(mut self, call_id: impl Into<String>) -> Result<Self, ParseError> {
         let call_id = call_id.into();
         validate_call_id(&call_id)?;
         self.call_id = call_id;
@@ -283,7 +277,7 @@ impl fmt::Display for SipReplaces {
     }
 }
 
-impl_from_str_via_parse!(SipReplaces, SipReplacesError);
+impl_from_str_via_parse!(SipReplaces, ParseError);
 
 #[cfg(test)]
 mod tests {
@@ -334,7 +328,10 @@ mod tests {
 
     #[test]
     fn missing_to_tag_fails() {
-        assert!(SipReplaces::parse("abc@example.com;from-tag=f1").is_err());
+        assert_eq!(
+            SipReplaces::parse("abc@example.com;from-tag=f1"),
+            Err(ParseError::malformed(Field::Tag, FaultCode::Missing, None))
+        );
     }
 
     #[test]
@@ -344,19 +341,33 @@ mod tests {
 
     #[test]
     fn duplicate_to_tag_fails() {
-        assert!(SipReplaces::parse("abc@example.com;to-tag=t1;to-tag=t2;from-tag=f1").is_err());
+        let input = "abc@example.com;to-tag=t1;to-tag=t2;from-tag=f1";
+        assert_eq!(
+            SipReplaces::parse(input),
+            Err(ParseError::malformed(
+                Field::Tag,
+                FaultCode::Duplicate,
+                input.rfind("to-tag")
+            ))
+        );
     }
 
     #[test]
     fn empty_fails() {
-        assert!(matches!(
-            SipReplaces::parse(""),
-            Err(SipReplacesError::Empty)
-        ));
-        assert!(matches!(
-            SipReplaces::parse("  "),
-            Err(SipReplacesError::Empty)
-        ));
+        assert_eq!(SipReplaces::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipReplaces::parse("  "), Err(ParseError::Empty));
+    }
+
+    #[test]
+    fn uri_header_error_has_no_position() {
+        assert_eq!(
+            SipReplaces::parse_uri_header("abc%3Bto-tag%3Dt1%3Bto-tag%3Dt2%3Bfrom-tag%3Df1"),
+            Err(ParseError::malformed(
+                Field::Tag,
+                FaultCode::Duplicate,
+                None
+            ))
+        );
     }
 
     #[test]
@@ -388,7 +399,14 @@ mod tests {
 
     #[test]
     fn parse_uri_header_invalid_utf8_fails() {
-        assert!(SipReplaces::parse_uri_header("abc%C0%80;to-tag=t1;from-tag=f1").is_err());
+        assert_eq!(
+            SipReplaces::parse_uri_header("abc%C0%80;to-tag=t1;from-tag=f1"),
+            Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::NotUtf8,
+                None
+            ))
+        );
     }
 
     #[test]

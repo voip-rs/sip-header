@@ -2,26 +2,8 @@
 
 use std::fmt;
 
-/// Error parsing a SIP Warning header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipWarningError {
-    /// Empty input.
-    Empty,
-    /// Invalid format.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipWarningError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SipWarningError::Empty => write!(f, "empty Warning header"),
-            SipWarningError::InvalidFormat(msg) => write!(f, "invalid Warning format: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for SipWarningError {}
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// A single Warning header entry.
 ///
@@ -56,20 +38,23 @@ impl SipWarningEntry {
         &self.text
     }
 
-    fn parse(s: &str) -> Result<Self, SipWarningError> {
-        let s = s.trim();
+    fn parse(entry: &str) -> Result<Self, ParseError> {
+        let s = entry.trim();
         if s.is_empty() {
-            return Err(SipWarningError::InvalidFormat(
-                "empty warning entry".to_string(),
+            return Err(ParseError::malformed(
+                Field::Entry,
+                FaultCode::Missing,
+                None,
             ));
         }
+        let at = |field, code, part: &str| {
+            ParseError::malformed(field, code, Some(crate::offset_in(entry, part)))
+        };
 
         // Parse warn-code (3DIGIT)
         let space_pos = s
             .find(' ')
-            .ok_or_else(|| {
-                SipWarningError::InvalidFormat("missing space after warn-code".to_string())
-            })?;
+            .ok_or_else(|| ParseError::malformed(Field::Agent, FaultCode::Missing, None))?;
 
         let code_str = &s[..space_pos];
         if code_str.len() != 3
@@ -77,44 +62,32 @@ impl SipWarningEntry {
                 .chars()
                 .all(|c| c.is_ascii_digit())
         {
-            return Err(SipWarningError::InvalidFormat(format!(
-                "warn-code must be 3 digits, got {} bytes",
-                code_str.len()
-            )));
+            return Err(at(Field::Code, FaultCode::InvalidNumber, code_str));
         }
 
         let code = code_str
             .parse::<u16>()
-            .map_err(|_| SipWarningError::InvalidFormat("invalid warn-code".to_string()))?;
+            .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
 
         let rest = s[space_pos..].trim_start();
 
         // Find the quoted warn-text
         let quote_pos = rest
             .find('"')
-            .ok_or_else(|| {
-                SipWarningError::InvalidFormat("missing quoted warn-text".to_string())
-            })?;
+            .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
 
-        if quote_pos == 0 {
-            return Err(SipWarningError::InvalidFormat(
-                "missing warn-agent".to_string(),
-            ));
-        }
-
-        let agent = rest[..quote_pos]
-            .trim_end()
-            .to_string();
+        let agent = rest[..quote_pos].trim_end();
         if agent.is_empty() {
-            return Err(SipWarningError::InvalidFormat(
-                "empty warn-agent".to_string(),
-            ));
+            return Err(at(Field::Agent, FaultCode::Missing, rest));
         }
 
-        // Parse quoted string
-        let text = parse_quoted_string(&rest[quote_pos..])?;
+        let text = parse_quoted_string(entry, &rest[quote_pos..])?;
 
-        Ok(SipWarningEntry { code, agent, text })
+        Ok(SipWarningEntry {
+            code,
+            agent: agent.to_string(),
+            text,
+        })
     }
 }
 
@@ -126,16 +99,16 @@ impl fmt::Display for SipWarningEntry {
 }
 
 /// Parse a quoted string starting with `"`, returning the unescaped content.
-fn parse_quoted_string(s: &str) -> Result<String, SipWarningError> {
-    let s = s.trim_start();
-    if !s.starts_with('"') {
-        return Err(SipWarningError::InvalidFormat(
-            "quoted string must start with '\"'".to_string(),
+fn parse_quoted_string(entry: &str, s: &str) -> Result<String, ParseError> {
+    let Some(content) = s.strip_prefix('"') else {
+        return Err(ParseError::malformed(
+            Field::Text,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, s)),
         ));
-    }
+    };
 
     // Find the closing quote, respecting backslash escapes.
-    let content = &s[1..];
     let mut escaped = false;
     for (i, c) in content.char_indices() {
         if escaped {
@@ -147,8 +120,10 @@ fn parse_quoted_string(s: &str) -> Result<String, SipWarningError> {
         }
     }
 
-    Err(SipWarningError::InvalidFormat(
-        "unterminated quoted string".to_string(),
+    Err(ParseError::malformed(
+        Field::Text,
+        FaultCode::Unterminated,
+        Some(crate::offset_in(entry, s)),
     ))
 }
 
@@ -166,24 +141,27 @@ pub struct SipWarning {
 
 impl SipWarning {
     /// Parse a Warning header value.
-    pub fn parse(raw: &str) -> Result<Self, SipWarningError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err(SipWarningError::Empty);
+            return Err(ParseError::Empty);
         }
         Self::from_entries(crate::split_comma_entries(raw))
     }
 
     /// Build from entries a transport already split; each is one `warning-value`.
+    ///
+    /// Error positions are relative to the entry, whose index the error carries.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, SipWarningError> {
+    ) -> Result<Self, ParseError> {
         let entries = entries
             .into_iter()
-            .map(SipWarningEntry::parse)
+            .enumerate()
+            .map(|(i, e)| SipWarningEntry::parse(e).map_err(|err| err.in_entry(i)))
             .collect::<Result<Vec<_>, _>>()?;
         if entries.is_empty() {
-            return Err(SipWarningError::Empty);
+            return Err(ParseError::Empty);
         }
         Ok(SipWarning { entries })
     }
@@ -217,7 +195,7 @@ impl fmt::Display for SipWarning {
     }
 }
 
-impl_from_str_via_parse!(SipWarning, SipWarningError);
+impl_from_str_via_parse!(SipWarning, ParseError);
 
 impl IntoIterator for SipWarning {
     type Item = SipWarningEntry;
@@ -313,41 +291,52 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let result = SipWarning::parse("");
-        assert!(matches!(result, Err(SipWarningError::Empty)));
+        assert_eq!(SipWarning::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipWarning::parse("   "), Err(ParseError::Empty));
+    }
 
-        let result = SipWarning::parse("   ");
-        assert!(matches!(result, Err(SipWarningError::Empty)));
+    fn fault(field: Field, code: FaultCode, position: Option<usize>) -> ParseError {
+        ParseError::malformed(field, code, position).in_entry(0)
     }
 
     #[test]
     fn test_invalid_warn_code() {
-        let result = SipWarning::parse(r#"30 example.com "Short code""#);
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
-
-        let result = SipWarning::parse(r#"3001 example.com "Long code""#);
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
-
-        let result = SipWarning::parse(r#"abc example.com "Non-numeric""#);
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
+        for input in [
+            r#"30 example.com "Short code""#,
+            r#"3001 example.com "Long code""#,
+            r#"abc example.com "Non-numeric""#,
+        ] {
+            assert_eq!(
+                SipWarning::parse(input),
+                Err(fault(Field::Code, FaultCode::InvalidNumber, Some(0))),
+                "{input}"
+            );
+        }
     }
 
     #[test]
     fn test_missing_warn_agent() {
-        let result = SipWarning::parse(r#"301 "Missing agent""#);
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
+        assert_eq!(
+            SipWarning::parse(r#"301 "Missing agent""#),
+            Err(fault(Field::Agent, FaultCode::Missing, Some(4)))
+        );
     }
 
     #[test]
     fn test_missing_warn_text() {
-        let result = SipWarning::parse("301 example.com");
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
+        assert_eq!(
+            SipWarning::parse("301 example.com"),
+            Err(fault(Field::Text, FaultCode::Missing, None))
+        );
     }
 
     #[test]
     fn test_unterminated_quoted_string() {
-        let result = SipWarning::parse(r#"301 example.com "Unterminated"#);
-        assert!(matches!(result, Err(SipWarningError::InvalidFormat(_))));
+        let input = r#"301 example.com "Unterminated"#;
+        assert_eq!(
+            SipWarning::parse(input),
+            Err(fault(Field::Text, FaultCode::Unterminated, input.find('"')))
+        );
     }
 
     #[test]
@@ -436,10 +425,10 @@ mod tests {
 
     #[test]
     fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
+        assert_eq!(
             SipWarning::from_entries([r#"399 example.com "ok""#, "nope"]),
-            Err(SipWarningError::InvalidFormat(_))
-        ));
+            Err(ParseError::malformed(Field::Agent, FaultCode::Missing, None).in_entry(1))
+        );
     }
 
     #[test]
@@ -452,9 +441,9 @@ mod tests {
 
     #[test]
     fn from_entries_empty_is_empty_error() {
-        assert!(matches!(
+        assert_eq!(
             SipWarning::from_entries(std::iter::empty::<&str>()),
-            Err(SipWarningError::Empty)
-        ));
+            Err(ParseError::Empty)
+        );
     }
 }

@@ -2,26 +2,8 @@
 
 use std::fmt;
 
-/// Error type for SIP authentication value parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipAuthError {
-    /// The input string was empty.
-    Empty,
-    /// The input string had an invalid format.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipAuthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty authentication value"),
-            Self::InvalidFormat(msg) => write!(f, "invalid authentication format: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for SipAuthError {}
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// Parsed SIP authentication value.
 ///
@@ -103,10 +85,10 @@ impl SipAuthValue {
 
 impl SipAuthValue {
     /// Parse an authentication header value.
-    pub fn parse(s: &str) -> Result<Self, SipAuthError> {
-        let s = s.trim();
+    pub fn parse(input: &str) -> Result<Self, ParseError> {
+        let s = input.trim();
         if s.is_empty() {
-            return Err(SipAuthError::Empty);
+            return Err(ParseError::Empty);
         }
 
         // Find the first whitespace to split scheme from params
@@ -134,10 +116,7 @@ impl SipAuthValue {
         let mut params = Vec::new();
         let mut quoted = Vec::new();
 
-        for (i, param_str) in crate::split_comma_entries(rest)
-            .into_iter()
-            .enumerate()
-        {
+        for param_str in crate::split_comma_entries(rest) {
             let param_str = param_str.trim();
             if param_str.is_empty() {
                 continue;
@@ -146,7 +125,11 @@ impl SipAuthValue {
             let (key, value) = param_str
                 .split_once('=')
                 .ok_or_else(|| {
-                    SipAuthError::InvalidFormat(format!("missing '=' in parameter {}", i + 1))
+                    ParseError::malformed(
+                        Field::Credentials,
+                        FaultCode::Missing,
+                        Some(crate::offset_in(input, param_str)),
+                    )
                 })?;
 
             let key = key
@@ -187,7 +170,7 @@ fn is_token68(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b))
 }
 
-impl_from_str_via_parse!(SipAuthValue, SipAuthError);
+impl_from_str_via_parse!(SipAuthValue, ParseError);
 
 /// RFC 2617 §3.2.1/§3.2.2 params that MUST use quoted-string on the wire.
 ///
@@ -299,17 +282,24 @@ mod tests {
     #[test]
     fn parse_empty_input() {
         let result: Result<SipAuthValue, _> = "".parse();
-        assert_eq!(result, Err(SipAuthError::Empty));
+        assert_eq!(result, Err(ParseError::Empty));
 
         let result: Result<SipAuthValue, _> = "   ".parse();
-        assert_eq!(result, Err(SipAuthError::Empty));
+        assert_eq!(result, Err(ParseError::Empty));
     }
 
     #[test]
     fn parse_invalid_param() {
         let input = "Digest username=alice, invalid";
         let result: Result<SipAuthValue, _> = input.parse();
-        assert!(matches!(result, Err(SipAuthError::InvalidFormat(_))));
+        assert_eq!(
+            result,
+            Err(ParseError::malformed(
+                Field::Credentials,
+                FaultCode::Missing,
+                input.find("invalid")
+            ))
+        );
     }
 
     #[test]
@@ -582,8 +572,8 @@ mod tests {
         let err = "Digest username=alice, secretvalue"
             .parse::<SipAuthValue>()
             .unwrap_err();
-        let msg = err.to_string();
-        assert!(!msg.contains("secretvalue"));
-        assert!(msg.contains('2'));
+        assert!(!err
+            .to_string()
+            .contains("secretvalue"));
     }
 }

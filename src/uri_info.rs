@@ -5,6 +5,9 @@
 
 use std::fmt;
 
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
+
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 ///
 /// The data field contains the URI stripped of angle brackets.
@@ -69,41 +72,14 @@ impl fmt::Display for UriInfoEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UriInfo(Vec<UriInfoEntry>);
 
-/// Errors from parsing a URI-info-style header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum UriInfoError {
-    /// The input string was empty or whitespace-only.
-    Empty,
-    /// An entry was found without angle brackets around the URI.
-    MissingAngleBrackets(String),
-    /// The value could not be decoded into entries (transport or framing
-    /// failure before per-entry parsing).
-    Malformed(String),
-}
-
-impl fmt::Display for UriInfoError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty URI-info header value"),
-            Self::MissingAngleBrackets(raw) => {
-                write!(
-                    f,
-                    "missing angle brackets in URI-info entry ({} bytes)",
-                    raw.len()
-                )
-            }
-            Self::Malformed(reason) => write!(f, "malformed URI-info value: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for UriInfoError {}
-
-fn parse_entry(raw: &str) -> Result<UriInfoEntry, UriInfoError> {
-    let raw = raw.trim();
+fn parse_entry(entry: &str) -> Result<UriInfoEntry, ParseError> {
+    let raw = entry.trim();
     if raw.is_empty() {
-        return Err(UriInfoError::MissingAngleBrackets(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Missing,
+            None,
+        ));
     }
 
     let bracketed = raw
@@ -126,7 +102,11 @@ fn parse_entry(raw: &str) -> Result<UriInfoEntry, UriInfoError> {
         )
     });
     if data.is_empty() {
-        return Err(UriInfoError::MissingAngleBrackets(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Addr,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, raw)),
+        ));
     }
 
     let metadata = crate::parse_params(params)
@@ -152,10 +132,10 @@ use crate::split_comma_entries;
 
 impl UriInfo {
     /// Parse a comma-separated `<absoluteURI> *(SEMI generic-param)` value.
-    pub fn parse(raw: &str) -> Result<Self, UriInfoError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err(UriInfoError::Empty);
+            return Err(ParseError::Empty);
         }
         Self::from_entries(split_comma_entries(raw))
     }
@@ -170,13 +150,13 @@ impl UriInfo {
     /// when none parse.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, UriInfoError> {
+    ) -> Result<Self, ParseError> {
         let parsed: Vec<_> = entries
             .into_iter()
             .filter_map(|raw| parse_entry(raw).ok())
             .collect();
         if parsed.is_empty() {
-            return Err(UriInfoError::Empty);
+            return Err(ParseError::Empty);
         }
         Ok(Self(parsed))
     }
@@ -509,7 +489,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert!(matches!(UriInfo::parse(""), Err(UriInfoError::Empty)));
+        assert_eq!(UriInfo::parse(""), Err(ParseError::Empty));
     }
 
     #[test]
@@ -538,7 +518,7 @@ mod tests {
 
     #[test]
     fn parse_fails_only_when_all_entries_bad() {
-        assert!(matches!(UriInfo::parse(",,, "), Err(UriInfoError::Empty)));
+        assert_eq!(UriInfo::parse(",,, "), Err(ParseError::Empty));
     }
 
     #[test]
@@ -595,23 +575,12 @@ mod tests {
 
     #[test]
     fn empty_brackets_rejected() {
-        assert!(parse_entry("<>").is_err());
-        assert!(parse_entry("<>;purpose=icon").is_err());
-    }
-
-    #[test]
-    fn missing_angle_brackets_display_omits_input() {
-        let e = UriInfoError::MissingAngleBrackets("secret".to_string());
-        assert!(!e
-            .to_string()
-            .contains("secret"));
-    }
-
-    // -- Error variant tests --
-
-    #[test]
-    fn malformed_display() {
-        let e = UriInfoError::Malformed("too many entries".to_string());
-        assert_eq!(e.to_string(), "malformed URI-info value: too many entries");
+        let missing = Err(ParseError::malformed(
+            Field::Addr,
+            FaultCode::Missing,
+            Some(1),
+        ));
+        assert_eq!(parse_entry(" <>"), missing);
+        assert_eq!(parse_entry(" <>;purpose=icon"), missing);
     }
 }

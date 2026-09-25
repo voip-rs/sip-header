@@ -2,7 +2,11 @@
 
 use std::fmt;
 
-use crate::accept::{all_blank, read_accept_params, write_accept_params};
+use crate::accept::{
+    all_blank, missing_entry, parse_entries, read_accept_params, write_accept_params,
+};
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,34 +48,10 @@ impl fmt::Display for SipAcceptLanguageEntry {
     }
 }
 
-/// Errors from parsing an Accept-Language header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SipAcceptLanguageError {
-    /// An empty value. Not returned by parsing, which reads an empty value as
-    /// the empty list RFC 3261 §25.1 allows.
-    Empty,
-    /// An entry could not be parsed.
-    InvalidFormat(String),
-}
-
-impl fmt::Display for SipAcceptLanguageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty Accept-Language header value"),
-            Self::InvalidFormat(raw) => {
-                write!(f, "invalid Accept-Language entry ({} bytes)", raw.len())
-            }
-        }
-    }
-}
-
-impl std::error::Error for SipAcceptLanguageError {}
-
-fn parse_entry(raw: &str) -> Result<SipAcceptLanguageEntry, SipAcceptLanguageError> {
-    let raw = raw.trim();
+fn parse_entry(entry: &str) -> Result<SipAcceptLanguageEntry, ParseError> {
+    let raw = entry.trim();
     if raw.is_empty() {
-        return Err(SipAcceptLanguageError::InvalidFormat(raw.to_string()));
+        return Err(missing_entry());
     }
 
     let (lang_part, params_part) = match raw.split_once(';') {
@@ -80,7 +60,11 @@ fn parse_entry(raw: &str) -> Result<SipAcceptLanguageEntry, SipAcceptLanguageErr
     };
 
     if lang_part.is_empty() {
-        return Err(SipAcceptLanguageError::InvalidFormat(raw.to_string()));
+        return Err(ParseError::malformed(
+            Field::Language,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, raw)),
+        ));
     }
 
     Ok(SipAcceptLanguageEntry {
@@ -98,28 +82,24 @@ impl SipAcceptLanguage {
     /// Parse a comma-separated Accept-Language header value.
     ///
     /// An empty or whitespace-only value is the empty list (RFC 3261 §25.1).
-    pub fn parse(raw: &str) -> Result<Self, SipAcceptLanguageError> {
+    pub fn parse(raw: &str) -> Result<Self, ParseError> {
         Self::from_entries(crate::split_comma_entries(raw))
     }
 
     /// Build from entries a transport already split; each is one `language`.
     ///
     /// No entries, or only blank ones, is the empty list; a blank entry beside
-    /// a real one is an error.
+    /// a real one is an error. Error positions are relative to the entry.
     pub fn from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Self, SipAcceptLanguageError> {
+    ) -> Result<Self, ParseError> {
         let entries: Vec<&str> = entries
             .into_iter()
             .collect();
         if all_blank(&entries) {
             return Ok(Self(Vec::new()));
         }
-        entries
-            .into_iter()
-            .map(parse_entry)
-            .collect::<Result<_, _>>()
-            .map(Self)
+        parse_entries(entries, parse_entry).map(Self)
     }
 
     /// The parsed entries as a slice.
@@ -151,7 +131,7 @@ impl fmt::Display for SipAcceptLanguage {
     }
 }
 
-impl_from_str_via_parse!(SipAcceptLanguage, SipAcceptLanguageError);
+impl_from_str_via_parse!(SipAcceptLanguage, ParseError);
 
 impl<'a> IntoIterator for &'a SipAcceptLanguage {
     type Item = &'a SipAcceptLanguageEntry;
@@ -258,10 +238,18 @@ mod tests {
 
     #[test]
     fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
+        assert_eq!(
             SipAcceptLanguage::from_entries(["en", "   "]),
-            Err(SipAcceptLanguageError::InvalidFormat(_))
-        ));
+            Err(missing_entry().in_entry(1))
+        );
+    }
+
+    #[test]
+    fn params_without_language_is_error() {
+        assert_eq!(
+            SipAcceptLanguage::parse("en, ;q=1"),
+            Err(ParseError::malformed(Field::Language, FaultCode::Missing, Some(1)).in_entry(1))
+        );
     }
 
     #[test]
