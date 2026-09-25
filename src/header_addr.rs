@@ -489,26 +489,90 @@ impl FromStr for SipHeaderAddr {
     }
 }
 
+impl SipHeaderAddr {
+    /// Render for logs, the URI through sip-uri's
+    /// [`redacted`](sip_uri::Uri::redacted) and the display name as `***`
+    /// unless `how` shows the user part. Header parameters render as
+    /// [`Display`](fmt::Display) writes them.
+    ///
+    /// ```
+    /// use sip_header::SipHeaderAddr;
+    /// use sip_uri::{Redaction, UserMask};
+    ///
+    /// let addr: SipHeaderAddr = r#""Alice" <sip:+15551234567@example.com>;tag=abc"#.parse()?;
+    /// assert_eq!(
+    ///     addr.redacted(Redaction::default()).to_string(),
+    ///     "*** <sip:***@example.com>;tag=abc"
+    /// );
+    /// assert_eq!(
+    ///     addr.redacted(Redaction::default().user(UserMask::KeepLast(4))).to_string(),
+    ///     "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
+    /// );
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    pub fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
+        Redacted { addr: self, how }
+    }
+
+    fn write_with(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        display_name: Option<&str>,
+        uri: impl fmt::Display,
+    ) -> fmt::Result {
+        if let Some(name) = display_name {
+            write_display_name(f, name)?;
+        }
+        write!(f, "<{uri}>")?;
+        crate::write_params(f, &self.params)
+    }
+
+    fn shown_display_name(&self) -> Option<&str> {
+        self.display_name()
+            .filter(|n| !n.is_empty())
+    }
+}
+
+/// A non-empty display name and the space before `<`, quoted unless a `token`.
+fn write_display_name(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
+    if needs_quoting(name) {
+        crate::write_quoted_pair(f, name)?;
+    } else {
+        f.write_str(name)?;
+    }
+    f.write_char(' ')
+}
+
+struct Redacted<'a> {
+    addr: &'a SipHeaderAddr,
+    how: sip_uri::Redaction<'a>,
+}
+
+impl fmt::Display for Redacted<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Redaction exposes its user mask only through its builder and PartialEq.
+        let shows_user = self.how
+            == self
+                .how
+                .user(sip_uri::UserMask::Visible);
+        let name = self
+            .addr
+            .shown_display_name()
+            .map(|n| if shows_user { n } else { "***" });
+        self.addr
+            .write_with(
+                f,
+                name,
+                self.addr
+                    .uri
+                    .redacted(self.how),
+            )
+    }
+}
+
 impl fmt::Display for SipHeaderAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self
-            .display_name
-            .as_deref()
-        {
-            Some(name) if !name.is_empty() => {
-                if needs_quoting(name) {
-                    crate::write_quoted_pair(f, name)?;
-                    f.write_char(' ')?;
-                } else {
-                    write!(f, "{name} ")?;
-                }
-                write!(f, "<{}>", self.uri)?;
-            }
-            _ => {
-                write!(f, "<{}>", self.uri)?;
-            }
-        }
-        crate::write_params(f, &self.params)
+        self.write_with(f, self.shown_display_name(), &self.uri)
     }
 }
 
