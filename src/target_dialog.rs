@@ -137,6 +137,45 @@ mod tests {
     }
 
     #[test]
+    fn call_id_outside_callid_grammar_warns_in_both_framings() {
+        use crate::diagnostic::{Field, WarningCode};
+
+        let wire = "a b@example.com;local-tag=l1;remote-tag=r1";
+        let encoded = "a%20b%40example.com%3Blocal-tag%3Dl1%3Bremote-tag%3Dr1";
+        assert_eq!(
+            SipTargetDialog::parse(wire)
+                .unwrap()
+                .call_id(),
+            SipTargetDialog::parse_uri_header(encoded)
+                .unwrap()
+                .call_id()
+        );
+        for parsed in [
+            SipTargetDialog::parse_with_warnings(wire).unwrap(),
+            SipTargetDialog::parse_uri_header_with_warnings(encoded).unwrap(),
+        ] {
+            let w = parsed.warnings[0];
+            assert_eq!(
+                (w.field, w.code, w.kind, w.position),
+                (
+                    Field::CallId,
+                    WarningCode::InvalidToken,
+                    sip_uri::WarningKind::Recovered,
+                    Some(1)
+                )
+            );
+        }
+        assert!(matches!(
+            SipTargetDialog::parse_strict(wire),
+            Err(ParseError::NonConformant(_))
+        ));
+        assert!(matches!(
+            SipTargetDialog::parse_uri_header_strict(encoded),
+            Err(ParseError::NonConformant(_))
+        ));
+    }
+
+    #[test]
     fn from_str_is_wire_framing() {
         let t: SipTargetDialog = "abc123@203.0.113.5;local-tag=l1;remote-tag=r1"
             .parse()

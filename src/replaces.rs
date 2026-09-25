@@ -48,7 +48,9 @@ impl SipReplaces {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::Field;
+    use sip_uri::WarningKind;
+
+    use crate::diagnostic::{Field, WarningCode};
     use crate::error::{FaultCode, ParseError};
 
     #[test]
@@ -307,6 +309,92 @@ mod tests {
         assert_eq!(r.to_tag(), "t");
         assert_eq!(r.from_tag(), "f");
         assert_eq!(r.param("foo"), Some(Some("bar")));
+    }
+
+    fn only_warning(p: &crate::Parsed<SipReplaces>) -> crate::ParseWarning {
+        assert_eq!(
+            p.warnings
+                .len(),
+            1,
+            "{:?}",
+            p.warnings
+        );
+        p.warnings[0]
+    }
+
+    #[test]
+    fn unterminated_quote_param_warns() {
+        let input = r#"a@example.com;x="p;to-tag=t;from-tag=f"#;
+        let r: SipReplaces = input
+            .parse()
+            .unwrap();
+        assert_eq!(r.to_tag(), "t");
+        let w = only_warning(&SipReplaces::parse_with_warnings(input).unwrap());
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position),
+            (
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                input.find('"')
+            )
+        );
+        assert_eq!(
+            SipReplaces::parse_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
+    }
+
+    #[test]
+    fn call_id_outside_callid_grammar_warns() {
+        for (input, at) in [
+            ("a b@example.com;to-tag=t;from-tag=f", 1),
+            (" a@b@c;to-tag=t;from-tag=f", 4),
+        ] {
+            let r = SipReplaces::parse(input).unwrap();
+            assert_eq!(r.to_tag(), "t");
+            let w = only_warning(&SipReplaces::parse_with_warnings(input).unwrap());
+            assert_eq!(
+                (w.field, w.code, w.kind, w.position),
+                (
+                    Field::CallId,
+                    WarningCode::InvalidToken,
+                    WarningKind::Recovered,
+                    Some(at)
+                ),
+                "{input}"
+            );
+            assert_eq!(
+                SipReplaces::parse_strict(input),
+                Err(ParseError::NonConformant(w))
+            );
+        }
+        assert!(
+            SipReplaces::parse_with_warnings("abc@example.com;to-tag=t;from-tag=f;early-only")
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn uri_header_warning_points_into_decoded_value() {
+        let input = "a%20b%40example.com%3Bto-tag%3Dt%3Bfrom-tag%3Df";
+        let r = SipReplaces::parse_uri_header(input).unwrap();
+        assert_eq!(r.call_id(), "a b@example.com");
+        let w = only_warning(&SipReplaces::parse_uri_header_with_warnings(input).unwrap());
+        assert_eq!(
+            (w.field, w.code, w.position),
+            (Field::CallId, WarningCode::InvalidToken, Some(1))
+        );
+        assert_eq!(
+            SipReplaces::parse_uri_header_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
+        assert!(SipReplaces::parse_uri_header_strict(
+            "abc123%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1"
+        )
+        .is_ok());
     }
 
     #[test]
