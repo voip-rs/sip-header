@@ -222,7 +222,10 @@ impl fmt::Display for SipAuthValue {
 
 #[cfg(test)]
 mod tests {
+    use sip_uri::WarningKind;
+
     use super::*;
+    use crate::diagnostic::WarningCode;
 
     #[test]
     fn parse_digest_full() {
@@ -565,6 +568,91 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(auth.token68(), None);
+    }
+
+    #[test]
+    fn unterminated_quote_is_warned() {
+        let input = r#"Digest realm="example.com", nonce="abc"#;
+        let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+        assert_eq!(parsed.value, SipAuthValue::parse(input).unwrap());
+        assert_eq!(
+            parsed
+                .value
+                .nonce(),
+            Some(r#""abc"#)
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position, w.entry),
+            (
+                Field::Credentials,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                input.find(r#""abc"#),
+                None
+            )
+        );
+        assert_eq!(
+            SipAuthValue::parse_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
+    }
+
+    #[test]
+    fn trailing_backslash_is_warned() {
+        let input = r#"Digest realm="a\""#;
+        let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .realm(),
+            Some("a")
+        );
+        let found: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    Field::Credentials,
+                    WarningCode::UnterminatedQuote,
+                    WarningKind::Recovered,
+                    input.find('"')
+                ),
+                (
+                    Field::Credentials,
+                    WarningCode::TrailingBackslash,
+                    WarningKind::Lost,
+                    input.find('\\')
+                ),
+            ]
+        );
+        assert_eq!(
+            SipAuthValue::parse_strict(input),
+            Err(ParseError::NonConformant(parsed.warnings[0]))
+        );
+    }
+
+    #[test]
+    fn conformant_quoted_params_have_no_warning() {
+        for input in [
+            r#"Digest realm="C:\\path", nonce="a\"b", qop=auth"#,
+            "Bearer mF_9.B5f-4.1JqM",
+            "Bearer",
+        ] {
+            let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+            assert!(!parsed.has_warnings(), "{input}");
+            assert_eq!(SipAuthValue::parse_strict(input), Ok(parsed.value));
+        }
     }
 
     #[test]
