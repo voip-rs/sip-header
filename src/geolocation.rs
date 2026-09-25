@@ -151,6 +151,8 @@ impl SipGeolocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::{Field, WarningCode};
+    use sip_uri::WarningKind;
 
     fn parse(raw: &str) -> SipGeolocation {
         SipGeolocation::parse(raw).unwrap()
@@ -195,26 +197,120 @@ mod tests {
         assert!(parse("junk").is_empty());
     }
 
+    type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    /// Lenient value and warnings, after checking strict parsing refuses.
+    fn lenient(raw: &str) -> (SipGeolocation, Vec<Seen>) {
+        assert!(matches!(
+            SipGeolocation::parse_strict(raw),
+            Err(ParseError::NonConformant(_))
+        ));
+        let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
+        assert_eq!(parse(raw), parsed.value);
+        let seen = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect();
+        (parsed.value, seen)
+    }
+
     #[test]
     fn empty_brackets_skipped() {
-        let geo = parse("<>, <cid:test>");
+        let (geo, seen) = lenient("<>, <cid:test>");
         assert_eq!(geo.len(), 1);
         assert_eq!(geo.cid(), Some("test"));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(0),
+                Some(0)
+            )]
+        );
+    }
+
+    #[test]
+    fn blank_entry_dropped_with_empty_entry() {
+        let (geo, seen) = lenient("<cid:a>,, <cid:b>");
+        assert_eq!(geo.len(), 2);
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::EmptyEntry,
+                WarningKind::Lost,
+                None,
+                Some(1)
+            )]
+        );
     }
 
     #[test]
     fn display_roundtrip() {
-        let raw = "<cid:abc-123>, <https://lis.example.com/test>";
+        let raw = "<cid:abc-123>;inserted-by=example.org, <https://lis.example.com/test>";
         let geo = parse(raw);
         assert_eq!(geo.to_string(), raw);
     }
 
     #[test]
-    fn geoloc_params_dropped() {
-        let geo = parse("<cid:x@example.com>;inserted-by=y");
+    fn geoloc_params_kept() {
+        let geo = parse("<cid:x@example.com> ; Inserted-By = y ; flag");
+        let entry = &geo.entries()[0];
         assert_eq!(
-            geo.refs(),
-            &[SipGeolocationRef::Cid("x@example.com".into())]
+            entry.reference(),
+            &SipGeolocationRef::Cid("x@example.com".into())
+        );
+        assert_eq!(entry.param("inserted-by"), Some(Some("y")));
+        assert_eq!(entry.param("flag"), Some(None));
+        assert_eq!(
+            entry
+                .params()
+                .collect::<Vec<_>>(),
+            vec![("inserted-by", Some("y")), ("flag", None)]
+        );
+        assert_eq!(entry.to_string(), "<cid:x@example.com>;inserted-by=y;flag");
+    }
+
+    #[test]
+    fn text_after_bracket_is_dropped_with_warning() {
+        let raw = "<cid:a>junk;inserted-by=x";
+        let (geo, seen) = lenient(raw);
+        assert_eq!(geo.entries()[0].param("inserted-by"), Some(Some("x")));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Param,
+                WarningCode::TrailingContent,
+                WarningKind::Lost,
+                raw.find('j'),
+                Some(0)
+            )]
+        );
+    }
+
+    #[test]
+    fn param_unterminated_quote_is_warned() {
+        let raw = r#"<cid:a>;note="x;inserted-by=y"#;
+        let (geo, seen) = lenient(raw);
+        assert_eq!(geo.entries()[0].param("inserted-by"), Some(Some("y")));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
+                Some(0)
+            )]
         );
     }
 
@@ -222,8 +318,9 @@ mod tests {
     fn comma_inside_brackets_not_split() {
         let geo = parse("<https://example.com/a,b>");
         assert_eq!(
-            geo.refs(),
-            &[SipGeolocationRef::Url("https://example.com/a,b".into())]
+            geo.refs()
+                .collect::<Vec<_>>(),
+            vec![&SipGeolocationRef::Url("https://example.com/a,b".into())]
         );
     }
 
@@ -235,15 +332,26 @@ mod tests {
 
     #[test]
     fn unbracketed_entry_skipped() {
-        let geo = parse("cid:x@example.com, <https://example.com/loc>");
-        assert_eq!(geo.len(), 1);
+        let (geo, seen) = lenient("<cid:a>, cid:x@example.com, <https://example.com/loc>");
+        assert_eq!(geo.len(), 2);
         assert_eq!(geo.url(), Some("https://example.com/loc"));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(1),
+                Some(1)
+            )]
+        );
     }
 
     #[test]
     fn from_entries_matches_parse() {
         let split =
-            SipGeolocation::from_entries(["<cid:a>;inserted-by=x", "<https://example.com/a,b>"]);
+            SipGeolocation::from_entries(["<cid:a>;inserted-by=x", "<https://example.com/a,b>"])
+                .unwrap();
         let joined = parse("<cid:a>;inserted-by=x, <https://example.com/a,b>");
         assert_eq!(split, joined);
         assert_eq!(split.len(), 2);
@@ -264,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn warnings_api_and_infallible_from_entries() {
+    fn warnings_api_and_from_entries() {
         let raw = "<cid:a>, <https://example.com/loc>";
         let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
         assert!(!parsed.has_warnings());
@@ -281,16 +389,10 @@ mod tests {
                 .len(),
             1
         );
-        let lenient: SipGeolocation = SipGeolocation::from_entries(["junk"]);
-        assert!(lenient.is_empty());
-        assert_eq!(
-            parsed
-                .value
-                .entries(),
-            parsed
-                .value
-                .refs()
-        );
+        assert_eq!(split.warnings[0].code, WarningCode::SkippedEntry);
+        assert!(SipGeolocation::from_entries(["junk"])
+            .unwrap()
+            .is_empty());
         assert_eq!(
             SipGeolocation::parse_with_warnings(" "),
             Err(ParseError::Empty)
