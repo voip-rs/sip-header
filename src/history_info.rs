@@ -1,14 +1,14 @@
 //! SIP History-Info header parser (RFC 7044) with embedded RFC 3326 Reason.
 
 use std::fmt;
-use std::str::Utf8Error;
 
 use percent_encoding::percent_decode_str;
 
-use crate::diagnostic::ParseWarning;
-use crate::error::ParseError;
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
+use crate::error::{FaultCode, ParseError};
 use crate::header_addr::{parse_list_addr, SipHeaderAddr};
 use crate::list::{non_empty, CommaList};
+use crate::RawParam;
 
 /// Parsed RFC 3326 Reason header value extracted from a History-Info URI.
 ///
@@ -41,8 +41,9 @@ impl HistoryInfoReason {
     }
 }
 
-/// Parse a percent-decoded RFC 3326 `protocol *(SEMI reason-params)`.
-fn parse_reason(decoded: &str) -> HistoryInfoReason {
+/// Parse a percent-decoded RFC 3326 `protocol *(SEMI reason-params)`,
+/// positions relative to `decoded`.
+fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> HistoryInfoReason {
     let (protocol, rest) = decoded
         .split_once(';')
         .unwrap_or((decoded, ""));
@@ -56,15 +57,8 @@ fn parse_reason(decoded: &str) -> HistoryInfoReason {
                     .eq_ignore_ascii_case(name)
             })
     };
-    let cause = find("cause")
-        .and_then(|p| p.value)
-        .and_then(|v| {
-            v.parse::<u16>()
-                .ok()
-        });
-    let text = find("text")
-        .and_then(|p| p.unquoted())
-        .map(|u| u.value);
+    let cause = find("cause").and_then(|p| parse_cause(p, decoded, warnings));
+    let text = find("text").and_then(|p| parse_text(p, decoded, warnings));
 
     HistoryInfoReason {
         protocol: protocol
@@ -73,6 +67,50 @@ fn parse_reason(decoded: &str) -> HistoryInfoReason {
         cause,
         text,
     }
+}
+
+/// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.
+fn parse_cause(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>) -> Option<u16> {
+    let digits = p
+        .value
+        .filter(|v| {
+            !v.is_empty()
+                && v.bytes()
+                    .all(|b| b.is_ascii_digit())
+        });
+    if let Some(Ok(cause)) = digits.map(str::parse::<u16>) {
+        return Some(cause);
+    }
+    let at = crate::offset_in(
+        decoded,
+        p.value
+            .unwrap_or(p.key),
+    );
+    warnings.push(ParseWarning::new(
+        Field::Cause,
+        WarningCode::InvalidCause,
+        Some(at),
+    ));
+    None
+}
+
+/// RFC 3326 `"text" EQUAL quoted-string`, unescaped.
+fn parse_text(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>) -> Option<String> {
+    let v = p.value?;
+    let at = crate::offset_in(decoded, v);
+    let unquoted = p.unquoted()?;
+    let mut warn = |code, position| {
+        warnings.push(ParseWarning::new(Field::Text, code, Some(position)));
+    };
+    if p.unterminated {
+        warn(WarningCode::UnterminatedQuote, at);
+    } else if !unquoted.quoted {
+        warn(WarningCode::UnquotedText, at);
+    }
+    if unquoted.trailing_backslash {
+        warn(WarningCode::TrailingBackslash, at + v.len() - 2);
+    }
+    Some(unquoted.value)
 }
 
 /// A single entry from a History-Info header (RFC 7044).
@@ -126,12 +164,26 @@ impl HistoryInfoEntry {
     ///
     /// Returns `None` if no Reason is present, `Err` if percent-decoding
     /// produces invalid UTF-8.
-    pub fn reason(&self) -> Option<Result<HistoryInfoReason, Utf8Error>> {
+    pub fn reason(&self) -> Option<Result<HistoryInfoReason, ParseError>> {
+        self.reason_with_warnings()
+            .map(|r| r.map(|p| p.value))
+    }
+
+    /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
+    /// breaches beside the value.
+    ///
+    /// Positions point into the percent-decoded Reason value, not the URI.
+    pub fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
         let raw = self.reason_raw()?;
         Some(
             percent_decode_str(raw)
                 .decode_utf8()
-                .map(|decoded| parse_reason(&decoded)),
+                .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
+                .map(|decoded| {
+                    let mut warnings = Vec::new();
+                    let value = parse_reason(&decoded, &mut warnings);
+                    Parsed::new(value, warnings)
+                }),
         )
     }
 }
@@ -167,6 +219,25 @@ impl CommaList for HistoryInfo {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<HistoryInfoEntry>, ParseError> {
         let addr = parse_list_addr(entry, warnings)?;
+        // A successful parse without `<` is the bare addr-spec branch.
+        if !entry.contains('<') {
+            warnings.push(ParseWarning::new(
+                Field::Addr,
+                WarningCode::NotNameAddr,
+                Some(crate::offset_in(entry, entry.trim_start())),
+            ));
+        }
+        if addr
+            .param_raw("index")
+            .flatten()
+            .is_none()
+        {
+            warnings.push(ParseWarning::new(
+                Field::Index,
+                WarningCode::MissingIndex,
+                None,
+            ));
+        }
         Ok(Some(HistoryInfoEntry { addr }))
     }
 
