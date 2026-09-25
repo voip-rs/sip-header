@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::diagnostic::{Field, ParseWarning};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 
@@ -55,7 +55,10 @@ impl fmt::Display for SipAcceptEntry {
     }
 }
 
-fn parse_accept_entry(entry: &str) -> Result<SipAcceptEntry, ParseError> {
+fn parse_accept_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipAcceptEntry, ParseError> {
     let raw = entry.trim();
     if raw.is_empty() {
         return Err(missing_entry());
@@ -83,6 +86,9 @@ fn parse_accept_entry(entry: &str) -> Result<SipAcceptEntry, ParseError> {
     if type_str.is_empty() || subtype_str.is_empty() {
         return Err(bad_range());
     }
+    for part in [type_str, subtype_str] {
+        flag_invalid_token(entry, part, is_token(part), Field::MediaRange, warnings);
+    }
 
     let mut media_range = type_str.to_ascii_lowercase();
     let slash_pos = media_range.len();
@@ -92,13 +98,91 @@ fn parse_accept_entry(entry: &str) -> Result<SipAcceptEntry, ParseError> {
     Ok(SipAcceptEntry {
         media_range,
         slash_pos,
-        params: crate::read_params(params_part.unwrap_or("")),
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
     })
 }
 
 /// A blank entry beside a real one, shared by the Accept-* headers.
 pub(crate) fn missing_entry() -> ParseError {
     ParseError::malformed(Field::Entry, FaultCode::Missing, None)
+}
+
+/// Raise [`WarningCode::InvalidToken`] on `field` at `part`'s position in
+/// `entry` unless `conforms`.
+pub(crate) fn flag_invalid_token(
+    entry: &str,
+    part: &str,
+    conforms: bool,
+    field: Field,
+    warnings: &mut Vec<ParseWarning>,
+) {
+    if !conforms {
+        warnings.push(ParseWarning::new(
+            field,
+            WarningCode::InvalidToken,
+            Some(crate::offset_in(entry, part)),
+        ));
+    }
+}
+
+/// RFC 3261 §25.1 `token`.
+pub(crate) fn is_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-.!%*_+`'~".contains(&b))
+}
+
+/// RFC 3261 §25.1 `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`.
+fn is_qvalue(v: &str) -> bool {
+    let (int, frac) = match v.split_once('.') {
+        Some((int, frac)) => (int, frac),
+        None => (v, ""),
+    };
+    let frac_of = |digit: fn(&u8) -> bool| {
+        frac.len() <= 3
+            && frac
+                .as_bytes()
+                .iter()
+                .all(digit)
+    };
+    match int {
+        "0" => frac_of(u8::is_ascii_digit),
+        "1" => frac_of(|b| *b == b'0'),
+        _ => false,
+    }
+}
+
+/// Read `*(SEMI accept-param)` into stored form, raising
+/// [`WarningCode::UnterminatedQuote`] and [`WarningCode::InvalidQvalue`] at
+/// their position in `entry`.
+pub(crate) fn read_accept_params(
+    entry: &str,
+    params: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Vec<(String, Option<String>)> {
+    let raw = crate::parse_params(params);
+    for p in &raw {
+        let Some(value) = p.value else { continue };
+        let at = Some(crate::offset_in(entry, value));
+        if p.unterminated {
+            warnings.push(ParseWarning::new(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                at,
+            ));
+        }
+        if p.key
+            .eq_ignore_ascii_case("q")
+            && !is_qvalue(value)
+        {
+            warnings.push(ParseWarning::new(
+                Field::Qvalue,
+                WarningCode::InvalidQvalue,
+                at,
+            ));
+        }
+    }
+    crate::stored_params(raw)
 }
 
 /// Parsed SIP Accept header value.
@@ -115,9 +199,9 @@ impl CommaList for SipAccept {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipAcceptEntry>, ParseError> {
-        parse_accept_entry(entry).map(Some)
+        parse_accept_entry(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipAcceptEntry>) -> Result<Self, ParseError> {

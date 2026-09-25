@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::accept::missing_entry;
+use crate::accept::{flag_invalid_token, is_token, missing_entry, read_accept_params};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
@@ -45,7 +45,10 @@ impl fmt::Display for SipAcceptEncodingEntry {
     }
 }
 
-fn parse_entry(entry: &str) -> Result<SipAcceptEncodingEntry, ParseError> {
+fn parse_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipAcceptEncodingEntry, ParseError> {
     let raw = entry.trim();
     if raw.is_empty() {
         return Err(missing_entry());
@@ -63,10 +66,17 @@ fn parse_entry(entry: &str) -> Result<SipAcceptEncodingEntry, ParseError> {
             Some(crate::offset_in(entry, raw)),
         ));
     }
+    flag_invalid_token(
+        entry,
+        encoding_part,
+        is_token(encoding_part),
+        Field::Coding,
+        warnings,
+    );
 
     Ok(SipAcceptEncodingEntry {
         encoding: encoding_part.to_ascii_lowercase(),
-        params: crate::read_params(params_part.unwrap_or("")),
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
     })
 }
 
@@ -84,9 +94,9 @@ impl CommaList for SipAcceptEncoding {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipAcceptEncodingEntry>, ParseError> {
-        parse_entry(entry).map(Some)
+        parse_entry(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipAcceptEncodingEntry>) -> Result<Self, ParseError> {

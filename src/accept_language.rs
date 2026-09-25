@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::accept::missing_entry;
+use crate::accept::{flag_invalid_token, missing_entry, read_accept_params};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
@@ -45,7 +45,10 @@ impl fmt::Display for SipAcceptLanguageEntry {
     }
 }
 
-fn parse_entry(entry: &str) -> Result<SipAcceptLanguageEntry, ParseError> {
+fn parse_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipAcceptLanguageEntry, ParseError> {
     let raw = entry.trim();
     if raw.is_empty() {
         return Err(missing_entry());
@@ -63,11 +66,30 @@ fn parse_entry(entry: &str) -> Result<SipAcceptLanguageEntry, ParseError> {
             Some(crate::offset_in(entry, raw)),
         ));
     }
+    flag_invalid_token(
+        entry,
+        lang_part,
+        is_language_range(lang_part),
+        Field::Language,
+        warnings,
+    );
 
     Ok(SipAcceptLanguageEntry {
         language: lang_part.to_ascii_lowercase(),
-        params: crate::read_params(params_part.unwrap_or("")),
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
     })
+}
+
+/// RFC 3261 §20.3 `language-range = ( 1*8ALPHA *( "-" 1*8ALPHA ) ) / "*"`.
+fn is_language_range(s: &str) -> bool {
+    s == "*"
+        || s.split('-')
+            .all(|tag| {
+                (1..=8).contains(&tag.len())
+                    && tag
+                        .bytes()
+                        .all(|b| b.is_ascii_alphabetic())
+            })
 }
 
 /// Parsed SIP Accept-Language header value.
@@ -84,9 +106,9 @@ impl CommaList for SipAcceptLanguage {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipAcceptLanguageEntry>, ParseError> {
-        parse_entry(entry).map(Some)
+        parse_entry(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipAcceptLanguageEntry>) -> Result<Self, ParseError> {
