@@ -6,7 +6,8 @@ use std::marker::PhantomData;
 
 use percent_encoding::percent_decode_str;
 
-use crate::diagnostic::Field;
+use crate::call_id::SipCallId;
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 
 /// The tag names a dialog-id header uses, and whether it knows `early-only`.
@@ -29,19 +30,19 @@ pub(crate) struct DialogId<K> {
 }
 
 impl<K: DialogKind> DialogId<K> {
-    pub(crate) fn parse(raw: &str) -> Result<Self, ParseError> {
+    pub(crate) fn parse(raw: &str) -> Result<Parsed<Self>, ParseError> {
         Self::parse_framed(raw, false)
     }
 
-    /// Positions in the decoded text do not point into `raw`, so they are dropped.
-    pub(crate) fn parse_uri_header(raw: &str) -> Result<Self, ParseError> {
+    /// Error positions are dropped; warning positions point into the decoded text.
+    pub(crate) fn parse_uri_header(raw: &str) -> Result<Parsed<Self>, ParseError> {
         let decoded = percent_decode_str(raw)
             .decode_utf8()
             .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))?;
         Self::parse_framed(&decoded, true).map_err(ParseError::without_position)
     }
 
-    fn parse_framed(raw: &str, uri_header_framing: bool) -> Result<Self, ParseError> {
+    fn parse_framed(raw: &str, uri_header_framing: bool) -> Result<Parsed<Self>, ParseError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Err(ParseError::Empty);
@@ -59,6 +60,18 @@ impl<K: DialogKind> DialogId<K> {
                 Some(crate::offset_in(raw, trimmed)),
             ));
         }
+        let mut warnings = Vec::new();
+        if let Err(e) = SipCallId::parse(call_id) {
+            let within = match e {
+                ParseError::Malformed(fault) => fault.position,
+                _ => None,
+            };
+            warnings.push(ParseWarning::new(
+                Field::CallId,
+                WarningCode::InvalidToken,
+                Some(crate::offset_in(raw, call_id) + within.unwrap_or(0)),
+            ));
+        }
 
         let mut first_tag: Option<String> = None;
         let mut second_tag: Option<String> = None;
@@ -66,6 +79,13 @@ impl<K: DialogKind> DialogId<K> {
         let mut params = Vec::new();
 
         for param in crate::parse_params(rest) {
+            if param
+                .value
+                .is_some_and(|v| v.starts_with('"'))
+            {
+                // Reported only: values stay raw.
+                param.unquoted_reporting(raw, &mut warnings);
+            }
             let key = param
                 .key
                 .to_ascii_lowercase();
@@ -105,7 +125,7 @@ impl<K: DialogKind> DialogId<K> {
         }
 
         let missing_tag = || ParseError::malformed(Field::Tag, FaultCode::Missing, None);
-        Ok(DialogId {
+        let id = DialogId {
             call_id: call_id.to_string(),
             first_tag: first_tag.ok_or_else(missing_tag)?,
             second_tag: second_tag.ok_or_else(missing_tag)?,
@@ -113,7 +133,8 @@ impl<K: DialogKind> DialogId<K> {
             params,
             uri_header_framing,
             kind: PhantomData,
-        })
+        };
+        Ok(Parsed::new(id, warnings))
     }
 
     pub(crate) fn call_id(&self) -> &str {
@@ -123,7 +144,7 @@ impl<K: DialogKind> DialogId<K> {
     /// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
     pub(crate) fn with_call_id(mut self, call_id: impl Into<String>) -> Result<Self, ParseError> {
         let call_id = call_id.into();
-        crate::call_id::SipCallId::parse(&call_id)?;
+        SipCallId::parse(&call_id)?;
         self.call_id = call_id;
         Ok(self)
     }
@@ -190,9 +211,23 @@ impl<K: DialogKind> fmt::Display for DialogId<K> {
 macro_rules! dialog_id_type {
     ($Type:ident, example: $example:literal) => {
         impl $Type {
-            #[doc = concat!("Parse a wire-form header value, e.g. `", $example, "`.")]
+            #[doc = concat!("Parse a wire-form header value leniently, e.g. `", $example, "`.")]
             pub fn parse(raw: &str) -> Result<Self, $crate::error::ParseError> {
-                $crate::dialog_id::DialogId::parse(raw).map(Self)
+                Self::parse_with_warnings(raw).map(|p| p.value)
+            }
+
+            /// Parse as [`parse`](Self::parse) does, reporting accepted grammar
+            /// breaches beside the value. Positions are byte offsets into `raw`.
+            pub fn parse_with_warnings(
+                raw: &str,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                $crate::dialog_id::DialogId::parse(raw).map(|p| p.map(Self))
+            }
+
+            /// Parse, refusing the first grammar breach as
+            /// [`ParseError::NonConformant`](crate::ParseError::NonConformant).
+            pub fn parse_strict(raw: &str) -> Result<Self, $crate::error::ParseError> {
+                Self::parse_with_warnings(raw)?.into_strict()
             }
 
             /// Parse the percent-encoded framing found in a URI header
@@ -204,7 +239,25 @@ macro_rules! dialog_id_type {
             ///
             /// Error positions are dropped: they would point into the decoded text.
             pub fn parse_uri_header(raw: &str) -> Result<Self, $crate::error::ParseError> {
-                $crate::dialog_id::DialogId::parse_uri_header(raw).map(Self)
+                Self::parse_uri_header_with_warnings(raw).map(|p| p.value)
+            }
+
+            /// Parse as [`parse_uri_header`](Self::parse_uri_header) does,
+            /// reporting accepted grammar breaches beside the value.
+            ///
+            /// Warning positions point into the percent-decoded value, not `raw`.
+            pub fn parse_uri_header_with_warnings(
+                raw: &str,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                $crate::dialog_id::DialogId::parse_uri_header(raw).map(|p| p.map(Self))
+            }
+
+            /// Parse as [`parse_uri_header`](Self::parse_uri_header) does, refusing
+            /// the first grammar breach as
+            /// [`ParseError::NonConformant`](crate::ParseError::NonConformant),
+            /// whose position points into the percent-decoded value.
+            pub fn parse_uri_header_strict(raw: &str) -> Result<Self, $crate::error::ParseError> {
+                Self::parse_uri_header_with_warnings(raw)?.into_strict()
             }
 
             /// The Call-ID of the dialog.
