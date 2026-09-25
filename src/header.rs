@@ -8,7 +8,7 @@ use crate::accept::SipAccept;
 use crate::accept_encoding::SipAcceptEncoding;
 use crate::accept_language::SipAcceptLanguage;
 use crate::auth::SipAuthValue;
-use crate::contact::ContactValue;
+use crate::contact::{ContactList, ContactValue};
 use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
@@ -503,22 +503,14 @@ pub trait SipHeaderLookup {
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
     fn call_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::CallInfo);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        UriInfo::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::CallInfo))
     }
 
     /// Parse the `History-Info` header into a [`HistoryInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
     fn history_info(&self) -> Result<Option<HistoryInfo>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::HistoryInfo);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        HistoryInfo::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::HistoryInfo))
     }
 
     /// Parse `P-Asserted-Identity` into a list of [`SipHeaderAddr`].
@@ -559,25 +551,17 @@ pub trait SipHeaderLookup {
     /// The Contact header may contain `*` (wildcard, used in REGISTER) or
     /// a comma-separated list of name-addr/addr-spec entries.
     fn contact(&self) -> Result<Vec<ContactValue>, ParseError> {
-        crate::contact::parse_contact_entries(split_all(self.sip_header_all(SipHeader::Contact)))
+        parse_rows(self.sip_header_all(SipHeader::Contact)).map(ContactList::into_entries)
     }
 
     /// Parse `Alert-Info` into a [`UriInfo`] (RFC 3261 §20.4).
     fn alert_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::AlertInfo);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        UriInfo::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::AlertInfo))
     }
 
     /// Parse `Error-Info` into a [`UriInfo`] (RFC 3261 §20.18).
     fn error_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::ErrorInfo);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        UriInfo::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::ErrorInfo))
     }
 
     /// `Allow` header values as individual method tokens (RFC 3261 §20.5).
@@ -627,11 +611,7 @@ pub trait SipHeaderLookup {
 
     /// Parse `Via` into a [`SipVia`] (RFC 3261 §20.42).
     fn via(&self) -> Result<Option<SipVia>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::Via);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipVia::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::Via))
     }
 
     /// Parse `Replaces` into a [`SipReplaces`] (RFC 3891 §6.1).
@@ -690,65 +670,37 @@ pub trait SipHeaderLookup {
 
     /// Parse `Warning` into a [`SipWarning`] (RFC 3261 §20.43).
     fn warning(&self) -> Result<Option<SipWarning>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::Warning);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipWarning::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::Warning))
     }
 
     /// Parse `Security-Client` into a [`SipSecurity`] (RFC 3329).
     fn security_client(&self) -> Result<Option<SipSecurity>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::SecurityClient);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipSecurity::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::SecurityClient))
     }
 
     /// Parse `Security-Server` into a [`SipSecurity`] (RFC 3329).
     fn security_server(&self) -> Result<Option<SipSecurity>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::SecurityServer);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipSecurity::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::SecurityServer))
     }
 
     /// Parse `Security-Verify` into a [`SipSecurity`] (RFC 3329).
     fn security_verify(&self) -> Result<Option<SipSecurity>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::SecurityVerify);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipSecurity::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::SecurityVerify))
     }
 
     /// Parse `Accept` into a [`SipAccept`] (RFC 3261 §20.1).
     fn accept(&self) -> Result<Option<SipAccept>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::Accept);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipAccept::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::Accept))
     }
 
     /// Parse `Accept-Encoding` into a [`SipAcceptEncoding`] (RFC 3261 §20.2).
     fn accept_encoding(&self) -> Result<Option<SipAcceptEncoding>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::AcceptEncoding);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipAcceptEncoding::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::AcceptEncoding))
     }
 
     /// Parse `Accept-Language` into a [`SipAcceptLanguage`] (RFC 3261 §20.3).
     fn accept_language(&self) -> Result<Option<SipAcceptLanguage>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::AcceptLanguage);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        SipAcceptLanguage::from_entries(split_all(rows)).map(Some)
+        parse_present(self.sip_header_all(SipHeader::AcceptLanguage))
     }
 
     /// Parse every `Geolocation` row into a [`SipGeolocation`] (RFC 6442).
@@ -756,11 +708,7 @@ pub trait SipHeaderLookup {
     /// Returns `Ok(None)` if the header is absent; entries that are not a
     /// `<uri>` are skipped, as in [`SipGeolocation::parse`].
     fn geolocation(&self) -> Result<Option<SipGeolocation>, ParseError> {
-        let rows = self.sip_header_all(SipHeader::Geolocation);
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(SipGeolocation::from_entries(split_all(rows))))
+        parse_present(self.sip_header_all(SipHeader::Geolocation))
     }
 
     /// Parse `Diversion` into a list of [`SipHeaderAddr`] (draft-levy-sip-diversion-08).
@@ -781,11 +729,21 @@ fn split_all(rows: Vec<&str>) -> impl Iterator<Item = &str> {
         .flat_map(crate::split_comma_entries)
 }
 
+/// Every occurrence's entries as one list, entry indexes counted across rows.
+fn parse_rows<L: CommaList>(rows: Vec<&str>) -> Result<L, ParseError> {
+    L::list_from_entries(split_all(rows)).map(|p| p.value)
+}
+
+/// [`parse_rows`], or `None` when the header is absent.
+fn parse_present<L: CommaList>(rows: Vec<&str>) -> Result<Option<L>, ParseError> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    parse_rows(rows).map(Some)
+}
+
 fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseError> {
-    AddrList::list_from_entries(split_all(rows)).map(|p| {
-        p.value
-            .0
-    })
+    parse_rows::<AddrList>(rows).map(|list| list.0)
 }
 
 fn split_trim(rows: Vec<&str>) -> Vec<&str> {
@@ -2012,5 +1970,20 @@ mod multi_row_tests {
         assert!(h
             .route()
             .is_err());
+    }
+
+    #[test]
+    fn addr_list_error_carries_entry_index_across_rows() {
+        let h = rows(&[(
+            "Route",
+            &[
+                "<sip:a@example.com>, <sip:b@example.com>",
+                "<sip:c@example.com",
+            ],
+        )]);
+        assert!(matches!(
+            h.route(),
+            Err(ParseError::Malformed(f)) if f.entry == Some(2) && f.code == FaultCode::Unterminated
+        ));
     }
 }
