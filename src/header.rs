@@ -499,18 +499,36 @@ pub trait SipHeaderLookup {
         self.sip_header_all_str(name.as_str())
     }
 
+    /// Every occurrence of a header by canonical name, as the typed accessors
+    /// read it.
+    ///
+    /// Defaults to [`sip_header_all_str`](SipHeaderLookup::sip_header_all_str).
+    /// A store that decodes its own framing overrides this to report a
+    /// decoding failure, which every list accessor then returns unchanged;
+    /// [`FaultCode::TooManyEntries`](crate::FaultCode::TooManyEntries) names a
+    /// breached entry cap.
+    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, ParseError> {
+        Ok(self.sip_header_all_str(name))
+    }
+
+    /// Every occurrence of a header by [`SipHeader`] variant, as the typed
+    /// accessors read it.
+    fn sip_header_rows(&self, name: SipHeader) -> Result<Vec<&str>, ParseError> {
+        self.sip_header_rows_str(name.as_str())
+    }
+
     /// Parse the `Call-Info` header into a [`UriInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
     fn call_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::CallInfo))
+        parse_present(self.sip_header_rows(SipHeader::CallInfo)?)
     }
 
     /// Parse the `History-Info` header into a [`HistoryInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
     fn history_info(&self) -> Result<Option<HistoryInfo>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::HistoryInfo))
+        parse_present(self.sip_header_rows(SipHeader::HistoryInfo)?)
     }
 
     /// Parse `P-Asserted-Identity` into a list of [`SipHeaderAddr`].
@@ -518,32 +536,32 @@ pub trait SipHeaderLookup {
     /// PAI is multi-valued per RFC 3325 — a message may assert up to two
     /// identities. Returns an empty `Vec` if the header is absent.
     fn p_asserted_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::PAssertedIdentity))
+        parse_addr_list(self.sip_header_rows(SipHeader::PAssertedIdentity)?)
     }
 
     /// Parse `P-Preferred-Identity` into a list of [`SipHeaderAddr`] (RFC 3325).
     fn p_preferred_identity(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::PPreferredIdentity))
+        parse_addr_list(self.sip_header_rows(SipHeader::PPreferredIdentity)?)
     }
 
     /// Parse `Route` into a list of [`SipHeaderAddr`] (RFC 3261 §20.34).
     fn route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::Route))
+        parse_addr_list(self.sip_header_rows(SipHeader::Route)?)
     }
 
     /// Parse `Record-Route` into a list of [`SipHeaderAddr`] (RFC 3261 §20.30).
     fn record_route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::RecordRoute))
+        parse_addr_list(self.sip_header_rows(SipHeader::RecordRoute)?)
     }
 
     /// Parse `Path` into a list of [`SipHeaderAddr`] (RFC 3327).
     fn path(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::Path))
+        parse_addr_list(self.sip_header_rows(SipHeader::Path)?)
     }
 
     /// Parse `Service-Route` into a list of [`SipHeaderAddr`] (RFC 3608).
     fn service_route(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::ServiceRoute))
+        parse_addr_list(self.sip_header_rows(SipHeader::ServiceRoute)?)
     }
 
     /// Parse `Contact` into a list of [`ContactValue`] (RFC 3261 §20.10).
@@ -551,67 +569,71 @@ pub trait SipHeaderLookup {
     /// The Contact header may contain `*` (wildcard, used in REGISTER) or
     /// a comma-separated list of name-addr/addr-spec entries.
     fn contact(&self) -> Result<Vec<ContactValue>, ParseError> {
-        parse_rows(self.sip_header_all(SipHeader::Contact)).map(ContactList::into_entries)
+        parse_rows(self.sip_header_rows(SipHeader::Contact)?).map(ContactList::into_entries)
     }
 
     /// Parse `Alert-Info` into a [`UriInfo`] (RFC 3261 §20.4).
     fn alert_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::AlertInfo))
+        parse_present(self.sip_header_rows(SipHeader::AlertInfo)?)
     }
 
     /// Parse `Error-Info` into a [`UriInfo`] (RFC 3261 §20.18).
     fn error_info(&self) -> Result<Option<UriInfo>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::ErrorInfo))
+        parse_present(self.sip_header_rows(SipHeader::ErrorInfo)?)
     }
 
     /// `Allow` header values as individual method tokens (RFC 3261 §20.5).
-    fn allow(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::Allow))
+    fn allow(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::Allow)?))
     }
 
     /// `Supported` header values as individual option-tag tokens (RFC 3261 §20.37).
-    fn supported(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::Supported))
+    fn supported(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::Supported)?))
     }
 
     /// `Require` header values as individual option-tag tokens (RFC 3261 §20.32).
-    fn require_header(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::Require))
+    fn require_header(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::Require)?))
     }
 
     /// `Proxy-Require` values as individual option-tag tokens (RFC 3261 §20.29).
-    fn proxy_require(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::ProxyRequire))
+    fn proxy_require(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::ProxyRequire)?))
     }
 
     /// `Unsupported` values as individual option-tag tokens (RFC 3261 §20.40).
-    fn unsupported(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::Unsupported))
+    fn unsupported(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::Unsupported)?))
     }
 
     /// `Allow-Events` values as individual event-type tokens (RFC 6665).
-    fn allow_events(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::AllowEvents))
+    fn allow_events(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::AllowEvents)?))
     }
 
     /// `Content-Encoding` values as individual tokens (RFC 3261 §20.12).
-    fn content_encoding(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::ContentEncoding))
+    fn content_encoding(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(
+            self.sip_header_rows(SipHeader::ContentEncoding)?,
+        ))
     }
 
     /// `Content-Language` values as individual language tags (RFC 3261 §20.13).
-    fn content_language(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::ContentLanguage))
+    fn content_language(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(
+            self.sip_header_rows(SipHeader::ContentLanguage)?,
+        ))
     }
 
     /// `In-Reply-To` values as individual Call-ID tokens (RFC 3261 §20.21).
-    fn in_reply_to(&self) -> Vec<&str> {
-        split_trim(self.sip_header_all(SipHeader::InReplyTo))
+    fn in_reply_to(&self) -> Result<Vec<&str>, ParseError> {
+        Ok(split_trim(self.sip_header_rows(SipHeader::InReplyTo)?))
     }
 
     /// Parse `Via` into a [`SipVia`] (RFC 3261 §20.42).
     fn via(&self) -> Result<Option<SipVia>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::Via))
+        parse_present(self.sip_header_rows(SipHeader::Via)?)
     }
 
     /// Parse `Replaces` into a [`SipReplaces`] (RFC 3891 §6.1).
@@ -650,57 +672,57 @@ pub trait SipHeaderLookup {
     /// occurrence is parsed separately via [`sip_header_all`](SipHeaderLookup::sip_header_all);
     /// an error's entry index is the occurrence.
     fn authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
-        parse_auth_rows(self.sip_header_all(SipHeader::Authorization))
+        parse_auth_rows(self.sip_header_rows(SipHeader::Authorization)?)
     }
 
     /// Parse `Proxy-Authorization` into a list of [`SipAuthValue`] (RFC 3261 §20.28).
     fn proxy_authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
-        parse_auth_rows(self.sip_header_all(SipHeader::ProxyAuthorization))
+        parse_auth_rows(self.sip_header_rows(SipHeader::ProxyAuthorization)?)
     }
 
     /// Parse `WWW-Authenticate` into a list of [`SipAuthValue`] (RFC 3261 §20.44).
     fn www_authenticate(&self) -> Result<Vec<SipAuthValue>, ParseError> {
-        parse_auth_rows(self.sip_header_all(SipHeader::WwwAuthenticate))
+        parse_auth_rows(self.sip_header_rows(SipHeader::WwwAuthenticate)?)
     }
 
     /// Parse `Proxy-Authenticate` into a list of [`SipAuthValue`] (RFC 3261 §20.27).
     fn proxy_authenticate(&self) -> Result<Vec<SipAuthValue>, ParseError> {
-        parse_auth_rows(self.sip_header_all(SipHeader::ProxyAuthenticate))
+        parse_auth_rows(self.sip_header_rows(SipHeader::ProxyAuthenticate)?)
     }
 
     /// Parse `Warning` into a [`SipWarning`] (RFC 3261 §20.43).
     fn warning(&self) -> Result<Option<SipWarning>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::Warning))
+        parse_present(self.sip_header_rows(SipHeader::Warning)?)
     }
 
     /// Parse `Security-Client` into a [`SipSecurity`] (RFC 3329).
     fn security_client(&self) -> Result<Option<SipSecurity>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::SecurityClient))
+        parse_present(self.sip_header_rows(SipHeader::SecurityClient)?)
     }
 
     /// Parse `Security-Server` into a [`SipSecurity`] (RFC 3329).
     fn security_server(&self) -> Result<Option<SipSecurity>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::SecurityServer))
+        parse_present(self.sip_header_rows(SipHeader::SecurityServer)?)
     }
 
     /// Parse `Security-Verify` into a [`SipSecurity`] (RFC 3329).
     fn security_verify(&self) -> Result<Option<SipSecurity>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::SecurityVerify))
+        parse_present(self.sip_header_rows(SipHeader::SecurityVerify)?)
     }
 
     /// Parse `Accept` into a [`SipAccept`] (RFC 3261 §20.1).
     fn accept(&self) -> Result<Option<SipAccept>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::Accept))
+        parse_present(self.sip_header_rows(SipHeader::Accept)?)
     }
 
     /// Parse `Accept-Encoding` into a [`SipAcceptEncoding`] (RFC 3261 §20.2).
     fn accept_encoding(&self) -> Result<Option<SipAcceptEncoding>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::AcceptEncoding))
+        parse_present(self.sip_header_rows(SipHeader::AcceptEncoding)?)
     }
 
     /// Parse `Accept-Language` into a [`SipAcceptLanguage`] (RFC 3261 §20.3).
     fn accept_language(&self) -> Result<Option<SipAcceptLanguage>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::AcceptLanguage))
+        parse_present(self.sip_header_rows(SipHeader::AcceptLanguage)?)
     }
 
     /// Parse every `Geolocation` row into a [`SipGeolocation`] (RFC 6442).
@@ -708,19 +730,19 @@ pub trait SipHeaderLookup {
     /// Returns `Ok(None)` if the header is absent; entries that are not a
     /// `<uri>` are skipped, as in [`SipGeolocation::parse`].
     fn geolocation(&self) -> Result<Option<SipGeolocation>, ParseError> {
-        parse_present(self.sip_header_all(SipHeader::Geolocation))
+        parse_present(self.sip_header_rows(SipHeader::Geolocation)?)
     }
 
     /// Parse `Diversion` into a list of [`SipHeaderAddr`] (draft-levy-sip-diversion-08).
     #[cfg(feature = "draft")]
     fn diversion(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::Diversion))
+        parse_addr_list(self.sip_header_rows(SipHeader::Diversion)?)
     }
 
     /// Parse `Remote-Party-ID` into a list of [`SipHeaderAddr`] (draft-ietf-sip-privacy-01).
     #[cfg(feature = "draft")]
     fn remote_party_id(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        parse_addr_list(self.sip_header_all(SipHeader::RemotePartyId))
+        parse_addr_list(self.sip_header_rows(SipHeader::RemotePartyId)?)
     }
 }
 
@@ -766,7 +788,7 @@ where
     L: SipHeaderLookup + ?Sized,
 {
     match lookup
-        .sip_header_all(name)
+        .sip_header_rows(name)?
         .as_slice()
     {
         [] => Ok(None),
@@ -1113,7 +1135,9 @@ mod tests {
     #[test]
     fn allow_accessor() {
         let h = headers_with(&[("Allow", "INVITE, ACK, OPTIONS, BYE")]);
-        let methods = h.allow();
+        let methods = h
+            .allow()
+            .unwrap();
         assert_eq!(methods, vec!["INVITE", "ACK", "OPTIONS", "BYE"]);
     }
 
@@ -1122,20 +1146,27 @@ mod tests {
         let h = headers_with(&[]);
         assert!(h
             .allow()
+            .unwrap()
             .is_empty());
     }
 
     #[test]
     fn supported_accessor() {
         let h = headers_with(&[("Supported", "100rel, timer")]);
-        let opts = h.supported();
+        let opts = h
+            .supported()
+            .unwrap();
         assert_eq!(opts, vec!["100rel", "timer"]);
     }
 
     #[test]
     fn require_header_accessor() {
         let h = headers_with(&[("Require", "100rel")]);
-        assert_eq!(h.require_header(), vec!["100rel"]);
+        assert_eq!(
+            h.require_header()
+                .unwrap(),
+            vec!["100rel"]
+        );
     }
 
     #[test]
@@ -1177,7 +1208,11 @@ mod tests {
     #[test]
     fn content_encoding_accessor() {
         let h = headers_with(&[("Content-Encoding", "gzip")]);
-        assert_eq!(h.content_encoding(), vec!["gzip"]);
+        assert_eq!(
+            h.content_encoding()
+                .unwrap(),
+            vec!["gzip"]
+        );
     }
 
     #[test]
@@ -1212,7 +1247,9 @@ mod tests {
     #[test]
     fn in_reply_to_accessor() {
         let h = headers_with(&[("In-Reply-To", "call1@example.com, call2@example.com")]);
-        let calls = h.in_reply_to();
+        let calls = h
+            .in_reply_to()
+            .unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0], "call1@example.com");
     }
@@ -1865,44 +1902,56 @@ mod multi_row_tests {
             ("Content-Language", &["en", "fr"]),
             ("In-Reply-To", &["a@example.com", "b@example.com"]),
         ]);
-        assert_eq!(h.allow(), vec!["INVITE", "ACK", "BYE"]);
+        assert_eq!(
+            h.allow()
+                .unwrap(),
+            vec!["INVITE", "ACK", "BYE"]
+        );
         assert_eq!(
             h.supported()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.require_header()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.proxy_require()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.unsupported()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.allow_events()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.content_encoding()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.content_language()
+                .unwrap()
                 .len(),
             2
         );
         assert_eq!(
             h.in_reply_to()
+                .unwrap()
                 .len(),
             2
         );
@@ -1913,17 +1962,23 @@ mod multi_row_tests {
         let h = rows(&[("Allow", &[""])]);
         assert!(h
             .allow()
+            .unwrap()
             .is_empty());
         let h = rows(&[("Allow", &["   "])]);
         assert!(h
             .allow()
+            .unwrap()
             .is_empty());
     }
 
     #[test]
     fn token_list_drops_empty_entries() {
         let h = rows(&[("Allow", &["INVITE, , ACK,", ",BYE"])]);
-        assert_eq!(h.allow(), vec!["INVITE", "ACK", "BYE"]);
+        assert_eq!(
+            h.allow()
+                .unwrap(),
+            vec!["INVITE", "ACK", "BYE"]
+        );
     }
 
     #[test]

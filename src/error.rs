@@ -132,6 +132,43 @@ pub struct Fault {
     pub entry: Option<usize>,
 }
 
+impl Fault {
+    /// A fault in `field`, with no position or entry.
+    ///
+    /// For a layer outside this crate that decodes header rows, such as a
+    /// [`SipHeaderLookup::sip_header_rows_str`](crate::SipHeaderLookup::sip_header_rows_str)
+    /// override:
+    ///
+    /// ```
+    /// use sip_header::{Fault, FaultCode, Field, ParseError};
+    ///
+    /// let e = ParseError::Malformed(
+    ///     Fault::new(Field::Value, FaultCode::TooManyEntries).in_entry(4000),
+    /// );
+    /// assert!(e.to_string().contains("too-many-entries"));
+    /// ```
+    pub fn new(field: Field, code: FaultCode) -> Self {
+        Fault {
+            field,
+            code,
+            position: None,
+            entry: None,
+        }
+    }
+
+    /// Point the fault at byte `position`.
+    pub fn at(mut self, position: usize) -> Self {
+        self.position = Some(position);
+        self
+    }
+
+    /// Attribute the fault to list entry `index`.
+    pub fn in_entry(mut self, index: usize) -> Self {
+        self.entry = Some(index);
+        self
+    }
+}
+
 impl fmt::Display for Fault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.field, self.code)?;
@@ -159,6 +196,8 @@ pub enum FaultCode {
     Misplaced,
     /// Percent-decoded octets that are not UTF-8.
     NotUtf8,
+    /// More list entries than the layer that decoded them allows.
+    TooManyEntries,
 }
 
 impl FaultCode {
@@ -173,6 +212,7 @@ impl FaultCode {
             FaultCode::Ambiguous => "ambiguous",
             FaultCode::Misplaced => "misplaced",
             FaultCode::NotUtf8 => "not-utf8",
+            FaultCode::TooManyEntries => "too-many-entries",
         }
     }
 }
