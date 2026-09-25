@@ -433,7 +433,7 @@ impl CommaList for AddrList {
 }
 
 /// RFC 3261 §25.1 `token` character.
-fn is_token_char(c: char) -> bool {
+pub(crate) fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
         || matches!(
             c,

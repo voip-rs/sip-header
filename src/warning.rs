@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use crate::diagnostic::{Field, ParseWarning};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::header_addr::is_token_char;
 use crate::list::{non_empty, CommaList};
 
 /// A single Warning header entry.
@@ -39,7 +40,7 @@ impl SipWarningEntry {
         &self.text
     }
 
-    fn parse(entry: &str) -> Result<Self, ParseError> {
+    fn parse(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
         let s = entry.trim();
         if s.is_empty() {
             return Err(ParseError::malformed(
@@ -81,8 +82,19 @@ impl SipWarningEntry {
         if agent.is_empty() {
             return Err(at(Field::Agent, FaultCode::Missing, rest));
         }
+        if !is_hostport(agent)
+            && !agent
+                .chars()
+                .all(is_token_char)
+        {
+            warnings.push(ParseWarning::new(
+                Field::Agent,
+                WarningCode::InvalidToken,
+                Some(crate::offset_in(entry, agent)),
+            ));
+        }
 
-        let text = parse_quoted_string(entry, &rest[quote_pos..])?;
+        let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
 
         Ok(SipWarningEntry {
             code,
@@ -99,8 +111,41 @@ impl fmt::Display for SipWarningEntry {
     }
 }
 
+/// RFC 3261 §25.1 `hostport = host [ ":" port ]`, host as sip-uri reads it.
+fn is_hostport(agent: &str) -> bool {
+    let split = match agent.strip_prefix('[') {
+        Some(inner) => inner
+            .find(']')
+            .map(|close| agent.split_at(close + 2)),
+        None => Some(
+            agent
+                .find(':')
+                .map_or((agent, ""), |colon| agent.split_at(colon)),
+        ),
+    };
+    let Some((host, port)) = split else {
+        return false;
+    };
+    let port_ok = port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|p| {
+                !p.is_empty()
+                    && p.bytes()
+                        .all(|b| b.is_ascii_digit())
+            });
+    port_ok && sip_uri::Host::parse_strict(host).is_ok()
+}
+
 /// Parse a quoted string starting with `"`, returning the unescaped content.
-fn parse_quoted_string(entry: &str, s: &str) -> Result<String, ParseError> {
+///
+/// A final `\"` with no other close is read as a closing quote after a lone
+/// backslash, which is dropped with [`WarningCode::TrailingBackslash`].
+fn parse_quoted_string(
+    entry: &str,
+    s: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<String, ParseError> {
     let Some(content) = s.strip_prefix('"') else {
         return Err(ParseError::malformed(
             Field::Text,
@@ -118,6 +163,17 @@ fn parse_quoted_string(entry: &str, s: &str) -> Result<String, ParseError> {
             escaped = true;
         } else if c == '"' {
             return Ok(crate::unescape_quoted_pair(&content[..i]));
+        }
+    }
+    if let Some(inner) = content.strip_suffix('"') {
+        let (text, trailing_backslash) = crate::unescape_quoted_pair_checked(inner);
+        if trailing_backslash {
+            warnings.push(ParseWarning::new(
+                Field::Text,
+                WarningCode::TrailingBackslash,
+                Some(crate::offset_in(entry, inner) + inner.len() - 1),
+            ));
+            return Ok(text);
         }
     }
 
@@ -143,9 +199,9 @@ impl CommaList for SipWarning {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipWarningEntry>, ParseError> {
-        SipWarningEntry::parse(entry).map(Some)
+        SipWarningEntry::parse(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {
