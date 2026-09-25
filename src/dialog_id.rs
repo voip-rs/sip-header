@@ -84,7 +84,7 @@ impl<K: DialogKind> DialogId<K> {
                 .is_some_and(|v| v.starts_with('"'))
             {
                 // Reported only: values stay raw.
-                param.unquoted_reporting(raw, &mut warnings);
+                param.report_quoting(raw, &mut warnings);
             }
             let key = param
                 .key

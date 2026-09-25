@@ -2,9 +2,10 @@
 
 use std::fmt;
 
-use crate::accept::{flag_invalid_token, is_token, missing_entry, read_accept_params};
+use crate::accept::{flag_invalid_token, missing_entry, read_accept_params};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
+use crate::is_token;
 use crate::list::CommaList;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.

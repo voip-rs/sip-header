@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
-use crate::header_addr::is_token_char;
+use crate::is_token_char;
 use crate::list::{non_empty, CommaList};
 
 /// A single Warning header entry.

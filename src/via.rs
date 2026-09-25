@@ -5,7 +5,6 @@ use std::fmt;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::{non_empty, CommaList};
-use crate::uri_info::report_param_quoting;
 
 /// A single Via entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +103,7 @@ impl SipViaEntry {
         let (host, port) = parse_host_port(entry, sent_by, warnings)?;
 
         let raw_params = crate::parse_params(params_part.unwrap_or(""));
-        report_param_quoting(entry, &raw_params, warnings);
+        crate::report_params_quoting(entry, &raw_params, warnings);
         let rport = raw_params
             .iter()
             .find(|p| {

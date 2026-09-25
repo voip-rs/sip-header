@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::is_token;
 use crate::list::CommaList;
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
@@ -123,13 +124,6 @@ pub(crate) fn flag_invalid_token(
             Some(crate::offset_in(entry, part)),
         ));
     }
-}
-
-/// RFC 3261 §25.1 `token`.
-pub(crate) fn is_token(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"-.!%*_+`'~".contains(&b))
 }
 
 /// RFC 3261 §25.1 `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`.

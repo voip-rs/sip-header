@@ -68,7 +68,7 @@ pub use call_id::SipCallId;
 pub use contact::{ContactList, ContactValue};
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use error::{Fault, FaultCode, ParseError};
-pub use geolocation::{SipGeolocation, SipGeolocationRef};
+pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
 pub use header::{ParseSipHeaderError, SipHeader, SipHeaderLookup};
 pub use header_addr::SipHeaderAddr;
 pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
@@ -179,6 +179,40 @@ pub(crate) fn unescape_quoted_pair_checked(s: &str) -> (String, bool) {
     (result, escaped)
 }
 
+/// RFC 3261 §25.1 `token` character.
+pub(crate) fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            '-' | '.' | '!' | '%' | '*' | '_' | '+' | '`' | '\'' | '~'
+        )
+}
+
+/// RFC 3261 §25.1 `token`.
+pub(crate) fn is_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(is_token_char)
+}
+
+/// Whether `value` opens a quoted-string that never closes.
+pub(crate) fn opens_unterminated_quote(value: &str) -> bool {
+    value
+        .strip_prefix('"')
+        .is_some_and(|rest| closing_quote(rest).is_none())
+}
+
+/// Whether unescaping `inner` would drop a lone trailing `\`.
+fn ends_in_lone_backslash(inner: &str) -> bool {
+    inner
+        .bytes()
+        .rev()
+        .take_while(|&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
 /// A control character `qdtext` excludes but `quoted-pair` carries
 /// (RFC 3261 §25.1); CR and LF fit neither.
 pub(crate) fn is_quoted_pair_only(c: char) -> bool {
@@ -265,7 +299,16 @@ impl RawParam<'_> {
         input: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Option<Unquoted> {
-        let v = self.value?;
+        self.report_quoting(input, warnings);
+        self.unquoted()
+    }
+
+    /// Raise the quote breaches [`unquoted_reporting`](Self::unquoted_reporting)
+    /// would, for a type that stores the value as sent.
+    pub(crate) fn report_quoting(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
+        let Some(v) = self.value else {
+            return;
+        };
         let at = offset_in(input, v);
         if self.unterminated {
             warnings.push(ParseWarning::new(
@@ -274,15 +317,37 @@ impl RawParam<'_> {
                 Some(at),
             ));
         }
-        let unquoted = self.unquoted()?;
-        if unquoted.trailing_backslash {
+        let closed = v.len() >= 2 && v.starts_with('"') && v.ends_with('"');
+        if closed && ends_in_lone_backslash(&v[1..v.len() - 1]) {
             warnings.push(ParseWarning::new(
                 Field::Param,
                 WarningCode::TrailingBackslash,
                 Some(at + v.len() - 2),
             ));
         }
-        Some(unquoted)
+    }
+}
+
+/// Read `*(SEMI generic-param)` from `params`, a slice of `input`, values as
+/// sent, reporting quote breaches at their position in `input`.
+pub(crate) fn read_params_reporting(
+    input: &str,
+    params: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Vec<(String, Option<String>)> {
+    let raw = parse_params(params);
+    report_params_quoting(input, &raw, warnings);
+    stored_params(raw)
+}
+
+/// Raise the quote breaches in `params`, read from `input`.
+pub(crate) fn report_params_quoting(
+    input: &str,
+    params: &[RawParam<'_>],
+    warnings: &mut Vec<ParseWarning>,
+) {
+    for p in params {
+        p.report_quoting(input, warnings);
     }
 }
 

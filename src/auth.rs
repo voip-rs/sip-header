@@ -156,11 +156,7 @@ impl SipAuthValue {
             let value = param_str[eq + 1..].trim();
             let at = crate::offset_in(input, value);
 
-            // An empty key before the `=` lets the shared reader judge quote termination.
-            if crate::parse_params(&param_str[eq..])
-                .first()
-                .is_some_and(|p| p.unterminated)
-            {
+            if crate::opens_unterminated_quote(value) {
                 warnings.push(ParseWarning::new(
                     Field::Credentials,
                     WarningCode::UnterminatedQuote,

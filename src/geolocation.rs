@@ -5,7 +5,6 @@ use std::fmt;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
-use crate::uri_info::read_params_reporting;
 
 /// A reference extracted from a SIP Geolocation header (RFC 6442).
 ///
@@ -113,7 +112,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
     };
     Some(SipGeolocationEntry {
         reference,
-        params: read_params_reporting(entry, params, warnings),
+        params: crate::read_params_reporting(entry, params, warnings),
     })
 }
 

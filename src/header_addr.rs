@@ -8,6 +8,7 @@ use percent_encoding::percent_decode_str;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::is_token_char;
 use crate::list::CommaList;
 use crate::replaces::SipReplaces;
 
@@ -384,7 +385,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
             .is_some_and(|v| v.starts_with('"'))
         {
             // Reported only: header param values stay raw.
-            p.unquoted_reporting(input, &mut warnings);
+            p.report_quoting(input, &mut warnings);
         }
     }
     let addr = SipHeaderAddr {
@@ -430,15 +431,6 @@ impl CommaList for AddrList {
     fn blank() -> Result<Self, ParseError> {
         Ok(Self(Vec::new()))
     }
-}
-
-/// RFC 3261 §25.1 `token` character.
-pub(crate) fn is_token_char(c: char) -> bool {
-    c.is_ascii_alphanumeric()
-        || matches!(
-            c,
-            '-' | '.' | '!' | '%' | '*' | '_' | '+' | '`' | '\'' | '~'
-        )
 }
 
 /// A display name needs quoting unless it is a single `token`.
