@@ -99,12 +99,6 @@ pub(crate) fn fmt_joined<T: std::fmt::Display>(
     Ok(())
 }
 
-/// Read `*(SEMI generic-param)` into stored form: keys lowercased, values
-/// raw, `None` for a flag.
-pub(crate) fn read_params(s: &str) -> Vec<(String, Option<String>)> {
-    stored_params(parse_params(s))
-}
-
 /// Parameters already read, in stored form.
 pub(crate) fn stored_params(params: Vec<RawParam<'_>>) -> Vec<(String, Option<String>)> {
     params

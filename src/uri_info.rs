@@ -5,8 +5,8 @@
 
 use std::fmt;
 
-use crate::diagnostic::{Field, ParseWarning};
-use crate::error::{FaultCode, ParseError};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::error::ParseError;
 use crate::list::{non_empty, CommaList};
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
@@ -50,8 +50,12 @@ impl fmt::Display for UriInfoEntry {
 
 /// Parsed `<absoluteURI> *(SEMI generic-param)` header value.
 ///
-/// Used by Call-Info, Alert-Info, and Error-Info. Contains one or more entries;
-/// entries that yield no URI are skipped, and `Err(Empty)` means none did.
+/// Used by Call-Info, Alert-Info, and Error-Info. Contains one or more entries.
+/// An entry without its angle brackets is kept with
+/// [`MissingBrackets`](crate::WarningCode::MissingBrackets); one that yields
+/// no URI is dropped with [`SkippedEntry`](crate::WarningCode::SkippedEntry),
+/// a blank one with [`EmptyEntry`](crate::WarningCode::EmptyEntry), and
+/// `Err(Empty)` means no entry yielded a URI.
 ///
 /// ```
 /// use sip_header::UriInfo;
@@ -64,14 +68,17 @@ impl fmt::Display for UriInfoEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UriInfo(Vec<UriInfoEntry>);
 
-fn parse_entry(entry: &str) -> Result<UriInfoEntry, ParseError> {
+/// Read one entry, positions relative to `entry`; `None` when it yields no URI.
+fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEntry> {
     let raw = entry.trim();
+    let at = Some(crate::offset_in(entry, raw));
     if raw.is_empty() {
-        return Err(ParseError::malformed(
+        warnings.push(ParseWarning::new(
             Field::Entry,
-            FaultCode::Missing,
+            WarningCode::EmptyEntry,
             None,
         ));
+        return None;
     }
 
     let bracketed = raw
@@ -81,30 +88,57 @@ fn parse_entry(entry: &str) -> Result<UriInfoEntry, ParseError> {
             let rest = rest.trim_start();
             rest.is_empty() || rest.starts_with(';')
         });
-    // Unbracketed or junk after `>` (not RFC 3261 §20.9 grammar): data runs
-    // to the first `;` with stray brackets stripped.
-    let (data, params) = bracketed.unwrap_or_else(|| {
-        let (data, params) = raw
-            .split_once(';')
-            .unwrap_or((raw, ""));
-        (
-            data.trim()
-                .trim_matches(|c| c == '<' || c == '>'),
-            params,
-        )
-    });
+    // Without the RFC 3261 §20.9 brackets, data runs to the first `;` with
+    // stray brackets stripped.
+    let (data, params, recovered) = match bracketed {
+        Some((data, params)) => (data, params, false),
+        None => {
+            let (data, params) = raw
+                .split_once(';')
+                .unwrap_or((raw, ""));
+            (
+                data.trim()
+                    .trim_matches(|c| c == '<' || c == '>'),
+                params,
+                true,
+            )
+        }
+    };
     if data.is_empty() {
-        return Err(ParseError::malformed(
-            Field::Addr,
-            FaultCode::Missing,
-            Some(crate::offset_in(entry, raw)),
+        warnings.push(ParseWarning::new(
+            Field::Entry,
+            WarningCode::SkippedEntry,
+            at,
+        ));
+        return None;
+    }
+    if recovered {
+        warnings.push(ParseWarning::new(
+            Field::Entry,
+            WarningCode::MissingBrackets,
+            at,
         ));
     }
 
-    Ok(UriInfoEntry {
+    Some(UriInfoEntry {
         uri: data.to_string(),
-        params: crate::read_params(params),
+        params: read_params_reporting(entry, params, warnings),
     })
+}
+
+/// Read `*(SEMI generic-param)` from `params`, a slice of `entry`, values as
+/// sent, reporting quote breaches at their position in `entry`.
+pub(crate) fn read_params_reporting(
+    entry: &str,
+    params: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Vec<(String, Option<String>)> {
+    let raw = crate::parse_params(params);
+    for p in &raw {
+        // Unquoted only to report; the stored value stays as sent.
+        p.unquoted_reporting(entry, warnings);
+    }
+    crate::stored_params(raw)
 }
 
 impl CommaList for UriInfo {
@@ -112,9 +146,9 @@ impl CommaList for UriInfo {
 
     fn parse_entry(
         entry: &str,
-        _: &mut Vec<ParseWarning>,
+        warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<UriInfoEntry>, ParseError> {
-        Ok(parse_entry(entry).ok())
+        Ok(read_entry(entry, warnings))
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
