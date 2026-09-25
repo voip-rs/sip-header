@@ -32,6 +32,8 @@
 mod macros;
 #[macro_use]
 mod list;
+#[macro_use]
+mod dialog_id;
 
 pub use sip_uri;
 
