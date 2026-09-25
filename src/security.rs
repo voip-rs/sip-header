@@ -326,6 +326,42 @@ mod param_tests {
     }
 
     #[test]
+    fn quote_warnings_carry_kind_entry_and_refuse_strict() {
+        use crate::diagnostic::{Field, WarningCode};
+        use sip_uri::WarningKind;
+
+        let raw = r#"tls, digest;d-alg=md5;x="a\""#;
+        let parsed = SipSecurity::parse_with_warnings(raw).unwrap();
+        assert_eq!(parsed.value, SipSecurity::parse(raw).unwrap());
+        let found: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.entry))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    Field::Param,
+                    WarningCode::UnterminatedQuote,
+                    WarningKind::Recovered,
+                    Some(1)
+                ),
+                (
+                    Field::Param,
+                    WarningCode::TrailingBackslash,
+                    WarningKind::Lost,
+                    Some(1)
+                ),
+            ]
+        );
+        assert_eq!(
+            SipSecurity::parse_strict(raw),
+            Err(ParseError::NonConformant(parsed.warnings[0]))
+        );
+    }
+
+    #[test]
     fn conformant_quoted_param_has_no_warning() {
         let parsed = SipSecurity::parse_with_warnings(r#"digest;x="a\\";q=0.1"#).unwrap();
         assert!(!parsed.has_warnings());
