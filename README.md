@@ -16,7 +16,25 @@ header parameters, and structured header values.
 
 ```toml
 [dependencies]
-sip-header = "0.3"
+sip-header = "0.4"
+```
+
+## Lenient parsing, reported breaches
+
+Every header-value parser works like sip-uri's: `FromStr` keeps whatever value the input yields, `parse_with_warnings` returns it together with the grammar breaches it accepted, and `parse_strict` refuses the first one. A warning names the field, a code, the byte position and, for lists, the entry index; it never carries the text.
+
+```rust
+use sip_header::{Field, ParseError, SipHeaderAddr, WarningCode};
+
+let input = "<sip:alice@example.com>junk;tag=abc";
+let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
+assert_eq!(parsed.value.tag(), Some("abc"));
+assert_eq!(parsed.warnings[0].field, Field::Param);
+assert_eq!(parsed.warnings[0].code, WarningCode::TrailingContent);
+assert!(matches!(
+    SipHeaderAddr::parse_strict(input),
+    Err(ParseError::NonConformant(_))
+));
 ```
 
 ## SipHeaderAddr — RFC 3261 name-addr
@@ -119,12 +137,34 @@ assert_eq!(headers[0].0, "Via");
 assert_eq!(headers[1].0, "f");  // not "From"
 ```
 
+## Migrating from 0.3
+
+| 0.3 | 0.4 |
+|---|---|
+| `SipViaError`, `SipAuthError`, `UriInfoError`, `HistoryInfoError`, `ParseSipHeaderAddrError`, … | one `ParseError`; a URI failure keeps `sip_uri::ParseError` as its `source()` |
+| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | removed; wrap `ParseError` in the framing layer's own error |
+| parsers reject some non-conformant input | `FromStr` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
+| `from_entries` only | also `from_entries_with_warnings` on every list type |
+| `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
+| Contact `*` beside addresses is `Err` | kept, with a `WildcardNotAlone` warning |
+| `param()` returns `Option<&str>` on Accept*, `UriInfoEntry` | `Option<Option<&str>>`; `Some(None)` is a flag |
+| `UriInfoEntry { data, metadata }` pub fields | `uri()`, `param()`, `params()` |
+| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; entries are `SipGeolocationEntry` with geoloc-params, `refs()` iterates |
+| `SipViaEntry::host() -> &str` | `Option<&str>`, `None` with a `MissingHost` warning |
+| `HistoryInfoEntry::reason()` yields `Utf8Error` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
+| `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
+| sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
+
+`SipHeaderAddr::redacted` renders an address for logs through sip-uri's `Redaction`, masking the display name along with the user part.
+
 ## Modules
 
 | Module | Description |
 |---|---|
 | `header_addr` | RFC 3261 `name-addr` with header-level parameters |
 | `header` | `SipHeader` enum, `SipHeaderLookup` trait |
+| `error` | `ParseError`, returned by every header-value parser |
+| `diagnostic` | `Parsed` results and `ParseWarning`s for accepted breaches |
 | `call_id` | RFC 3261 Call-ID value |
 | `message` | Extract headers and body from raw SIP message text |
 | `via` | RFC 3261 Via header parser |

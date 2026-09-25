@@ -35,6 +35,10 @@ mod list;
 #[macro_use]
 mod dialog_id;
 
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 pub use sip_uri;
 
 pub mod accept;
