@@ -24,7 +24,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/ticpu/sip-header"
 
 [workspace.dependencies]
-sip-uri = { path = "../sip-uri" }
+sip-uri = { version = "0.3.0-rc.1", path = "../sip-uri" }
 sip-uri-types = { version = "1.0.0-rc.1", path = "../sip-uri/sip-uri-types" }
 
 [features]

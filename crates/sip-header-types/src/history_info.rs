@@ -107,11 +107,12 @@ impl HistoryInfoEntry {
 
     /// Raw percent-encoded Reason value from the URI `?Reason=...` header.
     ///
-    /// Returns `None` if the URI is not a SIP URI or has no Reason header.
+    /// Returns `None` if the URI is not a SIP URI or has no valued Reason header.
     pub fn reason_raw(&self) -> Option<&str> {
         self.addr
             .sip_uri()?
             .header("Reason")
+            .flatten()
     }
 }
 

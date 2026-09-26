@@ -83,14 +83,16 @@ impl AddrParts for SipHeaderAddr {
     fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
         let value = self
             .sip_uri()?
-            .header("Replaces")?;
+            .header("Replaces")?
+            .unwrap_or_default();
         Some(SipReplaces::parse_uri_header(value))
     }
 
     fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
         let raw = self
             .sip_uri()?
-            .header("Reason")?;
+            .header("Reason")?
+            .unwrap_or_default();
         Some(
             percent_decode_str(raw)
                 .decode_utf8()
@@ -873,6 +875,7 @@ mod tests {
             Some(r.to_string()),
             addr.sip_uri()
                 .and_then(|u| u.header("Replaces"))
+                .flatten()
                 .map(str::to_string)
         );
     }
