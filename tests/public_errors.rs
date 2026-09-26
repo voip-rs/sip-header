@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use sip_header::{Fault, FaultCode, Field, ParseError, SipHeader, SipHeaderLookup};
+use sip_header::{
+    Fault, FaultCode, Field, ParseError, RowError, RowErrorKind, SipHeader, SipHeaderLookup,
+    SipHeaderRows,
+};
 
 fn too_many() -> ParseError {
     ParseError::Malformed(
@@ -25,51 +28,73 @@ fn fault_is_constructible_outside_the_crate() {
     );
 }
 
-/// A store that decodes its own framing and fails for one header.
+fn row_error() -> RowError {
+    RowError::new(RowErrorKind::TooManyEntries, 4000)
+}
+
+#[test]
+fn row_error_converts_to_a_fault() {
+    let e = row_error();
+    assert_eq!((e.kind(), e.entry()), (RowErrorKind::TooManyEntries, 4000));
+    assert_eq!(e.to_string(), "too-many-entries in entry 4000");
+    assert_eq!(
+        ParseError::from(e),
+        ParseError::Malformed(Fault::new(Field::Value, FaultCode::TooManyEntries).in_entry(4000))
+    );
+}
+
+/// A store that frames its own rows and fails to decode one header: its
+/// undecoded text is what `sip_header_all_str` returns.
 struct FramedStore {
-    rows: HashMap<String, Vec<String>>,
+    raw: HashMap<String, Vec<String>>,
     broken: SipHeader,
 }
 
-impl SipHeaderLookup for FramedStore {
+impl SipHeaderRows for FramedStore {
     fn sip_header_str(&self, name: &str) -> Option<&str> {
-        self.rows
+        self.raw
             .sip_header_str(name)
     }
 
     fn sip_header_all_str<'a>(&'a self, name: &str) -> Vec<&'a str> {
-        self.rows
+        self.raw
             .sip_header_all_str(name)
     }
 
-    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, ParseError> {
+    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
         if name
             == self
                 .broken
                 .as_str()
         {
-            return Err(too_many());
+            return Err(row_error());
         }
         Ok(self.sip_header_all_str(name))
     }
 }
 
 fn broken(header: SipHeader, value: &str) -> FramedStore {
-    let mut rows = HashMap::new();
-    rows.insert(header.to_string(), vec![value.to_string()]);
+    let mut raw = HashMap::new();
+    raw.insert(header.to_string(), vec![value.to_string()]);
     FramedStore {
-        rows,
+        raw,
         broken: header,
     }
 }
 
 macro_rules! assert_row_error {
     ($header:expr, $value:expr, $accessor:ident) => {
+        let store = broken($header, $value);
         assert_eq!(
-            broken($header, $value)
+            store.sip_header_all($header),
+            vec![$value],
+            stringify!($accessor)
+        );
+        assert_eq!(
+            store
                 .$accessor()
                 .err(),
-            Some(too_many()),
+            Some(ParseError::from(row_error())),
             stringify!($accessor)
         );
     };
