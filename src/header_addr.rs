@@ -13,7 +13,7 @@ use crate::history_info::{parse_reason, HistoryInfoReason};
 use crate::is_token_char;
 use crate::list::CommaList;
 use crate::replaces::SipReplaces;
-use crate::traits::{sealed, AddrBuild, AddrParts, DialogIdEdit, HeaderParse, Redact};
+use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
@@ -39,14 +39,14 @@ use crate::traits::{sealed, AddrBuild, AddrParts, DialogIdEdit, HeaderParse, Red
 ///
 /// ```
 /// use sip_header::sip_uri::{Host, SipUri};
-/// use sip_header::{SipHeaderAddr, SipHeaderAddrParts};
+/// use sip_header::SipHeaderAddr;
 ///
-/// let mut parts = SipHeaderAddrParts::new(SipUri::new(Host::Hostname("example.com".into())).with_user("alice").into());
-/// parts.display_name = Some("Alice".into());
-/// parts.params.push(("tag".into(), Some("abc123".into())));
-/// let addr = SipHeaderAddr::from(parts);
+/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("example.com".into())).with_user("alice").into())
+///     .with_display_name("Alice")?
+///     .with_param("tag", Some("abc123"))?;
 /// assert_eq!(addr.tag(), Some("abc123"));
 /// assert_eq!(addr.to_string(), "Alice <sip:alice@example.com>;tag=abc123");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 ///
 /// [`Display`](std::fmt::Display) always emits angle brackets around the URI,
@@ -65,62 +65,127 @@ pub struct SipHeaderAddr {
     params: Vec<(String, Option<String>)>,
 }
 
-/// The components of a [`SipHeaderAddr`], held as given; conversion
-/// lowercases the parameter keys.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub struct SipHeaderAddrParts {
-    /// The display name.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub display_name: Option<String>,
-    /// The URI.
-    pub uri: sip_uri::Uri,
-    /// Header-level parameters as `(key, value)`, values as emitted.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub params: Vec<(String, Option<String>)>,
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipHeaderAddrParts {
+    #[serde(default)]
+    display_name: Option<String>,
+    uri: sip_uri::Uri,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
 }
 
-impl SipHeaderAddrParts {
-    /// Parts holding `uri` and nothing else.
-    pub fn new(uri: sip_uri::Uri) -> Self {
-        SipHeaderAddrParts {
-            display_name: None,
-            uri,
-            params: Vec::new(),
-        }
-    }
-}
-
+#[cfg(feature = "serde")]
 impl From<SipHeaderAddrParts> for SipHeaderAddr {
     fn from(parts: SipHeaderAddrParts) -> Self {
-        SipHeaderAddr {
-            display_name: parts.display_name,
-            uri: parts.uri,
-            params: crate::lowercase_keys(parts.params),
+        let mut addr = SipHeaderAddr::new(parts.uri);
+        addr.display_name = parts.display_name;
+        for (key, value) in parts.params {
+            crate::push_lowercased(&mut addr.params, key, value);
         }
+        addr
     }
 }
 
+#[cfg(feature = "serde")]
 impl From<SipHeaderAddr> for SipHeaderAddrParts {
     fn from(addr: SipHeaderAddr) -> Self {
-        addr.into_parts()
+        SipHeaderAddrParts {
+            display_name: addr.display_name,
+            uri: addr.uri,
+            params: addr.params,
+        }
     }
 }
 
 impl SipHeaderAddr {
     /// Create a new `SipHeaderAddr` with the given URI and no display name or params.
     pub fn new(uri: sip_uri::Uri) -> Self {
-        SipHeaderAddrParts::new(uri).into()
+        SipHeaderAddr {
+            display_name: None,
+            uri,
+            params: Vec::new(),
+        }
     }
 
-    /// The components, parameter keys lowercased.
-    pub fn into_parts(self) -> SipHeaderAddrParts {
-        SipHeaderAddrParts {
-            display_name: self.display_name,
-            uri: self.uri,
-            params: self.params,
+    /// Set the display name, rejecting what an RFC 3261 §25.1
+    /// `quoted-string` cannot carry.
+    ///
+    /// Any text is accepted except CR and LF: characters outside `qdtext`
+    /// are emitted as `quoted-pair`. [`Display`](fmt::Display) quotes the
+    /// name unless it is a single `token`.
+    ///
+    /// ```
+    /// use sip_header::SipHeaderAddr;
+    /// use sip_uri::{Uri, UriParse};
+    ///
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    ///     .with_display_name("Alice Smith")?;
+    /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
+    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    ///     .with_display_name("a\r\nb")
+    ///     .is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_display_name(mut self, name: impl Into<String>) -> Result<Self, ParseError> {
+        let name = name.into();
+        if let Some(pos) = name.find(['\r', '\n']) {
+            return Err(ParseError::malformed(
+                Field::DisplayName,
+                FaultCode::InvalidChar,
+                Some(pos),
+            ));
         }
+        self.display_name = Some(name);
+        Ok(self)
+    }
+
+    /// Add a header-level `generic-param` (RFC 3261 §25.1), lowercasing the key.
+    ///
+    /// The key must be a `token`. A value, when given, must be a `token`, a
+    /// host (`token` characters plus `:`, `[` and `]`), or a complete
+    /// `quoted-string` including its quotes. It is stored and emitted as
+    /// given, like a parsed value, so percent-encoding is the caller's.
+    ///
+    /// ```
+    /// use sip_header::SipHeaderAddr;
+    /// use sip_uri::{Uri, UriParse};
+    ///
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    ///     .with_param("tag", Some("abc123"))?
+    ///     .with_param("lr", None::<&str>)?;
+    /// assert_eq!(addr.to_string(), "<sip:alice@example.com>;tag=abc123;lr");
+    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    ///     .with_param("tag", Some("a;b"))
+    ///     .is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_param(
+        mut self,
+        key: impl Into<String>,
+        value: Option<impl Into<String>>,
+    ) -> Result<Self, ParseError> {
+        let key = key.into();
+        if key.is_empty() {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::Missing,
+                None,
+            ));
+        }
+        if let Some(pos) = key.find(|c| !is_token_char(c)) {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::InvalidChar,
+                Some(pos),
+            ));
+        }
+        let value = value.map(Into::into);
+        if let Some(v) = &value {
+            validate_param_value(v)?;
+        }
+        crate::push_lowercased(&mut self.params, key, value);
+        Ok(self)
     }
 
     /// The display name, if present.
@@ -203,22 +268,10 @@ impl SipHeaderAddr {
         self.param_raw("tag")
             .flatten()
     }
-
-    /// Render as [`Display`](fmt::Display) does, writing `display_name` and
-    /// `uri` in place of this value's own.
-    pub fn display_with<'a, U: fmt::Display + 'a>(
-        &'a self,
-        display_name: Option<&'a str>,
-        uri: U,
-    ) -> impl fmt::Display + 'a {
-        Rendered {
-            addr: self,
-            display_name,
-            uri,
-        }
-    }
 }
 
+/// An address written as Display does, with `display_name` and `uri` in
+/// place of its own.
 struct Rendered<'a, U> {
     addr: &'a SipHeaderAddr,
     display_name: Option<&'a str>,
@@ -257,8 +310,12 @@ fn needs_quoting(name: &str) -> bool {
 
 impl fmt::Display for SipHeaderAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.display_with(self.display_name(), &self.uri)
-            .fmt(f)
+        Rendered {
+            addr: self,
+            display_name: self.display_name(),
+            uri: &self.uri,
+        }
+        .fmt(f)
     }
 }
 
@@ -269,53 +326,6 @@ impl HeaderParse for SipHeaderAddr {
     /// as URI parameters (RFC 3261 §20.10).
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
         parse_addr(input)
-    }
-}
-
-impl AddrBuild for SipHeaderAddr {
-    fn with_display_name(self, name: impl Into<String>) -> Result<Self, ParseError> {
-        let name = name.into();
-        if let Some(pos) = name.find(['\r', '\n']) {
-            return Err(ParseError::malformed(
-                Field::DisplayName,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
-        }
-        let mut parts = self.into_parts();
-        parts.display_name = Some(name);
-        Ok(parts.into())
-    }
-
-    fn with_param(
-        self,
-        key: impl Into<String>,
-        value: Option<impl Into<String>>,
-    ) -> Result<Self, ParseError> {
-        let key = key.into();
-        if key.is_empty() {
-            return Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::Missing,
-                None,
-            ));
-        }
-        if let Some(pos) = key.find(|c| !is_token_char(c)) {
-            return Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
-        }
-        let value = value.map(Into::into);
-        if let Some(v) = &value {
-            validate_param_value(v)?;
-        }
-        let mut parts = self.into_parts();
-        parts
-            .params
-            .push((key, value));
-        Ok(parts.into())
     }
 }
 
@@ -360,11 +370,13 @@ impl Redact for SipHeaderAddr {
             .display_name()
             .filter(|n| !n.is_empty())
             .map(|n| if shows_user { n } else { "***" });
-        self.display_with(
-            name,
-            self.uri()
+        Rendered {
+            addr: self,
+            display_name: name,
+            uri: self
+                .uri()
                 .redacted(how),
-        )
+        }
     }
 }
 
@@ -492,10 +504,12 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
             p.report_quoting(input, &mut warnings);
         }
     }
-    let mut parts = SipHeaderAddrParts::new(uri);
-    parts.display_name = display_name.filter(|n| !n.is_empty());
-    parts.params = crate::stored_params(params);
-    Ok(Parsed::new(parts.into(), warnings))
+    let addr = SipHeaderAddr {
+        display_name: display_name.filter(|n| !n.is_empty()),
+        uri,
+        params: crate::stored_params(params),
+    };
+    Ok(Parsed::new(addr, warnings))
 }
 
 /// Parse one list entry as an address, forwarding its warnings; a blank

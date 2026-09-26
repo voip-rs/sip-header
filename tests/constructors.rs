@@ -1,11 +1,11 @@
 use sip_header::sip_uri::{Uri, UriParse};
 use sip_header::{
-    AddrBuild, AddrParts, ContactList, ContactValue, DialogFraming, DialogIdEdit, HeaderParse,
-    HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
+    AddrParts, ContactList, ContactValue, DialogFraming, DialogIdEdit, HeaderParse, HistoryInfo,
+    HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
     SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
     SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef, SipHeaderAddr,
-    SipHeaderAddrParts, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
+    SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 /// `value` prints as `wire`, and parsing `wire` gives `value` back.
@@ -22,23 +22,16 @@ fn uri(s: &str) -> Uri {
 }
 
 #[test]
-fn addr_from_parts() {
-    let mut parts = SipHeaderAddrParts::new(uri("sip:alice@example.com"));
-    parts.display_name = Some("Alice Smith".into());
-    parts.params = vec![("Tag".into(), Some("abc".into())), ("lr".into(), None)];
-    let addr = SipHeaderAddr::from(parts);
+fn addr_builder_lowercases_keys() {
+    let addr = SipHeaderAddr::new(uri("sip:alice@example.com"))
+        .with_display_name("Alice Smith")
+        .unwrap()
+        .with_param("Tag", Some("abc"))
+        .unwrap()
+        .with_param("lr", None::<&str>)
+        .unwrap();
     assert_eq!(addr.tag(), Some("abc"));
-    built_as(
-        addr.clone(),
-        r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#,
-    );
-    assert_eq!(
-        SipHeaderAddr::from(
-            addr.clone()
-                .into_parts()
-        ),
-        addr
-    );
+    built_as(addr, r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#);
 }
 
 #[test]
@@ -59,13 +52,8 @@ fn addr_build_validates() {
 }
 
 #[test]
-fn addr_display_with_substitutes_name_and_uri() {
+fn addr_redacted_masks_name_and_user() {
     let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>;tag=abc"#).unwrap();
-    assert_eq!(
-        addr.display_with(Some("A B"), "sip:x@example.com")
-            .to_string(),
-        r#""A B" <sip:x@example.com>;tag=abc"#
-    );
     assert_eq!(
         addr.redacted(sip_header::sip_uri::Redaction::default())
             .to_string(),

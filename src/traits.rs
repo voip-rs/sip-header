@@ -1,5 +1,4 @@
-//! Parsing, validated building and redaction, spelled as extension traits
-//! over the value types.
+//! Parsing and redaction, spelled as extension traits over the value types.
 
 use std::fmt;
 
@@ -75,58 +74,7 @@ pub trait ListParse: HeaderParse {
     }
 }
 
-/// Builders that check the RFC 3261 production for the field they set.
-pub trait AddrBuild: Sized + sealed::Sealed {
-    /// Set the display name, rejecting what an RFC 3261 §25.1
-    /// `quoted-string` cannot carry.
-    ///
-    /// Any text is accepted except CR and LF: characters outside `qdtext`
-    /// are emitted as `quoted-pair`. [`Display`](fmt::Display) quotes the
-    /// name unless it is a single `token`.
-    ///
-    /// ```
-    /// use sip_header::{AddrBuild, SipHeaderAddr};
-    /// use sip_uri::{Uri, UriParse};
-    ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_display_name("Alice Smith")?;
-    /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
-    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_display_name("a\r\nb")
-    ///     .is_err());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    fn with_display_name(self, name: impl Into<String>) -> Result<Self, ParseError>;
-
-    /// Add a header-level `generic-param` (RFC 3261 §25.1), lowercasing the key.
-    ///
-    /// The key must be a `token`. A value, when given, must be a `token`, a
-    /// host (`token` characters plus `:`, `[` and `]`), or a complete
-    /// `quoted-string` including its quotes. It is stored and emitted as
-    /// given, like a parsed value, so percent-encoding is the caller's.
-    ///
-    /// ```
-    /// use sip_header::{AddrBuild, SipHeaderAddr};
-    /// use sip_uri::{Uri, UriParse};
-    ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_param("tag", Some("abc123"))?
-    ///     .with_param("lr", None::<&str>)?;
-    /// assert_eq!(addr.to_string(), "<sip:alice@example.com>;tag=abc123;lr");
-    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_param("tag", Some("a;b"))
-    ///     .is_err());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    fn with_param(
-        self,
-        key: impl Into<String>,
-        value: Option<impl Into<String>>,
-    ) -> Result<Self, ParseError>;
-}
-
-/// The URI-header framing of a dialog identifier, and validated Call-ID
-/// replacement.
+/// The URI-header framing of a dialog identifier.
 pub trait DialogIdEdit: HeaderParse {
     /// Parse the percent-encoded framing found in a URI header
     /// (`<sip:…?Header=…>`), where `@`, `;` and `=` stay percent-encoded.
@@ -151,24 +99,6 @@ pub trait DialogIdEdit: HeaderParse {
     fn parse_uri_header_strict(raw: &str) -> Result<Self, ParseError> {
         Self::parse_uri_header_with_warnings(raw)?.into_strict()
     }
-
-    /// Returns this value with a different Call-ID.
-    ///
-    /// Framing, both tags and all other parameters are preserved. Errors
-    /// unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`;
-    /// [`parse`](HeaderParse::parse) is lenient about this token, a value
-    /// that never came off the wire is not.
-    ///
-    /// ```
-    /// use sip_header::{DialogIdEdit, HeaderParse, SipReplaces};
-    ///
-    /// let r = SipReplaces::parse("abc@203.0.113.5;to-tag=t1;from-tag=f1")?
-    ///     .with_call_id("abc@example.com")?;
-    /// assert_eq!(r.to_string(), "abc@example.com;to-tag=t1;from-tag=f1");
-    /// assert!(r.with_call_id("a b").is_err());
-    /// # Ok::<(), sip_header::ParseError>(())
-    /// ```
-    fn with_call_id(self, call_id: impl Into<String>) -> Result<Self, ParseError>;
 }
 
 /// Rendering for logs.

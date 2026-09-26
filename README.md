@@ -150,7 +150,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | 0.3 | 0.4 |
 |---|---|
 | `"…".parse::<T>()`, `T::from_str` | `T::parse` with `use sip_header::HeaderParse`; `from_entries` needs `ListParse` |
-| inherent `with_display_name`, `with_call_id`, `redacted`, `parse_list` | extension traits `AddrBuild`, `DialogIdEdit`, `Redact`, `AddrParts` |
+| inherent `redacted`, `parse_list` | extension traits `Redact`, `AddrParts` |
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | `impl SipHeaderLookup for Store` | `impl SipHeaderRows for Store` (from sip-header-catalog); `SipHeaderLookup` comes by blanket impl |
 | header-name consumers depend on sip-header | sip-header-catalog |

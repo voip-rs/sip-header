@@ -73,24 +73,6 @@ impl DialogBuild for SipTargetDialog {
                 |t, (key, value)| t.with_param(key, value),
             )
     }
-
-    fn fields(&self) -> DialogFields {
-        DialogFields {
-            call_id: self
-                .call_id()
-                .to_string(),
-            first_tag: self
-                .local_tag()
-                .to_string(),
-            second_tag: self
-                .remote_tag()
-                .to_string(),
-            early_only: false,
-            params: self
-                .params()
-                .to_vec(),
-        }
-    }
 }
 
 dialog_id_parse!(SipTargetDialog);

@@ -66,6 +66,13 @@ impl DialogId {
         &self.call_id
     }
 
+    /// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
+    pub(crate) fn set_call_id(&mut self, call_id: String) -> Result<(), ParseError> {
+        SipCallId::parse(&call_id)?;
+        self.call_id = call_id;
+        Ok(())
+    }
+
     pub(crate) fn host(&self) -> Option<&str> {
         self.call_id
             .split_once('@')
@@ -170,6 +177,31 @@ macro_rules! dialog_id_type {
                 self
             }
 
+            /// Returns this value with a different Call-ID.
+            ///
+            /// Framing, both tags and all other parameters are preserved. Errors
+            /// unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`;
+            /// [`parse`](crate::HeaderParse::parse) is lenient about this token, a value
+            /// that never came off the wire is not.
+            ///
+            /// ```
+            #[doc = concat!("use sip_header::{HeaderParse, ", stringify!($Type), "};")]
+            ///
+            #[doc = concat!("let v = ", stringify!($Type), "::parse(\"abc@203.0.113.5;", $first_name, "=t1;", $second_name, "=f1\")?")]
+            ///     .with_call_id("abc@example.com")?;
+            #[doc = concat!("assert_eq!(v.to_string(), \"abc@example.com;", $first_name, "=t1;", $second_name, "=f1\");")]
+            /// assert!(v.with_call_id("a b").is_err());
+            /// # Ok::<(), sip_header::ParseError>(())
+            /// ```
+            pub fn with_call_id(
+                mut self,
+                call_id: impl Into<String>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.0
+                    .set_call_id(call_id.into())?;
+                Ok(self)
+            }
+
             /// Set the framing [`Display`](std::fmt::Display) emits.
             pub fn with_framing(mut self, framing: $crate::dialog_id::DialogFraming) -> Self {
                 self.0
@@ -238,11 +270,9 @@ pub(crate) struct DialogFields {
     pub(crate) params: Vec<(String, Option<String>)>,
 }
 
-/// Building a dialog-identifier type from its parts, and reading them back.
+/// Building a dialog-identifier type from its parts.
 pub(crate) trait DialogBuild: DialogKind + Sized {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self;
-
-    fn fields(&self) -> DialogFields;
 }
 
 pub(crate) fn parse<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, ParseError> {
@@ -257,19 +287,6 @@ pub(crate) fn parse_uri_header<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, P
     parse_framed::<T>(&decoded)
         .map(|p| p.map(|f| T::build(f, DialogFraming::UriHeader)))
         .map_err(ParseError::without_position)
-}
-
-/// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
-pub(crate) fn with_call_id<T: DialogBuild>(
-    value: T,
-    call_id: impl Into<String>,
-    framing: DialogFraming,
-) -> Result<T, ParseError> {
-    let call_id = call_id.into();
-    SipCallId::parse(&call_id)?;
-    let mut fields = value.fields();
-    fields.call_id = call_id;
-    Ok(T::build(fields, framing))
 }
 
 fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseError> {
@@ -383,14 +400,6 @@ macro_rules! dialog_id_parse {
                 raw: &str,
             ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
                 $crate::dialog_id::parse_uri_header(raw)
-            }
-
-            fn with_call_id(
-                self,
-                call_id: impl Into<String>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                let framing = self.framing();
-                $crate::dialog_id::with_call_id(self, call_id, framing)
             }
         }
     };

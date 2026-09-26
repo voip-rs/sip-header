@@ -3,8 +3,8 @@ use sip_header::{
     ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, HistoryInfoReason,
     SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
     SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,
-    SipHeaderAddr, SipHeaderAddrParts, SipReplaces, SipSecurity, SipSecurityMechanism,
-    SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    SipHeaderAddr, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 fn alice() -> Uri {
@@ -14,10 +14,11 @@ fn alice() -> Uri {
 }
 
 fn addr() -> SipHeaderAddr {
-    let mut parts = SipHeaderAddrParts::new(alice());
-    parts.display_name = Some("Alice Smith".into());
-    parts.params = vec![("Tag".into(), Some("abc".into())), ("lr".into(), None)];
-    parts.into()
+    SipHeaderAddr::new(alice())
+        .with_display_name("Alice Smith")
+        .and_then(|a| a.with_param("Tag", Some("abc")))
+        .and_then(|a| a.with_param("lr", None::<&str>))
+        .unwrap()
 }
 
 fn via() -> SipVia {
@@ -45,18 +46,6 @@ fn addr_constructors_and_display() {
     assert_eq!(
         addr.to_string(),
         r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#
-    );
-    assert_eq!(
-        addr.display_with(Some("Bob"), "sip:bob@example.com")
-            .to_string(),
-        "Bob <sip:bob@example.com>;tag=abc;lr"
-    );
-    assert_eq!(
-        SipHeaderAddr::from(
-            addr.clone()
-                .into_parts()
-        ),
-        addr
     );
     assert_eq!(
         SipHeaderAddr::new(TelUri::new("+15551234567").into()).to_string(),

@@ -110,24 +110,6 @@ impl DialogBuild for SipReplaces {
                 |r, (key, value)| r.with_param(key, value),
             )
     }
-
-    fn fields(&self) -> DialogFields {
-        DialogFields {
-            call_id: self
-                .call_id()
-                .to_string(),
-            first_tag: self
-                .to_tag()
-                .to_string(),
-            second_tag: self
-                .from_tag()
-                .to_string(),
-            early_only: self.early_only(),
-            params: self
-                .params()
-                .to_vec(),
-        }
-    }
 }
 
 dialog_id_parse!(SipReplaces);

@@ -134,13 +134,14 @@ impl fmt::Display for HistoryInfoEntry {
 ///
 /// ```
 /// use sip_header::sip_uri::{Host, SipUri};
-/// use sip_header::{HistoryInfo, HistoryInfoEntry, SipHeaderAddrParts};
+/// use sip_header::{HistoryInfo, HistoryInfoEntry, SipHeaderAddr};
 ///
-/// let mut parts = SipHeaderAddrParts::new(SipUri::new(Host::Hostname("psap.example.com".into())).into());
-/// parts.params.push(("index".into(), Some("1.1".into())));
-/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(parts.into())]).unwrap();
+/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into())
+///     .with_param("index", Some("1.1"))?;
+/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr)]).unwrap();
 /// assert_eq!(hi.entries()[0].index(), Some("1.1"));
 /// assert_eq!(hi.to_string(), "<sip:psap.example.com>;index=1.1");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryInfo(Vec<HistoryInfoEntry>);
