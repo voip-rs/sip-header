@@ -8,6 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::header_addr::{parse_list_addr, SipHeaderAddr};
 use crate::list::CommaList;
+use crate::traits::{HeaderParse, ListParse};
 use std::fmt;
 
 /// A single Contact header value: either the `*` wildcard or an address.
@@ -52,7 +53,7 @@ impl CommaList for ContactList {
     }
 
     fn from_parsed(entries: Vec<ContactValue>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     fn from_parsed_reporting(
@@ -70,15 +71,16 @@ impl CommaList for ContactList {
             warnings.extend(wildcards);
             warnings.sort_by_key(|w| w.entry);
         }
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     fn blank() -> Result<Self, ParseError> {
-        Ok(Self(Vec::new()))
+        Ok(Self::new(Vec::new()))
     }
 }
 
-list_type!(ContactList, ContactValue, sep: ", ", entry: "contact-param");
+list_type!(ContactList, ContactValue, sep: ", ", may_be_empty);
+list_parse!(ContactList);
 
 /// Parse a comma-separated Contact header value into a list of [`ContactValue`].
 pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseError> {
@@ -244,9 +246,7 @@ mod tests {
             Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
         );
         assert_eq!(
-            "<sip:a@example.com>"
-                .parse::<ContactList>()
-                .map(ContactList::into_entries),
+            ContactList::parse("<sip:a@example.com>").map(ContactList::into_entries),
             parse_contact_list("<sip:a@example.com>")
         );
     }

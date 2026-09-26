@@ -18,6 +18,7 @@ use crate::list::CommaList;
 use crate::replaces::SipReplaces;
 use crate::security::SipSecurity;
 use crate::target_dialog::SipTargetDialog;
+use crate::traits::HeaderParse;
 use crate::uri_info::UriInfo;
 use crate::via::SipVia;
 use crate::warning::SipWarning;

@@ -42,6 +42,20 @@ pub struct SipGeolocationEntry {
 }
 
 impl SipGeolocationEntry {
+    /// An entry for `reference`, with no parameters.
+    pub fn new(reference: SipGeolocationRef) -> Self {
+        SipGeolocationEntry {
+            reference,
+            params: Vec::new(),
+        }
+    }
+
+    /// Add a geoloc-param, lowercasing the key; the value is emitted as given.
+    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
+        self
+    }
+
     /// The location reference inside the angle brackets.
     pub fn reference(&self) -> &SipGeolocationRef {
         &self.reference
@@ -110,10 +124,13 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
         Some(_) => SipGeolocationRef::Cid(inner[4..].to_string()),
         None => SipGeolocationRef::Url(inner.to_string()),
     };
-    Some(SipGeolocationEntry {
-        reference,
-        params: crate::read_params_reporting(entry, params, warnings),
-    })
+    Some(
+        crate::read_params_reporting(entry, params, warnings)
+            .into_iter()
+            .fold(SipGeolocationEntry::new(reference), |e, (k, v)| {
+                e.with_param(k, v)
+            }),
+    )
 }
 
 /// Parsed SIP Geolocation header value (RFC 6442).
@@ -126,7 +143,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
 /// error.
 ///
 /// ```
-/// use sip_header::SipGeolocation;
+/// use sip_header::{HeaderParse, SipGeolocation};
 ///
 /// let raw = "<cid:abc-123>, <https://lis.example.com/held/abc>";
 /// let geo = SipGeolocation::parse(raw)?;
@@ -149,11 +166,12 @@ impl CommaList for SipGeolocation {
     }
 
     fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 }
 
-list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", entry: "locationValue");
+list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", may_be_empty);
+list_parse!(SipGeolocation);
 
 impl SipGeolocation {
     /// Every entry's reference, in order.
@@ -198,6 +216,7 @@ impl SipGeolocation {
 mod tests {
     use super::*;
     use crate::diagnostic::{Field, WarningCode};
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     fn parse(raw: &str) -> SipGeolocation {

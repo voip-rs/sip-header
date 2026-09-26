@@ -60,6 +60,7 @@ pub mod message;
 pub mod replaces;
 pub mod security;
 pub mod target_dialog;
+mod traits;
 pub mod uri_info;
 pub mod via;
 pub mod warning;
@@ -71,16 +72,18 @@ pub use auth::SipAuthValue;
 pub use call_id::SipCallId;
 pub use contact::{ContactList, ContactValue};
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
+pub use dialog_id::{DialogFraming, DialogKind};
 pub use error::{Fault, FaultCode, ParseError};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
 pub use header::{ParseSipHeaderError, SipHeader, SipHeaderLookup};
-pub use header_addr::SipHeaderAddr;
+pub use header_addr::{SipHeaderAddr, SipHeaderAddrParts};
 pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 #[cfg(feature = "message")]
 pub use message::{extract_all_headers, extract_body, extract_header, extract_request_uri};
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;
+pub use traits::{AddrBuild, AddrParts, DialogIdEdit, HeaderParse, ListParse, Redact};
 pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};
@@ -101,6 +104,23 @@ pub(crate) fn fmt_joined<T: std::fmt::Display>(
         write!(f, "{item}")?;
     }
     Ok(())
+}
+
+/// Parameter keys lowercased, values untouched.
+pub(crate) fn lowercase_keys<V>(params: Vec<(String, V)>) -> Vec<(String, V)> {
+    params
+        .into_iter()
+        .map(|(mut k, v)| {
+            k.make_ascii_lowercase();
+            (k, v)
+        })
+        .collect()
+}
+
+/// Append a parameter, its key lowercased.
+pub(crate) fn push_lowercased<V>(params: &mut Vec<(String, V)>, mut key: String, value: V) {
+    key.make_ascii_lowercase();
+    params.push((key, value));
 }
 
 /// Parameters already read, in stored form.

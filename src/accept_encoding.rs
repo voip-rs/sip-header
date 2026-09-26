@@ -17,6 +17,22 @@ pub struct SipAcceptEncodingEntry {
 }
 
 impl SipAcceptEncodingEntry {
+    /// An entry for the given content-coding, lowercased, with no parameters.
+    pub fn new(encoding: impl Into<String>) -> Self {
+        let mut encoding = encoding.into();
+        encoding.make_ascii_lowercase();
+        SipAcceptEncodingEntry {
+            encoding,
+            params: Vec::new(),
+        }
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
+        self
+    }
+
     /// The content-coding value (e.g. `"gzip"`, `"identity"`, `"*"`).
     pub fn encoding(&self) -> &str {
         &self.encoding
@@ -75,10 +91,13 @@ fn parse_entry(
         warnings,
     );
 
-    Ok(SipAcceptEncodingEntry {
-        encoding: encoding_part.to_ascii_lowercase(),
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-    })
+    Ok(
+        read_accept_params(entry, params_part.unwrap_or(""), warnings)
+            .into_iter()
+            .fold(SipAcceptEncodingEntry::new(encoding_part), |e, (k, v)| {
+                e.with_param(k, v)
+            }),
+    )
 }
 
 /// Parsed SIP Accept-Encoding header value.
@@ -101,18 +120,20 @@ impl CommaList for SipAcceptEncoding {
     }
 
     fn from_parsed(entries: Vec<SipAcceptEncodingEntry>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     fn blank() -> Result<Self, ParseError> {
-        Ok(Self(Vec::new()))
+        Ok(Self::new(Vec::new()))
     }
 }
 
-list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", entry: "encoding");
+list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", may_be_empty);
+list_parse!(SipAcceptEncoding);
 
 #[cfg(test)]
 mod tests {
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     use super::*;
@@ -176,10 +197,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str() {
-        let ae: SipAcceptEncoding = "gzip"
-            .parse()
-            .unwrap();
+    fn parse_value() {
+        let ae = SipAcceptEncoding::parse("gzip").unwrap();
         assert_eq!(ae.len(), 1);
     }
 

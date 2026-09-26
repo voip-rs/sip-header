@@ -9,7 +9,7 @@ use crate::error::ParseError;
 /// A parse result together with the non-conformance found on the way.
 ///
 /// Returned by the `parse_with_warnings` constructors; `value` is what
-/// [`FromStr`](std::str::FromStr) returns for the same input.
+/// [`HeaderParse::parse`](crate::HeaderParse::parse) returns for the same input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Parsed<T> {

@@ -7,7 +7,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
-use crate::list::{non_empty, CommaList};
+use crate::list::CommaList;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +18,20 @@ pub struct UriInfoEntry {
 }
 
 impl UriInfoEntry {
+    /// An entry for `uri`, written inside angle brackets, with no parameters.
+    pub fn new(uri: impl Into<String>) -> Self {
+        UriInfoEntry {
+            uri: uri.into(),
+            params: Vec::new(),
+        }
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
+        self
+    }
+
     /// The URI or data inside the angle brackets, with brackets stripped.
     pub fn uri(&self) -> &str {
         &self.uri
@@ -58,7 +72,7 @@ impl fmt::Display for UriInfoEntry {
 /// `Err(Empty)` means no entry yielded a URI.
 ///
 /// ```
-/// use sip_header::UriInfo;
+/// use sip_header::{HeaderParse, UriInfo};
 ///
 /// let raw = "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>;purpose=EmergencyCallData.ServiceInfo";
 /// let info = UriInfo::parse(raw).unwrap();
@@ -120,10 +134,11 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
         ));
     }
 
-    Some(UriInfoEntry {
-        uri: data.to_string(),
-        params: crate::read_params_reporting(entry, params, warnings),
-    })
+    Some(
+        crate::read_params_reporting(entry, params, warnings)
+            .into_iter()
+            .fold(UriInfoEntry::new(data), |e, (k, v)| e.with_param(k, v)),
+    )
 }
 
 impl CommaList for UriInfo {
@@ -137,16 +152,18 @@ impl CommaList for UriInfo {
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
-        non_empty(entries).map(Self)
+        Self::new(entries).ok_or(ParseError::Empty)
     }
 }
 
-list_type!(UriInfo, UriInfoEntry, sep: ",", entry: "<uri>;param=value");
+list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
+list_parse!(UriInfo);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::diagnostic::WarningCode;
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     fn parse_entry(raw: &str) -> Option<UriInfoEntry> {

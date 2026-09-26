@@ -1,15 +1,6 @@
 //! RFC 4538 `Target-Dialog` header parser.
 
-use crate::dialog_id::{DialogId, DialogKind};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TargetDialog;
-
-impl DialogKind for TargetDialog {
-    const FIRST_TAG: &'static str = "local-tag";
-    const SECOND_TAG: &'static str = "remote-tag";
-    const EARLY_ONLY: bool = false;
-}
+use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 
 /// A parsed `Target-Dialog` header value (RFC 4538 §7).
 ///
@@ -17,28 +8,48 @@ impl DialogKind for TargetDialog {
 /// and `remote-tag`, both from the perspective of the request recipient.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct SipTargetDialog(DialogId<TargetDialog>);
+pub struct SipTargetDialog(DialogId);
 
-dialog_id_type!(SipTargetDialog, example: "abc@203.0.113.5;local-tag=l1;remote-tag=r1");
+dialog_id_type!(SipTargetDialog, local_tag => "local-tag", remote_tag => "remote-tag", early_only: false);
 
-impl SipTargetDialog {
-    /// The mandatory `local-tag` value.
-    pub fn local_tag(&self) -> &str {
-        self.0
-            .first_tag()
+impl DialogBuild for SipTargetDialog {
+    fn build(fields: DialogFields, framing: DialogFraming) -> Self {
+        fields
+            .params
+            .into_iter()
+            .fold(
+                SipTargetDialog::new(fields.call_id, fields.first_tag, fields.second_tag)
+                    .with_framing(framing),
+                |t, (key, value)| t.with_param(key, value),
+            )
     }
 
-    /// The mandatory `remote-tag` value.
-    pub fn remote_tag(&self) -> &str {
-        self.0
-            .second_tag()
+    fn fields(&self) -> DialogFields {
+        DialogFields {
+            call_id: self
+                .call_id()
+                .to_string(),
+            first_tag: self
+                .local_tag()
+                .to_string(),
+            second_tag: self
+                .remote_tag()
+                .to_string(),
+            early_only: false,
+            params: self
+                .params()
+                .to_vec(),
+        }
     }
 }
+
+dialog_id_parse!(SipTargetDialog);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::ParseError;
+    use crate::{DialogIdEdit, HeaderParse};
 
     #[test]
     fn parse_basic() {
@@ -176,10 +187,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str_is_wire_framing() {
-        let t: SipTargetDialog = "abc123@203.0.113.5;local-tag=l1;remote-tag=r1"
-            .parse()
-            .unwrap();
+    fn parse_is_wire_framing() {
+        let t = SipTargetDialog::parse("abc123@203.0.113.5;local-tag=l1;remote-tag=r1").unwrap();
         assert_eq!(t.local_tag(), "l1");
     }
 }

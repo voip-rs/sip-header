@@ -6,7 +6,7 @@ use crate::error::ParseError;
 /// A header value of the form `entry *(COMMA entry)`.
 ///
 /// Implementors supply the per-entry parser and their empty-list rule;
-/// [`list_type!`] turns that into the public constructors.
+/// [`list_parse!`] turns that into the parse traits.
 pub(crate) trait CommaList: Sized {
     type Entry;
 
@@ -85,68 +85,35 @@ pub(crate) trait CommaList: Sized {
     }
 }
 
-/// `Err(Empty)` for a list the grammar requires to hold one entry or more.
-pub(crate) fn non_empty<T>(entries: Vec<T>) -> Result<Vec<T>, ParseError> {
-    if entries.is_empty() {
-        Err(ParseError::Empty)
-    } else {
-        Ok(entries)
-    }
-}
-
-/// Public constructors, accessors, iteration and Display for a
-/// `struct $Type(Vec<$Entry>)` implementing [`CommaList`].
+/// Constructor, accessors, iteration and Display for a
+/// `struct $Type(Vec<$Entry>)`.
 ///
-/// `entry:` names the grammar production one entry holds, for the docs;
-/// the `infallible` form leaves `from_entries` to the type.
+/// `non_empty` types refuse an empty list, which their grammar forbids.
 macro_rules! list_type {
-    ($Type:ident, $Entry:ty, sep: $sep:literal, entry: $what:literal) => {
-        list_type!($Type, $Entry, sep: $sep, entry: $what, infallible);
-
+    ($Type:ident, $Entry:ty, sep: $sep:literal, non_empty) => {
         impl $Type {
-            #[doc = concat!("Build from entries a transport already split; each is one `", $what, "`.")]
-            ///
-            /// Error positions are relative to the entry, whose index the error carries.
-            pub fn from_entries<'a>(
-                entries: impl IntoIterator<Item = &'a str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                Self::from_entries_with_warnings(entries).map(|p| p.value)
+            /// Build from entries; `None` when `entries` is empty, which
+            /// this header's grammar forbids.
+            pub fn new(entries: Vec<$Entry>) -> Option<Self> {
+                (!entries.is_empty()).then(|| Self(entries))
             }
         }
+
+        list_type!(@common $Type, $Entry, $sep);
     };
-    ($Type:ident, $Entry:ty, sep: $sep:literal, entry: $what:literal, infallible) => {
+    ($Type:ident, $Entry:ty, sep: $sep:literal, may_be_empty) => {
         impl $Type {
-            /// Parse a comma-separated header value leniently, as [`FromStr`](std::str::FromStr) does.
-            pub fn parse(raw: &str) -> Result<Self, $crate::error::ParseError> {
-                Self::parse_with_warnings(raw).map(|p| p.value)
+            /// Build from entries.
+            pub fn new(entries: Vec<$Entry>) -> Self {
+                Self(entries)
             }
+        }
 
-            /// Parse as [`parse`](Self::parse) does, reporting accepted grammar
-            /// breaches beside the value. Positions are relative to the entry,
-            /// whose index each warning carries.
-            pub fn parse_with_warnings(
-                raw: &str,
-            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
-                <Self as $crate::list::CommaList>::list_from_str(raw)
-            }
-
-            /// Parse, refusing the first grammar breach as
-            /// [`ParseError::NonConformant`](crate::ParseError::NonConformant).
-            pub fn parse_strict(raw: &str) -> Result<Self, $crate::error::ParseError> {
-                Self::parse_with_warnings(raw)?.into_strict()
-            }
-
-            #[doc = concat!("Build from entries a transport already split, each one `", $what, "`, reporting accepted grammar breaches.")]
-            ///
-            /// Positions are relative to the entry, whose index each warning
-            /// and error carries.
-            pub fn from_entries_with_warnings<'a>(
-                entries: impl IntoIterator<Item = &'a str>,
-            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
-                <Self as $crate::list::CommaList>::list_from_entries(entries)
-            }
-
-            /// The parsed entries as a slice.
+        list_type!(@common $Type, $Entry, $sep);
+    };
+    (@common $Type:ident, $Entry:ty, $sep:literal) => {
+        impl $Type {
+            /// The entries as a slice.
             pub fn entries(&self) -> &[$Entry] {
                 &self.0
             }
@@ -175,14 +142,6 @@ macro_rules! list_type {
             }
         }
 
-        impl std::str::FromStr for $Type {
-            type Err = $crate::error::ParseError;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                Self::parse(s)
-            }
-        }
-
         impl IntoIterator for $Type {
             type Item = $Entry;
             type IntoIter = std::vec::IntoIter<$Entry>;
@@ -200,6 +159,29 @@ macro_rules! list_type {
             fn into_iter(self) -> Self::IntoIter {
                 self.0
                     .iter()
+            }
+        }
+    };
+}
+
+/// HeaderParse and ListParse for a type implementing [`CommaList`].
+macro_rules! list_parse {
+    ($Type:ident) => {
+        impl $crate::traits::sealed::Sealed for $Type {}
+
+        impl $crate::traits::HeaderParse for $Type {
+            fn parse_with_warnings(
+                raw: &str,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                <Self as $crate::list::CommaList>::list_from_str(raw)
+            }
+        }
+
+        impl $crate::traits::ListParse for $Type {
+            fn from_entries_with_warnings<'a>(
+                entries: impl IntoIterator<Item = &'a str>,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                <Self as $crate::list::CommaList>::list_from_entries(entries)
             }
         }
     };

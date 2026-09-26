@@ -6,7 +6,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
-use crate::list::{non_empty, CommaList};
+use crate::list::CommaList;
 
 /// A parsed security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +18,35 @@ pub struct SipSecurityMechanism {
 }
 
 impl SipSecurityMechanism {
+    /// A mechanism by name, lowercased, with no parameters.
+    pub fn new(mechanism: impl Into<String>) -> Self {
+        let mut mechanism = mechanism.into();
+        mechanism.make_ascii_lowercase();
+        SipSecurityMechanism {
+            mechanism,
+            params: Vec::new(),
+            quoted: Vec::new(),
+        }
+    }
+
+    fn push(mut self, key: String, value: Option<String>, quoted: bool) -> Self {
+        crate::push_lowercased(&mut self.params, key, value);
+        self.quoted
+            .push(quoted);
+        self
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    pub fn with_param(self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        self.push(key.into(), value.map(Into::into), false)
+    }
+
+    /// Add a parameter whose value [`Display`](fmt::Display) emits as a
+    /// `quoted-string`.
+    pub fn with_quoted_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.push(key.into(), Some(value.into()), true)
+    }
+
     /// The mechanism name (e.g. `"digest"`, `"tls"`, `"ipsec-ike"`).
     pub fn mechanism(&self) -> &str {
         &self.mechanism
@@ -92,29 +121,15 @@ fn parse_mechanism(
         ));
     }
 
-    let mechanism = mechanism_part.to_ascii_lowercase();
-    let (params, quoted) = crate::parse_params(params_part.unwrap_or(""))
+    Ok(crate::parse_params(params_part.unwrap_or(""))
         .into_iter()
-        .map(|p| {
-            let (value, quoted) = p
-                .unquoted_reporting(entry, warnings)
-                .map_or((None, false), |u| (Some(u.value), u.quoted));
-            (
-                (
-                    p.key
-                        .to_ascii_lowercase(),
-                    value,
-                ),
-                quoted,
-            )
-        })
-        .unzip();
-
-    Ok(SipSecurityMechanism {
-        mechanism,
-        params,
-        quoted,
-    })
+        .fold(SipSecurityMechanism::new(mechanism_part), |m, p| {
+            match p.unquoted_reporting(entry, warnings) {
+                None => m.with_param(p.key, None::<String>),
+                Some(u) if u.quoted => m.with_quoted_param(p.key, u.value),
+                Some(u) => m.with_param(p.key, Some(u.value)),
+            }
+        }))
 }
 
 /// Parsed security mechanism header value.
@@ -133,15 +148,17 @@ impl CommaList for SipSecurity {
     }
 
     fn from_parsed(entries: Vec<SipSecurityMechanism>) -> Result<Self, ParseError> {
-        non_empty(entries).map(Self)
+        Self::new(entries).ok_or(ParseError::Empty)
     }
 }
 
-list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", entry: "sec-mechanism");
+list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
+list_parse!(SipSecurity);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{HeaderParse, ListParse};
 
     #[test]
     fn single_mechanism() {
@@ -183,10 +200,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str() {
-        let sec: SipSecurity = "tls;q=0.2"
-            .parse()
-            .unwrap();
+    fn parse_value() {
+        let sec = SipSecurity::parse("tls;q=0.2").unwrap();
         assert_eq!(sec.len(), 1);
     }
 
@@ -243,6 +258,7 @@ mod tests {
 #[cfg(test)]
 mod param_tests {
     use super::*;
+    use crate::HeaderParse;
 
     #[test]
     fn d_ver_stays_quoted_on_display() {

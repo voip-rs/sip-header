@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::traits::{sealed, HeaderParse};
 
 /// Parsed SIP authentication value.
 ///
@@ -12,6 +13,16 @@ use crate::error::{FaultCode, ParseError};
 ///
 /// Grammar: `scheme SP param=val *(COMMA param=val)`, or `scheme SP token68`
 /// (RFC 7235 §2.1).
+///
+/// ```
+/// use sip_header::SipAuthValue;
+///
+/// let auth = SipAuthValue::new("Digest")
+///     .with_quoted_param("realm", "example.com")
+///     .with_param("algorithm", "MD5");
+/// assert_eq!(auth.to_string(), r#"Digest realm="example.com", algorithm=MD5"#);
+/// assert_eq!(SipAuthValue::from_token68("Bearer", "abc.def").to_string(), "Bearer abc.def");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SipAuthValue {
@@ -22,6 +33,48 @@ pub struct SipAuthValue {
 }
 
 impl SipAuthValue {
+    /// A value with the given scheme and no parameters.
+    pub fn new(scheme: impl Into<String>) -> Self {
+        SipAuthValue {
+            scheme: scheme.into(),
+            params: Vec::new(),
+            quoted: Vec::new(),
+            token68: None,
+        }
+    }
+
+    /// A value carrying a `token68` credential (RFC 7235 §2.1) instead of
+    /// parameters.
+    pub fn from_token68(scheme: impl Into<String>, token68: impl Into<String>) -> Self {
+        SipAuthValue {
+            token68: Some(token68.into()),
+            ..Self::new(scheme)
+        }
+    }
+
+    fn push(mut self, key: String, value: String, quoted: bool) -> Self {
+        self.token68 = None;
+        crate::push_lowercased(&mut self.params, key, value);
+        self.quoted
+            .push(quoted);
+        self
+    }
+
+    /// Add a parameter, lowercasing the key. [`Display`](fmt::Display)
+    /// quotes the value where RFC 2617 requires it or it cannot be a token.
+    ///
+    /// Parameters and a `token68` exclude each other, so this drops a
+    /// `token68` the value held.
+    pub fn with_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.push(key.into(), value.into(), false)
+    }
+
+    /// Add a parameter that [`Display`](fmt::Display) always quotes,
+    /// dropping a `token68` as [`with_param`](Self::with_param) does.
+    pub fn with_quoted_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.push(key.into(), value.into(), true)
+    }
+
     /// Returns the authentication scheme (e.g., "Digest", "Bearer").
     pub fn scheme(&self) -> &str {
         &self.scheme
@@ -45,10 +98,9 @@ impl SipAuthValue {
     ///
     /// Key lookup is case-insensitive.
     pub fn param(&self, key: &str) -> Option<&str> {
-        let key_lower = key.to_ascii_lowercase();
         self.params
             .iter()
-            .find(|(k, _)| k == &key_lower)
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
             .map(|(_, v)| v.as_str())
     }
 
@@ -83,114 +135,76 @@ impl SipAuthValue {
     }
 }
 
-impl SipAuthValue {
-    /// Parse an authentication header value leniently, as
-    /// [`FromStr`](std::str::FromStr) does.
-    pub fn parse(input: &str) -> Result<Self, ParseError> {
-        Self::parse_with_warnings(input).map(|p| p.value)
-    }
+impl sealed::Sealed for SipAuthValue {}
 
-    /// Parse, refusing the first grammar breach as
-    /// [`ParseError::NonConformant`].
-    pub fn parse_strict(input: &str) -> Result<Self, ParseError> {
-        Self::parse_with_warnings(input)?.into_strict()
-    }
-
-    /// Parse as [`parse`](Self::parse) does, reporting accepted grammar
-    /// breaches beside the value.
-    pub fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+impl HeaderParse for SipAuthValue {
+    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
         let mut warnings = Vec::new();
-        Self::parse_reporting(input, &mut warnings).map(|v| Parsed::new(v, warnings))
+        parse_auth(input, &mut warnings).map(|v| Parsed::new(v, warnings))
+    }
+}
+
+fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthValue, ParseError> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err(ParseError::Empty);
     }
 
-    fn parse_reporting(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
-        let s = input.trim();
-        if s.is_empty() {
-            return Err(ParseError::Empty);
+    // Find the first whitespace to split scheme from params
+    let (scheme, rest) = match s.split_once(|c: char| c.is_ascii_whitespace()) {
+        Some((scheme, rest)) => (scheme, rest.trim_start()),
+        None => return Ok(SipAuthValue::new(s)),
+    };
+
+    if is_token68(rest) {
+        return Ok(SipAuthValue::from_token68(scheme, rest));
+    }
+
+    let mut auth = SipAuthValue::new(scheme);
+    for param_str in crate::split_comma_entries(rest) {
+        let param_str = param_str.trim();
+        if param_str.is_empty() {
+            continue;
         }
 
-        // Find the first whitespace to split scheme from params
-        let (scheme, rest) = match s.split_once(|c: char| c.is_ascii_whitespace()) {
-            Some((scheme, rest)) => (scheme, rest.trim_start()),
-            None => {
-                return Ok(SipAuthValue {
-                    scheme: s.to_string(),
-                    params: Vec::new(),
-                    quoted: Vec::new(),
-                    token68: None,
-                });
-            }
-        };
+        let eq = param_str
+            .find('=')
+            .ok_or_else(|| {
+                ParseError::malformed(
+                    Field::Credentials,
+                    FaultCode::Missing,
+                    Some(crate::offset_in(input, param_str)),
+                )
+            })?;
 
-        if is_token68(rest) {
-            return Ok(SipAuthValue {
-                scheme: scheme.to_string(),
-                params: Vec::new(),
-                quoted: Vec::new(),
-                token68: Some(rest.to_string()),
-            });
+        let key = param_str[..eq].trim();
+        let value = param_str[eq + 1..].trim();
+        let at = crate::offset_in(input, value);
+
+        if crate::opens_unterminated_quote(value) {
+            warnings.push(ParseWarning::new(
+                Field::Credentials,
+                WarningCode::UnterminatedQuote,
+                Some(at),
+            ));
         }
 
-        let mut params = Vec::new();
-        let mut quoted = Vec::new();
-
-        for param_str in crate::split_comma_entries(rest) {
-            let param_str = param_str.trim();
-            if param_str.is_empty() {
-                continue;
-            }
-
-            let eq = param_str
-                .find('=')
-                .ok_or_else(|| {
-                    ParseError::malformed(
-                        Field::Credentials,
-                        FaultCode::Missing,
-                        Some(crate::offset_in(input, param_str)),
-                    )
-                })?;
-
-            let key = param_str[..eq]
-                .trim()
-                .to_ascii_lowercase();
-            let value = param_str[eq + 1..].trim();
-            let at = crate::offset_in(input, value);
-
-            if crate::opens_unterminated_quote(value) {
+        auth = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            let (unescaped, trailing_backslash) =
+                crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
+            if trailing_backslash {
                 warnings.push(ParseWarning::new(
                     Field::Credentials,
-                    WarningCode::UnterminatedQuote,
-                    Some(at),
+                    WarningCode::TrailingBackslash,
+                    Some(at + value.len() - 2),
                 ));
             }
-
-            let (value, was_quoted) =
-                if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                    let (unescaped, trailing_backslash) =
-                        crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
-                    if trailing_backslash {
-                        warnings.push(ParseWarning::new(
-                            Field::Credentials,
-                            WarningCode::TrailingBackslash,
-                            Some(at + value.len() - 2),
-                        ));
-                    }
-                    (unescaped, true)
-                } else {
-                    (value.to_string(), false)
-                };
-
-            params.push((key, value));
-            quoted.push(was_quoted);
-        }
-
-        Ok(SipAuthValue {
-            scheme: scheme.to_string(),
-            params,
-            quoted,
-            token68: None,
-        })
+            auth.with_quoted_param(key, unescaped)
+        } else {
+            auth.with_param(key, value)
+        };
     }
+    Ok(auth)
 }
 
 /// `token68 = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`
@@ -202,8 +216,6 @@ fn is_token68(s: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b))
 }
-
-impl_from_str_via_parse!(SipAuthValue, ParseError);
 
 /// RFC 2617 §3.2.1/§3.2.2 params that MUST use quoted-string on the wire.
 ///
@@ -263,9 +275,7 @@ mod tests {
     #[test]
     fn parse_digest_full() {
         let input = r#"Digest username="alice", realm="example.com", nonce="dcd98b", uri="sip:example.com", response="6629f""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.scheme(), "Digest");
         assert_eq!(auth.username(), Some("alice"));
@@ -278,9 +288,7 @@ mod tests {
     #[test]
     fn parse_digest_with_algorithm() {
         let input = r#"Digest realm="example.com", nonce="abc123", algorithm=MD5, qop="auth""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.scheme(), "Digest");
         assert_eq!(auth.realm(), Some("example.com"));
@@ -292,9 +300,7 @@ mod tests {
     #[test]
     fn parse_bearer_no_params() {
         let input = "Bearer";
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.scheme(), "Bearer");
         assert_eq!(
@@ -307,9 +313,7 @@ mod tests {
     #[test]
     fn parse_scheme_with_single_param() {
         let input = "Bearer token=abc123";
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.scheme(), "Bearer");
         assert_eq!(auth.param("token"), Some("abc123"));
@@ -317,17 +321,17 @@ mod tests {
 
     #[test]
     fn parse_empty_input() {
-        let result: Result<SipAuthValue, _> = "".parse();
+        let result = SipAuthValue::parse("");
         assert_eq!(result, Err(ParseError::Empty));
 
-        let result: Result<SipAuthValue, _> = "   ".parse();
+        let result = SipAuthValue::parse("   ");
         assert_eq!(result, Err(ParseError::Empty));
     }
 
     #[test]
     fn parse_invalid_param() {
         let input = "Digest username=alice, invalid";
-        let result: Result<SipAuthValue, _> = input.parse();
+        let result = SipAuthValue::parse(input);
         assert_eq!(
             result,
             Err(ParseError::malformed(
@@ -341,38 +345,28 @@ mod tests {
     #[test]
     fn display_roundtrip_quoted() {
         let input = r#"Digest username="alice", realm="example.com", nonce="dcd98b""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
 
         // Parse it again to verify it's valid
-        let auth2: SipAuthValue = output
-            .parse()
-            .unwrap();
+        let auth2 = SipAuthValue::parse(&output).unwrap();
         assert_eq!(auth, auth2);
     }
 
     #[test]
     fn display_roundtrip_mixed() {
         let input = r#"Digest realm="example.com", algorithm=MD5, qop="auth""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
 
-        let auth2: SipAuthValue = output
-            .parse()
-            .unwrap();
+        let auth2 = SipAuthValue::parse(&output).unwrap();
         assert_eq!(auth, auth2);
     }
 
     #[test]
     fn display_always_quotes_rfc_required_fields() {
         let input = r#"Digest realm="example.com", nonce="abc123", algorithm=MD5"#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
         assert!(output.contains(r#"realm="example.com""#));
         assert!(output.contains(r#"nonce="abc123""#));
@@ -382,9 +376,7 @@ mod tests {
     #[test]
     fn display_quotes_opaque() {
         let input = r#"Digest realm="example.com", opaque="5ccc""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
         assert!(output.contains(r#"opaque="5ccc""#));
     }
@@ -392,9 +384,7 @@ mod tests {
     #[test]
     fn param_lookup_case_insensitive() {
         let input = r#"Digest Realm="example.com", NONCE="abc123""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.param("realm"), Some("example.com"));
         assert_eq!(auth.param("REALM"), Some("example.com"));
@@ -406,9 +396,7 @@ mod tests {
     #[test]
     fn params_preserves_order() {
         let input = r#"Digest username="alice", realm="example.com", nonce="test""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(
             auth.params()
@@ -423,9 +411,7 @@ mod tests {
     #[test]
     fn empty_param_value() {
         let input = r#"Digest username="", realm="example.com""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.username(), Some(""));
         assert_eq!(auth.realm(), Some("example.com"));
@@ -434,9 +420,7 @@ mod tests {
     #[test]
     fn unquoted_param() {
         let input = "Digest algorithm=MD5";
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.algorithm(), Some("MD5"));
     }
@@ -444,9 +428,7 @@ mod tests {
     #[test]
     fn parse_digest_uri_with_comma() {
         let input = r#"Digest uri="sip:example.com,transport=tcp", realm="test""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.param("uri"), Some("sip:example.com,transport=tcp"));
         assert_eq!(auth.realm(), Some("test"));
     }
@@ -454,9 +436,7 @@ mod tests {
     #[test]
     fn parse_quoted_value_with_multiple_commas() {
         let input = r#"Digest realm="a,b,c", nonce="test""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.realm(), Some("a,b,c"));
         assert_eq!(auth.nonce(), Some("test"));
     }
@@ -464,9 +444,7 @@ mod tests {
     #[test]
     fn opaque_param() {
         let input = r#"Digest realm="example.com", opaque="5ccc09c""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.realm(), Some("example.com"));
         assert_eq!(auth.opaque(), Some("5ccc09c"));
@@ -475,53 +453,39 @@ mod tests {
     #[test]
     fn unescape_quoted_pair_in_value() {
         let input = r#"Digest realm="foo\"bar""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.realm(), Some(r#"foo"bar"#));
     }
 
     #[test]
     fn unescape_backslash_in_value() {
         let input = r#"Digest realm="C:\\path""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.realm(), Some(r#"C:\path"#));
     }
 
     #[test]
     fn roundtrip_with_escaped_quotes() {
         let input = r#"Digest realm="foo\"bar", nonce="test""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
-        let auth2: SipAuthValue = output
-            .parse()
-            .unwrap();
+        let auth2 = SipAuthValue::parse(&output).unwrap();
         assert_eq!(auth, auth2);
     }
 
     #[test]
     fn roundtrip_with_escaped_backslash() {
         let input = r#"Digest realm="C:\\path", nonce="test""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
-        let auth2: SipAuthValue = output
-            .parse()
-            .unwrap();
+        let auth2 = SipAuthValue::parse(&output).unwrap();
         assert_eq!(auth, auth2);
     }
 
     #[test]
     fn challenge_qop_stays_quoted() {
         let input = r#"Digest realm="example.com", qop="auth""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.qop(), Some("auth"));
         assert_eq!(auth.to_string(), input);
     }
@@ -529,18 +493,14 @@ mod tests {
     #[test]
     fn credential_qop_stays_unquoted() {
         let input = r#"Digest username="alice", realm="example.com", qop=auth, nc=00000001"#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.to_string(), input);
     }
 
     #[test]
     fn qop_quoted_when_contains_comma() {
         let input = r#"Digest realm="example.com", qop="auth,auth-int""#;
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         let output = auth.to_string();
         assert!(output.contains(r#"qop="auth,auth-int""#));
     }
@@ -548,9 +508,7 @@ mod tests {
     #[test]
     fn bearer_token68() {
         let input = "Bearer mF_9.B5f-4.1JqM";
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.scheme(), "Bearer");
         assert_eq!(auth.token68(), Some("mF_9.B5f-4.1JqM"));
         assert!(auth
@@ -562,9 +520,7 @@ mod tests {
     #[test]
     fn bearer_token68_with_padding() {
         let input = "Bearer abc==";
-        let auth: SipAuthValue = input
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(input).unwrap();
         assert_eq!(auth.token68(), Some("abc=="));
         assert!(auth
             .params()
@@ -574,32 +530,24 @@ mod tests {
 
     #[test]
     fn token68_charset() {
-        let auth: SipAuthValue = "Bearer a-._~+/Z9="
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse("Bearer a-._~+/Z9=").unwrap();
         assert_eq!(auth.token68(), Some("a-._~+/Z9="));
     }
 
     #[test]
     fn auth_params_are_not_token68() {
-        let auth: SipAuthValue = r#"Digest realm="x""#
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse(r#"Digest realm="x""#).unwrap();
         assert_eq!(auth.token68(), None);
         assert_eq!(auth.realm(), Some("x"));
 
-        let auth: SipAuthValue = "Bearer token=abc123"
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse("Bearer token=abc123").unwrap();
         assert_eq!(auth.token68(), None);
         assert_eq!(auth.param("token"), Some("abc123"));
     }
 
     #[test]
     fn scheme_only_has_no_token68() {
-        let auth: SipAuthValue = "Bearer"
-            .parse()
-            .unwrap();
+        let auth = SipAuthValue::parse("Bearer").unwrap();
         assert_eq!(auth.token68(), None);
     }
 
@@ -690,9 +638,7 @@ mod tests {
 
     #[test]
     fn error_display_omits_param_bytes() {
-        let err = "Digest username=alice, secretvalue"
-            .parse::<SipAuthValue>()
-            .unwrap_err();
+        let err = SipAuthValue::parse("Digest username=alice, secretvalue").unwrap_err();
         assert!(!err
             .to_string()
             .contains("secretvalue"));

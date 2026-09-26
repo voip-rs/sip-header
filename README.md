@@ -21,10 +21,10 @@ sip-header = "0.4"
 
 ## Lenient parsing, reported breaches
 
-Every header-value parser works like sip-uri's: `FromStr` keeps whatever value the input yields, `parse_with_warnings` returns it together with the grammar breaches it accepted, and `parse_strict` refuses the first one. A warning names the field, a code, the byte position and, for lists, the entry index; it never carries the text.
+Every header-value parser works like sip-uri's: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it together with the grammar breaches it accepted, and `parse_strict` refuses the first one. A warning names the field, a code, the byte position and, for lists, the entry index; it never carries the text.
 
 ```rust
-use sip_header::{Field, ParseError, SipHeaderAddr, WarningCode};
+use sip_header::{Field, HeaderParse, ParseError, SipHeaderAddr, WarningCode};
 
 let input = "<sip:alice@example.com>junk;tag=abc";
 let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
@@ -43,10 +43,9 @@ Parses `[display-name] <URI> ;param=value` with header-level parameters
 (tag, expires, etc.):
 
 ```rust
-use sip_header::SipHeaderAddr;
+use sip_header::{HeaderParse, SipHeaderAddr};
 
-let addr: SipHeaderAddr = r#""EXAMPLE CO" <sip:+15551234567@198.51.100.1>;tag=abc123"#
-    .parse().unwrap();
+let addr = SipHeaderAddr::parse(r#""EXAMPLE CO" <sip:+15551234567@198.51.100.1>;tag=abc123"#).unwrap();
 assert_eq!(addr.display_name(), Some("EXAMPLE CO"));
 assert_eq!(addr.tag(), Some("abc123"));
 assert_eq!(addr.sip_uri().unwrap().user(), Some("+15551234567"));
@@ -57,7 +56,7 @@ assert_eq!(addr.sip_uri().unwrap().user(), Some("+15551234567"));
 Parses `<absoluteURI> *(SEMI generic-param)` headers:
 
 ```rust
-use sip_header::UriInfo;
+use sip_header::{HeaderParse, UriInfo};
 
 let raw = "<urn:emergency:uid:callid:abc:bcf.example.com>;purpose=emergency-CallId,\
            <https://adr.example.com/info>;purpose=EmergencyCallData.ProviderInfo";
@@ -71,7 +70,7 @@ assert_eq!(ci.entries()[0].purpose(), Some("emergency-CallId"));
 Parses History-Info routing chains with embedded RFC 3326 Reason headers:
 
 ```rust
-use sip_header::HistoryInfo;
+use sip_header::{HeaderParse, HistoryInfo};
 
 let raw = "<sip:alice@esrp.example.com>;index=1,\
            <sip:sos@psap.example.com>;index=1.1";

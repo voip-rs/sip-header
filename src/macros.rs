@@ -160,19 +160,6 @@ macro_rules! define_header_enum {
     };
 }
 
-/// Implements `FromStr` by delegating to an inherent `parse(&str)` method.
-macro_rules! impl_from_str_via_parse {
-    ($Type:ty, $Err:ty) => {
-        impl std::str::FromStr for $Type {
-            type Err = $Err;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                Self::parse(s)
-            }
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     define_header_enum! {

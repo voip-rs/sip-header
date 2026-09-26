@@ -16,6 +16,22 @@ pub struct SipAcceptLanguageEntry {
 }
 
 impl SipAcceptLanguageEntry {
+    /// An entry for the given language range, lowercased, with no parameters.
+    pub fn new(language: impl Into<String>) -> Self {
+        let mut language = language.into();
+        language.make_ascii_lowercase();
+        SipAcceptLanguageEntry {
+            language,
+            params: Vec::new(),
+        }
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
+        self
+    }
+
     /// The language tag (e.g. `"en"`, `"en-US"`, `"*"`).
     pub fn language(&self) -> &str {
         &self.language
@@ -74,10 +90,13 @@ fn parse_entry(
         warnings,
     );
 
-    Ok(SipAcceptLanguageEntry {
-        language: lang_part.to_ascii_lowercase(),
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-    })
+    Ok(
+        read_accept_params(entry, params_part.unwrap_or(""), warnings)
+            .into_iter()
+            .fold(SipAcceptLanguageEntry::new(lang_part), |e, (k, v)| {
+                e.with_param(k, v)
+            }),
+    )
 }
 
 /// RFC 3261 §20.3 `language-range = ( 1*8ALPHA *( "-" 1*8ALPHA ) ) / "*"`.
@@ -112,18 +131,20 @@ impl CommaList for SipAcceptLanguage {
     }
 
     fn from_parsed(entries: Vec<SipAcceptLanguageEntry>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     fn blank() -> Result<Self, ParseError> {
-        Ok(Self(Vec::new()))
+        Ok(Self::new(Vec::new()))
     }
 }
 
-list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", entry: "language");
+list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", may_be_empty);
+list_parse!(SipAcceptLanguage);
 
 #[cfg(test)]
 mod tests {
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     use super::*;
@@ -188,10 +209,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str() {
-        let al: SipAcceptLanguage = "en"
-            .parse()
-            .unwrap();
+    fn parse_value() {
+        let al = SipAcceptLanguage::parse("en").unwrap();
         assert_eq!(al.len(), 1);
     }
 

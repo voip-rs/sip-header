@@ -2,16 +2,18 @@
 
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
-use std::str::{FromStr, Utf8Error};
+use std::str::Utf8Error;
 
 use percent_encoding::percent_decode_str;
 use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::history_info::{parse_reason, HistoryInfoReason};
 use crate::is_token_char;
 use crate::list::CommaList;
 use crate::replaces::SipReplaces;
+use crate::traits::{sealed, AddrBuild, AddrParts, DialogIdEdit, HeaderParse, Redact};
 
 /// Parsed SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
@@ -35,14 +37,10 @@ use crate::replaces::SipReplaces;
 /// This type handles the full production including those trailing
 /// parameters (`;tag=`, `;expires=`, `;serviceurn=`, etc.).
 ///
-/// [`FromStr`] is lenient like sip-uri's parsers;
-/// [`parse_with_warnings`](Self::parse_with_warnings) reports what it
-/// accepted and [`parse_strict`](Self::parse_strict) refuses it.
-///
 /// ```
-/// use sip_header::SipHeaderAddr;
+/// use sip_header::{HeaderParse, SipHeaderAddr};
 ///
-/// let addr: SipHeaderAddr = r#""Alice" <sip:alice@example.com>;tag=abc123"#.parse().unwrap();
+/// let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>;tag=abc123"#).unwrap();
 /// assert_eq!(addr.display_name(), Some("Alice"));
 /// assert_eq!(addr.tag(), Some("abc123"));
 /// ```
@@ -58,95 +56,59 @@ pub struct SipHeaderAddr {
     params: Vec<(String, Option<String>)>,
 }
 
-impl SipHeaderAddr {
-    /// Create a new `SipHeaderAddr` with the given URI and no display name or params.
+/// The components of a [`SipHeaderAddr`], held as given; conversion
+/// lowercases the parameter keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SipHeaderAddrParts {
+    /// The display name.
+    pub display_name: Option<String>,
+    /// The URI.
+    pub uri: sip_uri::Uri,
+    /// Header-level parameters as `(key, value)`, values as emitted.
+    pub params: Vec<(String, Option<String>)>,
+}
+
+impl SipHeaderAddrParts {
+    /// Parts holding `uri` and nothing else.
     pub fn new(uri: sip_uri::Uri) -> Self {
-        SipHeaderAddr {
+        SipHeaderAddrParts {
             display_name: None,
             uri,
             params: Vec::new(),
         }
     }
+}
 
-    /// Set the display name, rejecting what an RFC 3261 §25.1
-    /// `quoted-string` cannot carry.
-    ///
-    /// Any text is accepted except CR and LF: characters outside `qdtext`
-    /// are emitted as `quoted-pair`. [`Display`](fmt::Display) quotes the
-    /// name unless it is a single `token`.
-    ///
-    /// ```
-    /// use sip_header::SipHeaderAddr;
-    /// use sip_uri::{Uri, UriParse};
-    ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_display_name("Alice Smith")?;
-    /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
-    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_display_name("a\r\nb")
-    ///     .is_err());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn with_display_name(mut self, name: impl Into<String>) -> Result<Self, ParseError> {
-        let name = name.into();
-        if let Some(pos) = name.find(['\r', '\n']) {
-            return Err(ParseError::malformed(
-                Field::DisplayName,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
+impl From<SipHeaderAddrParts> for SipHeaderAddr {
+    fn from(parts: SipHeaderAddrParts) -> Self {
+        SipHeaderAddr {
+            display_name: parts.display_name,
+            uri: parts.uri,
+            params: crate::lowercase_keys(parts.params),
         }
-        self.display_name = Some(name);
-        Ok(self)
+    }
+}
+
+impl From<SipHeaderAddr> for SipHeaderAddrParts {
+    fn from(addr: SipHeaderAddr) -> Self {
+        addr.into_parts()
+    }
+}
+
+impl SipHeaderAddr {
+    /// Create a new `SipHeaderAddr` with the given URI and no display name or params.
+    pub fn new(uri: sip_uri::Uri) -> Self {
+        SipHeaderAddrParts::new(uri).into()
     }
 
-    /// Add a header-level `generic-param` (RFC 3261 §25.1), lowercasing the key.
-    ///
-    /// The key must be a `token`. A value, when given, must be a `token`, a
-    /// host (`token` characters plus `:`, `[` and `]`), or a complete
-    /// `quoted-string` including its quotes. It is stored and emitted as
-    /// given, like a parsed value, so percent-encoding is the caller's.
-    ///
-    /// ```
-    /// use sip_header::SipHeaderAddr;
-    /// use sip_uri::{Uri, UriParse};
-    ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_param("tag", Some("abc123"))?
-    ///     .with_param("lr", None::<&str>)?;
-    /// assert_eq!(addr.to_string(), "<sip:alice@example.com>;tag=abc123;lr");
-    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
-    ///     .with_param("tag", Some("a;b"))
-    ///     .is_err());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn with_param(
-        mut self,
-        key: impl Into<String>,
-        value: Option<impl Into<String>>,
-    ) -> Result<Self, ParseError> {
-        let key = key.into();
-        if key.is_empty() {
-            return Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::Missing,
-                None,
-            ));
+    /// The components, parameter keys lowercased.
+    pub fn into_parts(self) -> SipHeaderAddrParts {
+        SipHeaderAddrParts {
+            display_name: self.display_name,
+            uri: self.uri,
+            params: self.params,
         }
-        if let Some(pos) = key.find(|c| !is_token_char(c)) {
-            return Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
-        }
-        let value = value.map(Into::into);
-        if let Some(v) = &value {
-            validate_param_value(v)?;
-        }
-        self.params
-            .push((key.to_ascii_lowercase(), value));
-        Ok(self)
     }
 
     /// The display name, if present.
@@ -221,42 +183,6 @@ impl SipHeaderAddr {
         crate::find_param(&self.params, name)
     }
 
-    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present.
-    ///
-    /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
-    /// `Replaces` header; `Some(Err)` when the value doesn't conform to
-    /// RFC 3891 §6.1.
-    pub fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
-        let value = self
-            .sip_uri()?
-            .header("Replaces")?;
-        Some(SipReplaces::parse_uri_header(value))
-    }
-
-    /// Parse a comma-separated list of `name-addr` / `addr-spec` values.
-    ///
-    /// Splits on commas at bracket depth zero (via [`split_comma_entries`](crate::split_comma_entries)),
-    /// then parses each entry as a [`SipHeaderAddr`]. Returns an empty `Vec`
-    /// for empty input. Fails on the first entry that yields no value.
-    pub fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        AddrList::list_from_str(raw).map(|p| {
-            p.value
-                .0
-        })
-    }
-
-    /// Parse as [`FromStr`] does, reporting accepted grammar breaches beside
-    /// the value. Positions are byte offsets into `input`.
-    pub fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        parse_addr(input)
-    }
-
-    /// Parse, refusing the first grammar breach as
-    /// [`ParseError::NonConformant`].
-    pub fn parse_strict(input: &str) -> Result<Self, ParseError> {
-        Self::parse_with_warnings(input)?.into_strict()
-    }
-
     /// The `tag` parameter value, if present.
     ///
     /// Tag values are simple tokens (never percent-encoded in practice),
@@ -264,6 +190,167 @@ impl SipHeaderAddr {
     pub fn tag(&self) -> Option<&str> {
         self.param_raw("tag")
             .flatten()
+    }
+
+    /// Render as [`Display`](fmt::Display) does, writing `display_name` and
+    /// `uri` in place of this value's own.
+    pub fn display_with<'a, U: fmt::Display + 'a>(
+        &'a self,
+        display_name: Option<&'a str>,
+        uri: U,
+    ) -> impl fmt::Display + 'a {
+        Rendered {
+            addr: self,
+            display_name,
+            uri,
+        }
+    }
+}
+
+struct Rendered<'a, U> {
+    addr: &'a SipHeaderAddr,
+    display_name: Option<&'a str>,
+    uri: U,
+}
+
+impl<U: fmt::Display> fmt::Display for Rendered<'_, U> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(name) = self
+            .display_name
+            .filter(|n| !n.is_empty())
+        {
+            if needs_quoting(name) {
+                crate::write_quoted_pair(f, name)?;
+            } else {
+                f.write_str(name)?;
+            }
+            f.write_char(' ')?;
+        }
+        write!(f, "<{}>", self.uri)?;
+        crate::write_params(
+            f,
+            &self
+                .addr
+                .params,
+        )
+    }
+}
+
+/// A display name needs quoting unless it is a single `token`.
+fn needs_quoting(name: &str) -> bool {
+    !name
+        .chars()
+        .all(is_token_char)
+}
+
+impl fmt::Display for SipHeaderAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.display_with(self.display_name(), &self.uri)
+            .fmt(f)
+    }
+}
+
+impl sealed::Sealed for SipHeaderAddr {}
+
+impl HeaderParse for SipHeaderAddr {
+    /// Parse leniently; an addr-spec without angle brackets keeps any `;params`
+    /// as URI parameters (RFC 3261 §20.10).
+    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        parse_addr(input)
+    }
+}
+
+impl AddrBuild for SipHeaderAddr {
+    fn with_display_name(self, name: impl Into<String>) -> Result<Self, ParseError> {
+        let name = name.into();
+        if let Some(pos) = name.find(['\r', '\n']) {
+            return Err(ParseError::malformed(
+                Field::DisplayName,
+                FaultCode::InvalidChar,
+                Some(pos),
+            ));
+        }
+        let mut parts = self.into_parts();
+        parts.display_name = Some(name);
+        Ok(parts.into())
+    }
+
+    fn with_param(
+        self,
+        key: impl Into<String>,
+        value: Option<impl Into<String>>,
+    ) -> Result<Self, ParseError> {
+        let key = key.into();
+        if key.is_empty() {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::Missing,
+                None,
+            ));
+        }
+        if let Some(pos) = key.find(|c| !is_token_char(c)) {
+            return Err(ParseError::malformed(
+                Field::Param,
+                FaultCode::InvalidChar,
+                Some(pos),
+            ));
+        }
+        let value = value.map(Into::into);
+        if let Some(v) = &value {
+            validate_param_value(v)?;
+        }
+        let mut parts = self.into_parts();
+        parts
+            .params
+            .push((key, value));
+        Ok(parts.into())
+    }
+}
+
+impl AddrParts for SipHeaderAddr {
+    fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseError> {
+        AddrList::list_from_str(raw).map(|p| {
+            p.value
+                .0
+        })
+    }
+
+    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
+        let value = self
+            .sip_uri()?
+            .header("Replaces")?;
+        Some(SipReplaces::parse_uri_header(value))
+    }
+
+    fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
+        let raw = self
+            .sip_uri()?
+            .header("Reason")?;
+        Some(
+            percent_decode_str(raw)
+                .decode_utf8()
+                .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
+                .map(|decoded| {
+                    let mut warnings = Vec::new();
+                    let value = parse_reason(&decoded, &mut warnings);
+                    Parsed::new(value, warnings)
+                }),
+        )
+    }
+}
+
+impl Redact for SipHeaderAddr {
+    fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
+        let shows_user = how.user_mask() == sip_uri::UserMask::Visible;
+        let name = self
+            .display_name()
+            .filter(|n| !n.is_empty())
+            .map(|n| if shows_user { n } else { "***" });
+        self.display_with(
+            name,
+            self.uri()
+                .redacted(how),
+        )
     }
 }
 
@@ -391,12 +478,10 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
             p.report_quoting(input, &mut warnings);
         }
     }
-    let addr = SipHeaderAddr {
-        display_name: display_name.filter(|n| !n.is_empty()),
-        uri,
-        params: crate::stored_params(params),
-    };
-    Ok(Parsed::new(addr, warnings))
+    let mut parts = SipHeaderAddrParts::new(uri);
+    parts.display_name = display_name.filter(|n| !n.is_empty());
+    parts.params = crate::stored_params(params);
+    Ok(Parsed::new(parts.into(), warnings))
 }
 
 /// Parse one list entry as an address, forwarding its warnings; a blank
@@ -434,13 +519,6 @@ impl CommaList for AddrList {
     fn blank() -> Result<Self, ParseError> {
         Ok(Self(Vec::new()))
     }
-}
-
-/// A display name needs quoting unless it is a single `token`.
-fn needs_quoting(name: &str) -> bool {
-    !name
-        .chars()
-        .all(is_token_char)
 }
 
 /// RFC 3261 §25.1 `quoted-string` with its quotes, excluding CR and LF.
@@ -490,102 +568,6 @@ fn validate_param_value(v: &str) -> Result<(), ParseError> {
     }
 }
 
-impl FromStr for SipHeaderAddr {
-    type Err = ParseError;
-
-    /// Parse leniently; an addr-spec without angle brackets keeps any `;params`
-    /// as URI parameters (RFC 3261 §20.10).
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        Ok(parse_addr(input)?.value)
-    }
-}
-
-impl SipHeaderAddr {
-    /// Render for logs, the URI through sip-uri's
-    /// [`redacted`](sip_uri::Uri::redacted) and the display name as `***`
-    /// unless `how` shows the user part. Header parameters render as
-    /// [`Display`](fmt::Display) writes them.
-    ///
-    /// ```
-    /// use sip_header::SipHeaderAddr;
-    /// use sip_uri::{Redaction, UserMask};
-    ///
-    /// let addr: SipHeaderAddr = r#""Alice" <sip:+15551234567@example.com>;tag=abc"#.parse()?;
-    /// assert_eq!(
-    ///     addr.redacted(Redaction::default()).to_string(),
-    ///     "*** <sip:***@example.com>;tag=abc"
-    /// );
-    /// assert_eq!(
-    ///     addr.redacted(Redaction::default().user(UserMask::KeepLast(4))).to_string(),
-    ///     "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
-    /// );
-    /// # Ok::<(), sip_header::ParseError>(())
-    /// ```
-    pub fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
-        Redacted { addr: self, how }
-    }
-
-    fn write_with(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        display_name: Option<&str>,
-        uri: impl fmt::Display,
-    ) -> fmt::Result {
-        if let Some(name) = display_name {
-            write_display_name(f, name)?;
-        }
-        write!(f, "<{uri}>")?;
-        crate::write_params(f, &self.params)
-    }
-
-    fn shown_display_name(&self) -> Option<&str> {
-        self.display_name()
-            .filter(|n| !n.is_empty())
-    }
-}
-
-/// A non-empty display name and the space before `<`, quoted unless a `token`.
-fn write_display_name(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
-    if needs_quoting(name) {
-        crate::write_quoted_pair(f, name)?;
-    } else {
-        f.write_str(name)?;
-    }
-    f.write_char(' ')
-}
-
-struct Redacted<'a> {
-    addr: &'a SipHeaderAddr,
-    how: sip_uri::Redaction<'a>,
-}
-
-impl fmt::Display for Redacted<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let shows_user = self
-            .how
-            .user_mask()
-            == sip_uri::UserMask::Visible;
-        let name = self
-            .addr
-            .shown_display_name()
-            .map(|n| if shows_user { n } else { "***" });
-        self.addr
-            .write_with(
-                f,
-                name,
-                self.addr
-                    .uri
-                    .redacted(self.how),
-            )
-    }
-}
-
-impl fmt::Display for SipHeaderAddr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.write_with(f, self.shown_display_name(), &self.uri)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
@@ -594,9 +576,7 @@ mod tests {
 
     #[test]
     fn quoted_display_name_with_tag() {
-        let addr: SipHeaderAddr = r#""Alice" <sip:alice@example.com>;tag=abc123"#
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>;tag=abc123"#).unwrap();
         assert_eq!(addr.display_name(), Some("Alice"));
         assert!(addr
             .sip_uri()
@@ -606,9 +586,7 @@ mod tests {
 
     #[test]
     fn angle_bracket_no_name_multiple_params() {
-        let addr: SipHeaderAddr = "<sip:user@host>;tag=xyz;expires=3600"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;tag=xyz;expires=3600").unwrap();
         assert_eq!(addr.display_name(), None);
         assert_eq!(addr.tag(), Some("xyz"));
         assert_eq!(
@@ -621,9 +599,7 @@ mod tests {
 
     #[test]
     fn bare_addr_spec_no_params() {
-        let addr: SipHeaderAddr = "sip:user@host"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("sip:user@host").unwrap();
         assert_eq!(addr.display_name(), None);
         assert!(addr
             .sip_uri()
@@ -637,9 +613,7 @@ mod tests {
 
     #[test]
     fn unquoted_display_name_with_params() {
-        let addr: SipHeaderAddr = "Alice <sip:alice@example.com>;tag=abc"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("Alice <sip:alice@example.com>;tag=abc").unwrap();
         assert_eq!(addr.display_name(), Some("Alice"));
         assert_eq!(addr.tag(), Some("abc"));
     }
@@ -647,9 +621,7 @@ mod tests {
     #[test]
     fn ng911_refer_to_serviceurn() {
         let input = "<sip:user@esrp.example.com?Call-Info=x>;serviceurn=urn%3Aservice%3Apolice";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.display_name(), None);
         assert_eq!(
             addr.param("serviceurn")
@@ -675,9 +647,7 @@ mod tests {
     #[test]
     fn p_asserted_identity_uri_params_no_header_params() {
         let input = r#""EXAMPLE CO" <sip:+15551234567;cpc=emergency@198.51.100.1;user=phone>"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.display_name(), Some("EXAMPLE CO"));
         assert_eq!(
             addr.params()
@@ -693,9 +663,7 @@ mod tests {
 
     #[test]
     fn tel_uri_with_header_params() {
-        let addr: SipHeaderAddr = "<tel:+15551234567>;expires=3600"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<tel:+15551234567>;expires=3600").unwrap();
         assert!(addr
             .tel_uri()
             .is_some());
@@ -709,9 +677,7 @@ mod tests {
 
     #[test]
     fn flag_param_no_value() {
-        let addr: SipHeaderAddr = "<sip:user@host>;lr;tag=abc"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;lr;tag=abc").unwrap();
         assert_eq!(
             addr.param("lr")
                 .unwrap()
@@ -723,9 +689,7 @@ mod tests {
 
     #[test]
     fn urn_uri_no_params() {
-        let addr: SipHeaderAddr = "<urn:service:sos>"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<urn:service:sos>").unwrap();
         assert!(addr
             .urn_uri()
             .is_some());
@@ -738,45 +702,35 @@ mod tests {
 
     #[test]
     fn empty_input_fails() {
-        assert!(""
-            .parse::<SipHeaderAddr>()
-            .is_err());
+        assert!(SipHeaderAddr::parse("").is_err());
     }
 
     #[test]
     fn display_roundtrip_quoted_name_with_params() {
         // "Alice" doesn't need quoting, so Display normalizes to unquoted
         let input = r#""Alice" <sip:alice@example.com>;tag=abc123"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), "Alice <sip:alice@example.com>;tag=abc123");
     }
 
     #[test]
     fn display_roundtrip_name_requiring_quotes() {
         let input = r#""Alice Smith" <sip:alice@example.com>;tag=abc123"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn display_roundtrip_no_name_with_params() {
         let input = "<sip:user@host>;tag=xyz;expires=3600";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn display_roundtrip_bare_uri() {
         let input = "sip:user@host";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         // Bare URIs get angle-bracketed in Display
         assert_eq!(addr.to_string(), "<sip:user@host>");
     }
@@ -784,17 +738,13 @@ mod tests {
     #[test]
     fn display_roundtrip_flag_param() {
         let input = "<sip:user@host>;lr;tag=abc";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn case_insensitive_param_lookup() {
-        let addr: SipHeaderAddr = "<sip:user@host>;Tag=ABC;Expires=3600"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;Tag=ABC;Expires=3600").unwrap();
         assert_eq!(
             addr.param("tag")
                 .unwrap()
@@ -817,14 +767,10 @@ mod tests {
 
     #[test]
     fn tag_convenience_accessor() {
-        let with_tag: SipHeaderAddr = "<sip:user@host>;tag=xyz"
-            .parse()
-            .unwrap();
+        let with_tag = SipHeaderAddr::parse("<sip:user@host>;tag=xyz").unwrap();
         assert_eq!(with_tag.tag(), Some("xyz"));
 
-        let without_tag: SipHeaderAddr = "<sip:user@host>"
-            .parse()
-            .unwrap();
+        let without_tag = SipHeaderAddr::parse("<sip:user@host>").unwrap();
         assert_eq!(without_tag.tag(), None);
     }
 
@@ -876,10 +822,7 @@ mod tests {
             let addr = example_addr()
                 .with_display_name(name)
                 .unwrap();
-            let reparsed: SipHeaderAddr = addr
-                .to_string()
-                .parse()
-                .unwrap();
+            let reparsed = SipHeaderAddr::parse(&addr.to_string()).unwrap();
             let expected = if name.is_empty() { None } else { Some(name) };
             assert_eq!(reparsed.display_name(), expected, "{name:?}");
         }
@@ -924,10 +867,7 @@ mod tests {
                 .with_param(key, value)
                 .unwrap();
             assert_eq!(addr.param_raw(key), Some(value), "{key}");
-            let reparsed: SipHeaderAddr = addr
-                .to_string()
-                .parse()
-                .unwrap();
+            let reparsed = SipHeaderAddr::parse(&addr.to_string()).unwrap();
             assert_eq!(reparsed, addr, "{key}");
         }
     }
@@ -1003,9 +943,7 @@ mod tests {
     #[test]
     fn escaped_quotes_in_display_name() {
         let input = r#""Say \"Hello\"" <sip:u@h>;tag=t"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.display_name(), Some(r#"Say "Hello""#));
         assert_eq!(addr.tag(), Some("t"));
     }
@@ -1013,17 +951,13 @@ mod tests {
     #[test]
     fn display_roundtrip_escaped_quotes() {
         let input = r#""Say \"Hello\"" <sip:u@h>;tag=t"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn trailing_semicolon_ignored() {
-        let addr: SipHeaderAddr = "<sip:user@host>;tag=abc;"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;tag=abc;").unwrap();
         assert_eq!(
             addr.params()
                 .count(),
@@ -1035,18 +969,14 @@ mod tests {
     #[test]
     fn display_roundtrip_percent_encoded_params() {
         let input = "<sip:user@esrp.example.com>;serviceurn=urn%3Aservice%3Apolice";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn param_invalid_utf8_returns_err() {
         // %C0%80 is an overlong encoding of U+0000, invalid UTF-8
-        let addr: SipHeaderAddr = "<sip:user@host>;data=%C0%80"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;data=%C0%80").unwrap();
         assert!(addr
             .param("data")
             .unwrap()
@@ -1057,9 +987,7 @@ mod tests {
     #[test]
     fn param_iso_8859_fallback_to_raw() {
         // %E9 = é in ISO-8859-1, but lone byte is invalid UTF-8
-        let addr: SipHeaderAddr = "<sip:user@host>;name=%E9"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;name=%E9").unwrap();
         assert!(addr
             .param("name")
             .unwrap()
@@ -1164,10 +1092,10 @@ mod tests {
 
     #[test]
     fn replaces_uri_header() {
-        let addr: SipHeaderAddr =
-            "<sip:bob@203.0.113.9?Replaces=abc123%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1>"
-                .parse()
-                .unwrap();
+        let addr = SipHeaderAddr::parse(
+            "<sip:bob@203.0.113.9?Replaces=abc123%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1>",
+        )
+        .unwrap();
         let r = addr
             .replaces()
             .unwrap()
@@ -1186,9 +1114,7 @@ mod tests {
 
     #[test]
     fn replaces_uri_header_absent() {
-        let addr: SipHeaderAddr = "<sip:bob@203.0.113.9>"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:bob@203.0.113.9>").unwrap();
         assert!(addr
             .replaces()
             .is_none());
@@ -1198,9 +1124,7 @@ mod tests {
     fn host_only_ipv4_with_feature_tag_param() {
         let input =
             "<sip:198.51.100.7:5060;transport=udp>;+urn%3Aemergency%3Amedia-feature.psap-call-control";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         let sip = addr
             .sip_uri()
             .unwrap();
@@ -1223,9 +1147,7 @@ mod tests {
     fn host_only_ipv6_with_feature_tag_param() {
         let input =
             "<sip:[2001:db8::7]:5060;transport=udp>;+urn%3Aemergency%3Amedia-feature.psap-call-control";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         let sip = addr
             .sip_uri()
             .unwrap();
@@ -1264,9 +1186,7 @@ mod tests {
     fn display_quotes_non_token_display_name() {
         for name in ["José", "A/B", "a=b", "x(y)", "a?b"] {
             let input = format!(r#""{name}" <sip:a@example.com>"#);
-            let addr: SipHeaderAddr = input
-                .parse()
-                .unwrap();
+            let addr = SipHeaderAddr::parse(&input).unwrap();
             assert_eq!(addr.to_string(), input);
         }
     }
@@ -1274,17 +1194,13 @@ mod tests {
     #[test]
     fn display_keeps_token_display_name_bare() {
         let input = "A-b.c!%*_+`'~ <sip:a@example.com>";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.to_string(), input);
     }
 
     #[test]
     fn params_sws_around_semi_and_equal() {
-        let addr: SipHeaderAddr = "<sip:a@example.com> ; tag = x"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:a@example.com> ; tag = x").unwrap();
         assert_eq!(addr.tag(), Some("x"));
         assert_eq!(
             addr.params()
@@ -1296,9 +1212,7 @@ mod tests {
     #[test]
     fn params_quoted_value_keeps_semicolon() {
         let input = r#"<sip:a@example.com>;foo="a;b";tag=x"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.param_raw("foo"), Some(Some(r#""a;b""#)));
         assert_eq!(addr.tag(), Some("x"));
         assert_eq!(addr.to_string(), input);
@@ -1307,9 +1221,7 @@ mod tests {
     #[test]
     fn params_quoted_instance_kept_raw() {
         let input = r#"<sip:a@198.51.100.1>;+sip.instance="<urn:uuid:00000000-0000-0000-0000-000000000001>";expires=60"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(
             addr.param_raw("+sip.instance"),
             Some(Some(r#""<urn:uuid:00000000-0000-0000-0000-000000000001>""#))
@@ -1319,9 +1231,7 @@ mod tests {
 
     #[test]
     fn params_iterator() {
-        let addr: SipHeaderAddr = "<sip:user@host>;tag=abc;lr;expires=60"
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse("<sip:user@host>;tag=abc;lr;expires=60").unwrap();
         let params: Vec<_> = addr
             .params()
             .collect();
@@ -1344,9 +1254,7 @@ mod tests {
     #[test]
     fn addr_spec_as_display_name_is_invalid_token() {
         let input = "sip:a@example.com <sip:c@example.com>";
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.display_name(), Some("sip:a@example.com"));
         assert_eq!(
             warning_of(input),
@@ -1373,7 +1281,7 @@ mod tests {
     #[test]
     fn quoted_display_name_cannot_end_in_lone_backslash() {
         assert_eq!(
-            r#""a\" <sip:a@example.com>"#.parse::<SipHeaderAddr>(),
+            SipHeaderAddr::parse(r#""a\" <sip:a@example.com>"#),
             Err(ParseError::malformed(
                 Field::DisplayName,
                 FaultCode::Unterminated,
@@ -1395,9 +1303,7 @@ mod tests {
     #[test]
     fn param_unterminated_quote_warns_and_stays_raw() {
         let input = r#"<sip:a@example.com>;x="p;tag=t"#;
-        let addr: SipHeaderAddr = input
-            .parse()
-            .unwrap();
+        let addr = SipHeaderAddr::parse(input).unwrap();
         assert_eq!(addr.param_raw("x"), Some(Some(r#""p"#)));
         assert_eq!(addr.tag(), Some("t"));
         assert_eq!(
@@ -1444,8 +1350,7 @@ mod tests {
     fn redacted_masks_display_name_with_user() {
         use sip_uri::{Redaction, UserMask};
 
-        let addr: SipHeaderAddr = r#""Alice Smith" <sip:+15551234567@example.com>;tag=abc"#
-            .parse()
+        let addr = SipHeaderAddr::parse(r#""Alice Smith" <sip:+15551234567@example.com>;tag=abc"#)
             .unwrap();
         assert_eq!(
             addr.redacted(Redaction::default())
@@ -1468,17 +1373,14 @@ mod tests {
     fn redacted_without_display_name_and_tel() {
         use sip_uri::Redaction;
 
-        let addr: SipHeaderAddr = "<sip:alice@example.com;transport=tcp>;expires=60"
-            .parse()
-            .unwrap();
+        let addr =
+            SipHeaderAddr::parse("<sip:alice@example.com;transport=tcp>;expires=60").unwrap();
         assert_eq!(
             addr.redacted(Redaction::default())
                 .to_string(),
             "<sip:***@example.com;transport=tcp>;expires=60"
         );
-        let tel: SipHeaderAddr = "<tel:+15551234567>;tag=t"
-            .parse()
-            .unwrap();
+        let tel = SipHeaderAddr::parse("<tel:+15551234567>;tag=t").unwrap();
         assert_eq!(
             tel.redacted(Redaction::default())
                 .to_string(),

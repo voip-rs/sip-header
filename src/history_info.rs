@@ -2,12 +2,10 @@
 
 use std::fmt;
 
-use percent_encoding::percent_decode_str;
-
-use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::{FaultCode, ParseError};
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::error::ParseError;
 use crate::header_addr::{parse_list_addr, SipHeaderAddr};
-use crate::list::{non_empty, CommaList};
+use crate::list::CommaList;
 use crate::RawParam;
 
 /// Parsed RFC 3326 Reason header value extracted from a History-Info URI.
@@ -22,6 +20,27 @@ pub struct HistoryInfoReason {
 }
 
 impl HistoryInfoReason {
+    /// A Reason for `protocol`, with no cause or text.
+    pub fn new(protocol: impl Into<String>) -> Self {
+        HistoryInfoReason {
+            protocol: protocol.into(),
+            cause: None,
+            text: None,
+        }
+    }
+
+    /// Set the cause code.
+    pub fn with_cause(mut self, cause: u16) -> Self {
+        self.cause = Some(cause);
+        self
+    }
+
+    /// Set the reason text, unquoted.
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
     /// The protocol token (e.g. `"SIP"`, `"Q.850"`, `"RouteAction"`).
     pub fn protocol(&self) -> &str {
         &self.protocol
@@ -43,7 +62,7 @@ impl HistoryInfoReason {
 
 /// Parse a percent-decoded RFC 3326 `protocol *(SEMI reason-params)`,
 /// positions relative to `decoded`.
-fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> HistoryInfoReason {
+pub(crate) fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> HistoryInfoReason {
     let (protocol, rest) = decoded
         .split_once(';')
         .unwrap_or((decoded, ""));
@@ -60,13 +79,14 @@ fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> HistoryInfoR
     let cause = find("cause").and_then(|p| parse_cause(p, decoded, warnings));
     let text = find("text").and_then(|p| parse_text(p, decoded, warnings));
 
-    HistoryInfoReason {
-        protocol: protocol
-            .trim()
-            .to_string(),
-        cause,
-        text,
+    let mut reason = HistoryInfoReason::new(protocol.trim());
+    if let Some(cause) = cause {
+        reason = reason.with_cause(cause);
     }
+    if let Some(text) = text {
+        reason = reason.with_text(text);
+    }
+    reason
 }
 
 /// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.
@@ -123,6 +143,11 @@ pub struct HistoryInfoEntry {
 }
 
 impl HistoryInfoEntry {
+    /// An entry for `addr`.
+    pub fn new(addr: SipHeaderAddr) -> Self {
+        HistoryInfoEntry { addr }
+    }
+
     /// The underlying parsed name-addr with header-level parameters.
     pub fn addr(&self) -> &SipHeaderAddr {
         &self.addr
@@ -155,37 +180,6 @@ impl HistoryInfoEntry {
             .sip_uri()?
             .header("Reason")
     }
-
-    /// Parse the Reason header embedded in the URI.
-    ///
-    /// The Reason value is percent-decoded as an RFC 3261 `hvalue` and
-    /// parsed into protocol, cause code, and text components per RFC 3326.
-    /// `+` is a literal plus sign, not a space.
-    ///
-    /// Returns `None` if no Reason is present, `Err` if percent-decoding
-    /// produces invalid UTF-8.
-    pub fn reason(&self) -> Option<Result<HistoryInfoReason, ParseError>> {
-        self.reason_with_warnings()
-            .map(|r| r.map(|p| p.value))
-    }
-
-    /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
-    /// breaches beside the value.
-    ///
-    /// Positions point into the percent-decoded Reason value, not the URI.
-    pub fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
-        let raw = self.reason_raw()?;
-        Some(
-            percent_decode_str(raw)
-                .decode_utf8()
-                .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
-                .map(|decoded| {
-                    let mut warnings = Vec::new();
-                    let value = parse_reason(&decoded, &mut warnings);
-                    Parsed::new(value, warnings)
-                }),
-        )
-    }
 }
 
 impl fmt::Display for HistoryInfoEntry {
@@ -200,7 +194,7 @@ impl fmt::Display for HistoryInfoEntry {
 /// optional index, and optional embedded Reason header.
 ///
 /// ```
-/// use sip_header::HistoryInfo;
+/// use sip_header::{HeaderParse, HistoryInfo};
 ///
 /// let raw = "<sip:alice@esrp.example.com>;index=1,<sip:sos@psap.example.com>;index=1.1";
 /// let hi = HistoryInfo::parse(raw).unwrap();
@@ -238,18 +232,20 @@ impl CommaList for HistoryInfo {
                 None,
             ));
         }
-        Ok(Some(HistoryInfoEntry { addr }))
+        Ok(Some(HistoryInfoEntry::new(addr)))
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {
-        non_empty(entries).map(Self)
+        Self::new(entries).ok_or(ParseError::Empty)
     }
 }
 
-list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", entry: "hi-entry");
+list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", non_empty);
+list_parse!(HistoryInfo);
 
 #[cfg(test)]
 mod tests {
+    use crate::{AddrParts, HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     use super::*;
@@ -385,6 +381,7 @@ mod tests {
     fn reason_parsed_route_action() {
         let hi = HistoryInfo::parse(EXAMPLE_1).unwrap();
         let reason = hi.entries()[0]
+            .addr()
             .reason()
             .unwrap()
             .unwrap();
@@ -397,6 +394,7 @@ mod tests {
     fn reason_parsed_sip() {
         let hi = HistoryInfo::parse(EXAMPLE_2).unwrap();
         let reason = hi.entries()[0]
+            .addr()
             .reason()
             .unwrap()
             .unwrap();
@@ -409,6 +407,7 @@ mod tests {
     fn reason_absent_returns_none() {
         let hi = HistoryInfo::parse(EXAMPLE_2).unwrap();
         assert!(hi.entries()[2]
+            .addr()
             .reason()
             .is_none());
     }
@@ -417,16 +416,19 @@ mod tests {
     fn reason_multiple_entries() {
         let hi = HistoryInfo::parse(EXAMPLE_2).unwrap();
         let r0 = hi.entries()[0]
+            .addr()
             .reason()
             .unwrap()
             .unwrap();
         let r1 = hi.entries()[1]
+            .addr()
             .reason()
             .unwrap()
             .unwrap();
         assert_eq!(r0.protocol(), "SIP");
         assert_eq!(r1.protocol(), "RouteAction");
         assert!(hi.entries()[2]
+            .addr()
             .reason()
             .is_none());
     }
@@ -561,7 +563,9 @@ mod tests {
     fn entry_reason(encoded: &str) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
         let hi =
             HistoryInfo::parse(&format!("<sip:a@example.com?Reason={encoded}>;index=1")).unwrap();
-        hi.entries()[0].reason_with_warnings()
+        hi.entries()[0]
+            .addr()
+            .reason_with_warnings()
     }
 
     fn only_warning(
@@ -637,6 +641,7 @@ mod tests {
             HistoryInfo::parse("<sip:a@example.com?Reason=SIP%3Bcause%3Dabc>;index=1").unwrap();
         assert_eq!(
             lenient.entries()[0]
+                .addr()
                 .reason()
                 .unwrap()
                 .unwrap()
@@ -762,6 +767,7 @@ mod tests {
         )
         .unwrap();
         let reason = hi.entries()[0]
+            .addr()
             .reason()
             .unwrap()
             .unwrap();

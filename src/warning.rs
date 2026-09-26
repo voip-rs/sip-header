@@ -7,7 +7,7 @@ use sip_uri::UriParse;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
-use crate::list::{non_empty, CommaList};
+use crate::list::CommaList;
 
 /// A single Warning header entry.
 ///
@@ -27,6 +27,15 @@ pub struct SipWarningEntry {
 }
 
 impl SipWarningEntry {
+    /// An entry from its warn-code, warn-agent and unquoted warn-text.
+    pub fn new(code: u16, agent: impl Into<String>, text: impl Into<String>) -> Self {
+        SipWarningEntry {
+            code,
+            agent: agent.into(),
+            text: text.into(),
+        }
+    }
+
     /// The 3-digit warning code.
     pub fn code(&self) -> u16 {
         self.code
@@ -41,69 +50,69 @@ impl SipWarningEntry {
     pub fn text(&self) -> &str {
         &self.text
     }
+}
 
-    fn parse(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
-        let s = entry.trim();
-        if s.is_empty() {
-            return Err(ParseError::malformed(
-                Field::Entry,
-                FaultCode::Missing,
-                None,
-            ));
-        }
-        let at = |field, code, part: &str| {
-            ParseError::malformed(field, code, Some(crate::offset_in(entry, part)))
-        };
-
-        // Parse warn-code (3DIGIT)
-        let space_pos = s
-            .find(' ')
-            .ok_or_else(|| ParseError::malformed(Field::Agent, FaultCode::Missing, None))?;
-
-        let code_str = &s[..space_pos];
-        if code_str.len() != 3
-            || !code_str
-                .chars()
-                .all(|c| c.is_ascii_digit())
-        {
-            return Err(at(Field::Code, FaultCode::InvalidNumber, code_str));
-        }
-
-        let code = code_str
-            .parse::<u16>()
-            .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
-
-        let rest = s[space_pos..].trim_start();
-
-        // Find the quoted warn-text
-        let quote_pos = rest
-            .find('"')
-            .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
-
-        let agent = rest[..quote_pos].trim_end();
-        if agent.is_empty() {
-            return Err(at(Field::Agent, FaultCode::Missing, rest));
-        }
-        if !is_hostport(agent)
-            && !agent
-                .chars()
-                .all(is_token_char)
-        {
-            warnings.push(ParseWarning::new(
-                Field::Agent,
-                WarningCode::InvalidToken,
-                Some(crate::offset_in(entry, agent)),
-            ));
-        }
-
-        let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
-
-        Ok(SipWarningEntry {
-            code,
-            agent: agent.to_string(),
-            text,
-        })
+/// Parse one `warning-value`, positions relative to `entry`.
+fn parse_warning_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipWarningEntry, ParseError> {
+    let s = entry.trim();
+    if s.is_empty() {
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Missing,
+            None,
+        ));
     }
+    let at = |field, code, part: &str| {
+        ParseError::malformed(field, code, Some(crate::offset_in(entry, part)))
+    };
+
+    // Parse warn-code (3DIGIT)
+    let space_pos = s
+        .find(' ')
+        .ok_or_else(|| ParseError::malformed(Field::Agent, FaultCode::Missing, None))?;
+
+    let code_str = &s[..space_pos];
+    if code_str.len() != 3
+        || !code_str
+            .chars()
+            .all(|c| c.is_ascii_digit())
+    {
+        return Err(at(Field::Code, FaultCode::InvalidNumber, code_str));
+    }
+
+    let code = code_str
+        .parse::<u16>()
+        .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
+
+    let rest = s[space_pos..].trim_start();
+
+    // Find the quoted warn-text
+    let quote_pos = rest
+        .find('"')
+        .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
+
+    let agent = rest[..quote_pos].trim_end();
+    if agent.is_empty() {
+        return Err(at(Field::Agent, FaultCode::Missing, rest));
+    }
+    if !is_hostport(agent)
+        && !agent
+            .chars()
+            .all(is_token_char)
+    {
+        warnings.push(ParseWarning::new(
+            Field::Agent,
+            WarningCode::InvalidToken,
+            Some(crate::offset_in(entry, agent)),
+        ));
+    }
+
+    let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
+
+    Ok(SipWarningEntry::new(code, agent, text))
 }
 
 impl fmt::Display for SipWarningEntry {
@@ -203,19 +212,21 @@ impl CommaList for SipWarning {
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipWarningEntry>, ParseError> {
-        SipWarningEntry::parse(entry, warnings).map(Some)
+        parse_warning_entry(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {
-        non_empty(entries).map(Self)
+        Self::new(entries).ok_or(ParseError::Empty)
     }
 }
 
-list_type!(SipWarning, SipWarningEntry, sep: ", ", entry: "warning-value");
+list_type!(SipWarning, SipWarningEntry, sep: ", ", non_empty);
+list_parse!(SipWarning);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{HeaderParse, ListParse};
 
     #[test]
     fn test_single_warning() {
@@ -388,11 +399,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_str() {
+    fn test_parse_value() {
         let input = r#"301 example.com "warning""#;
-        let warning: SipWarning = input
-            .parse()
-            .unwrap();
+        let warning = SipWarning::parse(input).unwrap();
         assert_eq!(warning.len(), 1);
     }
 

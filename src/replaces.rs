@@ -3,51 +3,84 @@
 //! Also serves `Join` (RFC 3911), whose grammar is identical:
 //! `callid *(SEMI param)` with mandatory `to-tag` and `from-tag`.
 
-use crate::dialog_id::{DialogId, DialogKind};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Replaces;
-
-impl DialogKind for Replaces {
-    const FIRST_TAG: &'static str = "to-tag";
-    const SECOND_TAG: &'static str = "from-tag";
-    const EARLY_ONLY: bool = true;
-}
+use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 
 /// A parsed `Replaces` header value (RFC 3891 §6.1).
 ///
 /// Identifies the dialog to be replaced: Call-ID plus the mandatory
 /// `to-tag` and `from-tag`. Also used for `Join` (RFC 3911 §7.1), whose
-/// grammar is identical.
+/// grammar is identical. [`Display`](std::fmt::Display) emits the
+/// [`framing`](Self::framing) the value holds.
+///
+/// ```
+/// use sip_header::{DialogFraming, SipReplaces};
+///
+/// let r = SipReplaces::new("abc@203.0.113.5", "t1", "f1").with_early_only(true);
+/// assert_eq!(r.to_string(), "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only");
+/// assert_eq!(
+///     r.with_framing(DialogFraming::UriHeader).to_string(),
+///     "abc%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1%3Bearly-only"
+/// );
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct SipReplaces(DialogId<Replaces>);
+pub struct SipReplaces(DialogId);
 
-dialog_id_type!(SipReplaces, example: "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only");
+dialog_id_type!(SipReplaces, to_tag => "to-tag", from_tag => "from-tag", early_only: true);
 
 impl SipReplaces {
-    /// The mandatory `to-tag` value.
-    pub fn to_tag(&self) -> &str {
-        self.0
-            .first_tag()
-    }
-
-    /// The mandatory `from-tag` value.
-    pub fn from_tag(&self) -> &str {
-        self.0
-            .second_tag()
-    }
-
     /// Whether the `early-only` flag is present (RFC 3891 §3).
     pub fn early_only(&self) -> bool {
         self.0
             .early_only()
     }
+
+    /// Set or clear the `early-only` flag.
+    pub fn with_early_only(mut self, early_only: bool) -> Self {
+        self.0
+            .set_early_only(early_only);
+        self
+    }
 }
+
+impl DialogBuild for SipReplaces {
+    fn build(fields: DialogFields, framing: DialogFraming) -> Self {
+        fields
+            .params
+            .into_iter()
+            .fold(
+                SipReplaces::new(fields.call_id, fields.first_tag, fields.second_tag)
+                    .with_early_only(fields.early_only)
+                    .with_framing(framing),
+                |r, (key, value)| r.with_param(key, value),
+            )
+    }
+
+    fn fields(&self) -> DialogFields {
+        DialogFields {
+            call_id: self
+                .call_id()
+                .to_string(),
+            first_tag: self
+                .to_tag()
+                .to_string(),
+            second_tag: self
+                .from_tag()
+                .to_string(),
+            early_only: self.early_only(),
+            params: self
+                .params()
+                .to_vec(),
+        }
+    }
+}
+
+dialog_id_parse!(SipReplaces);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DialogIdEdit, HeaderParse};
     use sip_uri::WarningKind;
 
     use crate::diagnostic::{Field, WarningCode};
@@ -325,9 +358,7 @@ mod tests {
     #[test]
     fn unterminated_quote_param_warns() {
         let input = r#"a@example.com;x="p;to-tag=t;from-tag=f"#;
-        let r: SipReplaces = input
-            .parse()
-            .unwrap();
+        let r = SipReplaces::parse(input).unwrap();
         assert_eq!(r.to_tag(), "t");
         let w = only_warning(&SipReplaces::parse_with_warnings(input).unwrap());
         assert_eq!(
@@ -398,10 +429,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str_is_wire_framing() {
-        let r: SipReplaces = "abc123@203.0.113.5;to-tag=t1;from-tag=f1"
-            .parse()
-            .unwrap();
+    fn parse_is_wire_framing() {
+        let r = SipReplaces::parse("abc123@203.0.113.5;to-tag=t1;from-tag=f1").unwrap();
         assert_eq!(r.call_id(), "abc123@203.0.113.5");
     }
 }

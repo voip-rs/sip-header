@@ -212,6 +212,7 @@ impl SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HeaderParse;
 
     const SAMPLE_INVITE: &str = "\
 INVITE sip:bob@biloxi.example.com SIP/2.0\r\n\
@@ -456,9 +457,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
         let raw = extract_header(NG911_INVITE, "P-Asserted-Identity");
         assert_eq!(raw.len(), 1);
-        let pai: SipHeaderAddr = raw[0]
-            .parse()
-            .unwrap();
+        let pai = SipHeaderAddr::parse(&raw[0]).unwrap();
         assert_eq!(pai.display_name(), Some("EXAMPLE CO"));
         assert!(pai
             .uri()
@@ -478,13 +477,9 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         );
         let raw = extract_header(msg, "P-Asserted-Identity");
         assert_eq!(raw.len(), 2);
-        let pai0: SipHeaderAddr = raw[0]
-            .parse()
-            .unwrap();
+        let pai0 = SipHeaderAddr::parse(&raw[0]).unwrap();
         assert_eq!(pai0.display_name(), Some("EXAMPLE CO"));
-        let pai1: SipHeaderAddr = raw[1]
-            .parse()
-            .unwrap();
+        let pai1 = SipHeaderAddr::parse(&raw[1]).unwrap();
         assert!(pai1
             .uri()
             .to_string()
@@ -512,17 +507,13 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
         let from_raw = extract_header(NG911_INVITE, "From");
         assert_eq!(from_raw.len(), 1);
-        let from: SipHeaderAddr = from_raw[0]
-            .parse()
-            .unwrap();
+        let from = SipHeaderAddr::parse(&from_raw[0]).unwrap();
         assert_eq!(from.display_name(), Some("Caller Name"));
         assert_eq!(from.tag(), Some("abc123"));
 
         let to_raw = extract_header(NG911_INVITE, "To");
         assert_eq!(to_raw.len(), 1);
-        let to: SipHeaderAddr = to_raw[0]
-            .parse()
-            .unwrap();
+        let to = SipHeaderAddr::parse(&to_raw[0]).unwrap();
         assert_eq!(
             to.uri()
                 .to_string(),

@@ -6,9 +6,22 @@ use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
-use crate::list::{non_empty, CommaList};
+use crate::list::CommaList;
 
 /// A single Via entry.
+///
+/// ```
+/// use sip_header::SipViaEntry;
+///
+/// let via = SipViaEntry::new("SIP", "2.0", "UDP")
+///     .with_host("2001:db8::1")
+///     .with_port(5060)
+///     .with_param("rport", None::<&str>)
+///     .and_then(|v| v.with_param("branch", Some("z9hG4bK776")))
+///     .unwrap();
+/// assert_eq!(via.rport(), Some(None));
+/// assert_eq!(via.to_string(), "SIP/2.0/UDP [2001:db8::1]:5060;rport;branch=z9hG4bK776");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SipViaEntry {
@@ -22,6 +35,70 @@ pub struct SipViaEntry {
 }
 
 impl SipViaEntry {
+    /// An entry with the given `sent-protocol` and no host, port or params.
+    pub fn new(
+        protocol: impl Into<String>,
+        version: impl Into<String>,
+        transport: impl Into<String>,
+    ) -> Self {
+        SipViaEntry {
+            protocol_name: protocol.into(),
+            protocol_version: version.into(),
+            transport: transport.into(),
+            host: None,
+            port: None,
+            params: Vec::new(),
+            rport: None,
+        }
+    }
+
+    /// Set the `sent-by` host, IPv6 with or without brackets.
+    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+        let host = host.into();
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .map(str::to_string);
+        self.host = Some(bare.unwrap_or(host));
+        self
+    }
+
+    /// Set the `sent-by` port.
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    ///
+    /// `None` when the key is `rport` and the value is not a port number,
+    /// since [`rport`](Self::rport) reads it as one.
+    pub fn with_param(
+        mut self,
+        key: impl Into<String>,
+        value: Option<impl Into<String>>,
+    ) -> Option<Self> {
+        let mut key = key.into();
+        key.make_ascii_lowercase();
+        let value = value.map(Into::into);
+        if key == "rport"
+            && self
+                .rport
+                .is_none()
+        {
+            self.rport = Some(match &value {
+                None => None,
+                Some(v) => Some(
+                    v.parse::<u16>()
+                        .ok()?,
+                ),
+            });
+        }
+        self.params
+            .push((key, value));
+        Some(self)
+    }
+
     /// Returns the protocol name (e.g., "SIP").
     pub fn protocol(&self) -> &str {
         &self.protocol_name
@@ -71,73 +148,63 @@ impl SipViaEntry {
             .flatten()
     }
 
-    /// Returns the `rport` parameter.
+    /// Returns the first `rport` parameter.
     ///
     /// - `None` if the parameter is absent
     /// - `Some(None)` if present without a value
     /// - `Some(Some(port))` if present with a value
-    ///
-    /// Invalid rport values are rejected at parse time, so this accessor
-    /// is infallible.
     pub fn rport(&self) -> Option<Option<u16>> {
         self.rport
     }
+}
 
-    fn parse(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<Self, ParseError> {
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            return Err(ParseError::malformed(
-                Field::Entry,
-                FaultCode::Missing,
-                None,
-            ));
-        }
-
-        // Split on first semicolon to separate sent-protocol/sent-by from params
-        let (main_part, params_part) = if let Some(semi_idx) = trimmed.find(';') {
-            (&trimmed[..semi_idx], Some(&trimmed[semi_idx + 1..]))
-        } else {
-            (trimmed, None)
-        };
-
-        let (protocol_name, protocol_version, transport, sent_by) =
-            parse_sent_protocol(entry, main_part)?;
-        let (host, port) = parse_host_port(entry, sent_by, warnings)?;
-
-        let raw_params = crate::parse_params(params_part.unwrap_or(""));
-        crate::report_params_quoting(entry, &raw_params, warnings);
-        let rport = raw_params
-            .iter()
-            .find(|p| {
-                p.key
-                    .eq_ignore_ascii_case("rport")
-            })
-            .map(|p| match p.value {
-                None => Ok(None),
-                Some(s) => s
-                    .parse::<u16>()
-                    .map(Some)
-                    .map_err(|_| {
-                        ParseError::malformed(
-                            Field::Param,
-                            FaultCode::InvalidNumber,
-                            Some(crate::offset_in(entry, s)),
-                        )
-                    }),
-            })
-            .transpose()?;
-        let params = crate::stored_params(raw_params);
-
-        Ok(Self {
-            protocol_name,
-            protocol_version,
-            transport,
-            host,
-            port,
-            params,
-            rport,
-        })
+/// Parse one `via-parm`, positions relative to `entry`.
+fn parse_via_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipViaEntry, ParseError> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Missing,
+            None,
+        ));
     }
+
+    // Split on first semicolon to separate sent-protocol/sent-by from params
+    let (main_part, params_part) = if let Some(semi_idx) = trimmed.find(';') {
+        (&trimmed[..semi_idx], Some(&trimmed[semi_idx + 1..]))
+    } else {
+        (trimmed, None)
+    };
+
+    let (protocol_name, protocol_version, transport, sent_by) =
+        parse_sent_protocol(entry, main_part)?;
+    let (host, port) = parse_host_port(entry, sent_by, warnings)?;
+
+    let raw_params = crate::parse_params(params_part.unwrap_or(""));
+    crate::report_params_quoting(entry, &raw_params, warnings);
+    let mut via = SipViaEntry::new(protocol_name, protocol_version, transport);
+    if let Some(host) = host {
+        via = via.with_host(host);
+    }
+    if let Some(port) = port {
+        via = via.with_port(port);
+    }
+    raw_params
+        .into_iter()
+        .try_fold(via, |via, p| {
+            via.with_param(p.key, p.value)
+                .ok_or_else(|| {
+                    ParseError::malformed(
+                        Field::Param,
+                        FaultCode::InvalidNumber,
+                        p.value
+                            .map(|v| crate::offset_in(entry, v)),
+                    )
+                })
+        })
 }
 
 /// Split `sent-protocol LWS sent-by` into its parts, allowing SWS around
@@ -218,15 +285,16 @@ impl CommaList for SipVia {
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipViaEntry>, ParseError> {
-        SipViaEntry::parse(entry, warnings).map(Some)
+        parse_via_entry(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
-        non_empty(entries).map(Self)
+        Self::new(entries).ok_or(ParseError::Empty)
     }
 }
 
-list_type!(SipVia, SipViaEntry, sep: ", ", entry: "via-parm");
+list_type!(SipVia, SipViaEntry, sep: ", ", non_empty);
+list_parse!(SipVia);
 
 /// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon; the
 /// host is read by sip-uri's host grammar, with its warnings forwarded.
@@ -299,6 +367,7 @@ fn parse_host_port(
 mod tests {
     use super::*;
     use crate::diagnostic::WarningCode;
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     #[test]
@@ -480,10 +549,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_str() {
-        let via: SipVia = "SIP/2.0/UDP 198.51.100.1:5060"
-            .parse()
-            .unwrap();
+    fn test_parse_value() {
+        let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060").unwrap();
         assert_eq!(via.len(), 1);
     }
 

@@ -17,6 +17,30 @@ pub struct SipAcceptEntry {
 }
 
 impl SipAcceptEntry {
+    /// An entry for `media_type/subtype`, both lowercased, with no parameters.
+    pub fn new(media_type: impl Into<String>, subtype: impl AsRef<str>) -> Self {
+        let mut media_range = media_type.into();
+        media_range.make_ascii_lowercase();
+        let slash_pos = media_range.len();
+        media_range.push('/');
+        media_range.push_str(
+            &subtype
+                .as_ref()
+                .to_ascii_lowercase(),
+        );
+        SipAcceptEntry {
+            media_range,
+            slash_pos,
+            params: Vec::new(),
+        }
+    }
+
+    /// Add a parameter, lowercasing the key; the value is emitted as given.
+    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
+        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
+        self
+    }
+
     /// The media type (e.g. `"application"`).
     pub fn media_type(&self) -> &str {
         &self.media_range[..self.slash_pos]
@@ -91,16 +115,13 @@ fn parse_accept_entry(
         flag_invalid_token(entry, part, is_token(part), Field::MediaRange, warnings);
     }
 
-    let mut media_range = type_str.to_ascii_lowercase();
-    let slash_pos = media_range.len();
-    media_range.push('/');
-    media_range.push_str(&subtype_str.to_ascii_lowercase());
-
-    Ok(SipAcceptEntry {
-        media_range,
-        slash_pos,
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-    })
+    Ok(
+        read_accept_params(entry, params_part.unwrap_or(""), warnings)
+            .into_iter()
+            .fold(SipAcceptEntry::new(type_str, subtype_str), |e, (k, v)| {
+                e.with_param(k, v)
+            }),
+    )
 }
 
 /// A blank entry beside a real one, shared by the Accept-* headers.
@@ -199,18 +220,20 @@ impl CommaList for SipAccept {
     }
 
     fn from_parsed(entries: Vec<SipAcceptEntry>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
+        Ok(Self::new(entries))
     }
 
     fn blank() -> Result<Self, ParseError> {
-        Ok(Self(Vec::new()))
+        Ok(Self::new(Vec::new()))
     }
 }
 
-list_type!(SipAccept, SipAcceptEntry, sep: ", ", entry: "accept-range");
+list_type!(SipAccept, SipAcceptEntry, sep: ", ", may_be_empty);
+list_parse!(SipAccept);
 
 #[cfg(test)]
 mod tests {
+    use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     use super::*;
@@ -299,10 +322,8 @@ mod tests {
     }
 
     #[test]
-    fn from_str() {
-        let accept: SipAccept = "application/sdp"
-            .parse()
-            .unwrap();
+    fn parse_value() {
+        let accept = SipAccept::parse("application/sdp").unwrap();
         assert_eq!(accept.len(), 1);
     }
 
