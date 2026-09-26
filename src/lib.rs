@@ -62,6 +62,8 @@ pub mod history_info;
 pub mod message;
 pub mod replaces;
 pub mod security;
+#[cfg(feature = "serde")]
+pub mod serde_str;
 pub mod target_dialog;
 mod traits;
 pub mod uri_info;
