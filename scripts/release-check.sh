@@ -13,8 +13,8 @@ RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --wo
 cargo test --release --workspace
 cargo test --release --workspace --features sip-header/draft
 cargo semver-checks check-release -p sip-header
-# sip-header-catalog and sip-header-types have no crates.io baseline until
-# their first release; add them here once published.
+# sip-header-catalog has no crates.io baseline until its first release;
+# add it here once published.
 cargo publish --dry-run --workspace
 
 echo "Pre-release checks passed"

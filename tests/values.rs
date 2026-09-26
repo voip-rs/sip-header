@@ -1,5 +1,5 @@
-use sip_header_types::sip_uri_types::{Host, SipUri, TelUri, Uri};
-use sip_header_types::{
+use sip_header::sip_uri::{Host, SipUri, TelUri, Uri};
+use sip_header::{
     ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, HistoryInfoReason,
     SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
     SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,

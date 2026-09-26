@@ -24,10 +24,9 @@ sip-header = "0.4"
 | Crate | Holds | Depend on it for |
 |---|---|---|
 | [sip-header-catalog](crates/sip-header-catalog) | `SipHeader`, `define_header_enum!`, `SipHeaderRows` | header names, and a header store's public trait |
-| [sip-header-types](crates/sip-header-types) | value types, constructors, Display, serde | exchanging header values without parse policy |
-| **sip-header** | parsing, warnings, `ParseError`, validated builders, redaction, `SipHeaderLookup` | reading headers off the wire |
+| **sip-header** | value types, parsing, warnings, `ParseError`, validated builders, redaction, `SipHeaderLookup` | reading headers off the wire |
 
-sip-header re-exports both lower crates. A store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
+sip-header re-exports the catalog. A store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
 
 ## Lenient parsing, reported breaches
 
@@ -154,7 +153,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | inherent `with_display_name`, `with_call_id`, `redacted`, `parse_list` | extension traits `AddrBuild`, `DialogIdEdit`, `Redact`, `AddrParts` |
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | `impl SipHeaderLookup for Store` | `impl SipHeaderRows for Store` (from sip-header-catalog); `SipHeaderLookup` comes by blanket impl |
-| data-only consumers depend on sip-header | sip-header-catalog and sip-header-types |
+| header-name consumers depend on sip-header | sip-header-catalog |
 | `HistoryInfoEntry::reason()` | `entry.addr().reason()` via `AddrParts` |
 | `SipViaError`, `SipAuthError`, `UriInfoError`, `HistoryInfoError`, `ParseSipHeaderAddrError`, … | one `ParseError`; a URI failure keeps `sip_uri::ParseError` as its `source()` |
 | `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store implements `SipHeaderRows`, overrides `sip_header_rows_str` and returns `RowError::new(RowErrorKind::TooManyEntries, entry)`, which accessors return as `ParseError::Row` |
@@ -213,7 +212,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 This crate is part of a Rust SIP/NG9-1-1 ecosystem:
 
 - [sip-uri](https://crates.io/crates/sip-uri) — RFC 3261/3966/8141 URI parser
-- **sip-header** — SIP header field parsers (this crate), over sip-header-catalog and sip-header-types
+- **sip-header** — SIP header field parsers (this crate), over sip-header-catalog
 - [eido](https://crates.io/crates/eido) — NENA NG9-1-1 emergency data types
 - [freeswitch-types](https://crates.io/crates/freeswitch-types) — FreeSWITCH ESL protocol types (re-exports sip-header)
 
