@@ -3,17 +3,36 @@
 pub use sip_header_types::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::error::ParseError;
+use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::list::CommaList;
 use crate::RawParam;
 
 /// Parse a percent-decoded RFC 3326 `protocol *(SEMI reason-params)`,
 /// positions relative to `decoded`.
-pub(crate) fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> HistoryInfoReason {
+pub(crate) fn parse_reason(
+    decoded: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<HistoryInfoReason, ParseError> {
+    if decoded
+        .trim()
+        .is_empty()
+    {
+        return Err(ParseError::Empty);
+    }
     let (protocol, rest) = decoded
         .split_once(';')
         .unwrap_or((decoded, ""));
+    if protocol
+        .trim()
+        .is_empty()
+    {
+        return Err(ParseError::malformed(
+            Field::Value,
+            FaultCode::Missing,
+            Some(0),
+        ));
+    }
 
     let params = crate::parse_params(rest);
     let find = |name: &str| {
@@ -34,7 +53,7 @@ pub(crate) fn parse_reason(decoded: &str, warnings: &mut Vec<ParseWarning>) -> H
     if let Some(text) = text {
         reason = reason.with_text(text);
     }
-    reason
+    Ok(reason)
 }
 
 /// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.
@@ -427,7 +446,7 @@ mod tests {
 
     fn reason_parsed(decoded: &str) -> Parsed<HistoryInfoReason> {
         let mut warnings = Vec::new();
-        let value = parse_reason(decoded, &mut warnings);
+        let value = parse_reason(decoded, &mut warnings).unwrap();
         Parsed::new(value, warnings)
     }
 
@@ -453,7 +472,7 @@ mod tests {
             entry_reason("%20%3Bcause%3D16").map(|r| r.err()),
             Some(Some(ParseError::malformed(
                 Field::Value,
-                crate::error::FaultCode::Missing,
+                FaultCode::Missing,
                 Some(0)
             )))
         );

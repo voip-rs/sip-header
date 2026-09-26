@@ -97,10 +97,10 @@ impl AddrParts for SipHeaderAddr {
             percent_decode_str(raw)
                 .decode_utf8()
                 .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
-                .map(|decoded| {
+                .and_then(|decoded| {
                     let mut warnings = Vec::new();
-                    let value = parse_reason(&decoded, &mut warnings);
-                    Parsed::new(value, warnings)
+                    let value = parse_reason(&decoded, &mut warnings)?;
+                    Ok(Parsed::new(value, warnings))
                 }),
         )
     }
