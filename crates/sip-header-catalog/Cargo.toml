@@ -18,3 +18,6 @@ draft = []
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"

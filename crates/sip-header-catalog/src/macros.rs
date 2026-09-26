@@ -162,6 +162,8 @@ macro_rules! define_header_enum {
 
 #[cfg(test)]
 mod tests {
+    use crate::HeaderName;
+
     define_header_enum! {
         tests_mod: test_enum_generated,
         error_type: ParseTestEnumError => "unknown test value",
@@ -171,9 +173,6 @@ mod tests {
             Foo => "Foo-Wire",
             /// `Bar-Wire`.
             Bar => "Bar-Wire",
-            /// `Draft-Wire`.
-            #[cfg(feature = "draft")]
-            Draft => "Draft-Wire",
         }
     }
 
@@ -198,6 +197,20 @@ mod tests {
         }
     }
 
+    define_header_enum! {
+        tests_mod: serde_enum_generated,
+        serde,
+        error_type: ParseSerdeEnumError => "unknown serde value",
+        /// Opts into serde.
+        pub(crate) enum SerdeEnum {
+            /// `Alpha-Wire`.
+            Alpha => "Alpha-Wire",
+            /// `Beta-Wire`.
+            #[deprecated]
+            Beta => "Beta-Wire",
+        }
+    }
+
     #[test]
     fn generated_error_display() {
         let e = ParseTestEnumError("nope".to_string());
@@ -205,19 +218,70 @@ mod tests {
     }
 
     #[test]
-    fn all_const_respects_cfg() {
-        #[cfg(not(feature = "draft"))]
+    fn all_lists_every_variant() {
         assert_eq!(TestEnum::ALL, &[TestEnum::Foo, TestEnum::Bar]);
-        #[cfg(feature = "draft")]
-        assert_eq!(
-            TestEnum::ALL,
-            &[TestEnum::Foo, TestEnum::Bar, TestEnum::Draft]
-        );
     }
 
     #[test]
     fn old_form_generates_all() {
         assert_eq!(OldEnum::ALL, &[OldEnum::One]);
         assert_eq!("old-wire".parse::<OldEnum>(), Ok(OldEnum::One));
+    }
+
+    fn wire_names<T: HeaderName>() -> Vec<&'static str> {
+        T::ALL
+            .iter()
+            .map(HeaderName::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn header_name_trait_mirrors_the_inherent_items() {
+        assert_eq!(wire_names::<TestEnum>(), ["Foo-Wire", "Bar-Wire"]);
+        assert_eq!(wire_names::<OldEnum>(), ["Old-Wire"]);
+        assert_eq!(<TestEnum as HeaderName>::ALL, TestEnum::ALL);
+        assert_eq!(
+            wire_names::<crate::SipHeader>().len(),
+            crate::SipHeader::ALL.len()
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde_opt_in {
+        use super::*;
+
+        trait NoSerialize {
+            const SERIALIZE: bool = false;
+        }
+        impl<T> NoSerialize for T {}
+        struct Probe<T>(core::marker::PhantomData<T>);
+        impl<T: serde::Serialize> Probe<T> {
+            const SERIALIZE: bool = true;
+        }
+
+        #[test]
+        fn only_invocations_that_ask_get_serde() {
+            assert!(Probe::<SerdeEnum>::SERIALIZE);
+            assert!(!Probe::<TestEnum>::SERIALIZE);
+            assert!(!Probe::<OldEnum>::SERIALIZE);
+            assert!(Probe::<crate::SipHeader>::SERIALIZE);
+        }
+
+        #[test]
+        fn serde_uses_the_wire_name() {
+            assert_eq!(
+                serde_json::to_string(&SerdeEnum::Alpha).unwrap(),
+                r#""Alpha-Wire""#
+            );
+            assert_eq!(
+                serde_json::from_str::<SerdeEnum>(r#""alpha-wire""#).unwrap(),
+                SerdeEnum::Alpha
+            );
+            let msg = serde_json::from_str::<SerdeEnum>(r#""Secret-Wire""#)
+                .unwrap_err()
+                .to_string();
+            assert!(msg.contains("unknown SerdeEnum name"), "{msg}");
+            assert!(!msg.contains("Secret"), "{msg}");
+        }
     }
 }

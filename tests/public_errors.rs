@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sip_header::{
     Fault, FaultCode, Field, ParseError, RowError, RowErrorKind, SipHeader, SipHeaderLookup,
-    SipHeaderRows,
+    SipHeaderRows, SipHeaderRowsExt,
 };
 
 fn too_many() -> ParseError {
@@ -29,53 +29,51 @@ fn fault_is_constructible_outside_the_crate() {
 }
 
 fn row_error() -> RowError {
-    RowError::new(RowErrorKind::TooManyEntries, 4000)
+    RowError::too_many_entries(4001, 4000)
 }
 
 #[test]
 fn row_error_is_kept_as_the_source() {
     let e = row_error();
-    assert_eq!((e.kind(), e.entry()), (RowErrorKind::TooManyEntries, 4000));
-    assert_eq!(e.to_string(), "too-many-entries in entry 4000");
-    let parsed = ParseError::from(e);
-    assert_eq!(parsed, ParseError::Row(e));
+    assert_eq!(
+        (e.kind(), e.count(), e.limit(), e.entry()),
+        (RowErrorKind::TooManyEntries, Some(4001), Some(4000), None)
+    );
+    assert_eq!(e.to_string(), "too-many-entries: 4001, limit 4000");
+    let parsed = ParseError::from(e.clone());
+    assert_eq!(parsed, ParseError::Row(e.clone()));
     assert_eq!(
         parsed.to_string(),
-        "header rows: too-many-entries in entry 4000"
+        "header rows: too-many-entries: 4001, limit 4000"
     );
     assert_eq!(
         std::error::Error::source(&parsed).map(ToString::to_string),
         Some(e.to_string())
     );
+    let malformed = RowError::malformed().in_entry(3);
+    assert_eq!(
+        ParseError::from(malformed).to_string(),
+        "header rows: malformed in entry 3"
+    );
 }
 
-/// A store that frames its own rows and fails to decode one header: its
-/// undecoded text is what `sip_header_all_str` returns.
+/// A store that frames its own rows and fails to decode one header; `raw`
+/// holds the undecoded text.
 struct FramedStore {
     raw: HashMap<String, Vec<String>>,
     broken: SipHeader,
 }
 
 impl SipHeaderRows for FramedStore {
-    fn sip_header_str(&self, name: &str) -> Option<&str> {
-        self.raw
-            .sip_header_str(name)
-    }
-
-    fn sip_header_all_str<'a>(&'a self, name: &str) -> Vec<&'a str> {
-        self.raw
-            .sip_header_all_str(name)
-    }
-
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
-        if name
-            == self
-                .broken
-                .as_str()
+        if self
+            .broken
+            .matches(name)
         {
             return Err(row_error());
         }
-        Ok(self.sip_header_all_str(name))
+        self.raw
+            .sip_header_rows_str(name)
     }
 }
 
@@ -92,8 +90,10 @@ macro_rules! assert_row_error {
     ($header:expr, $value:expr, $accessor:ident) => {
         let store = broken($header, $value);
         assert_eq!(
-            store.sip_header_all($header),
-            vec![$value],
+            store
+                .raw
+                .sip_header_rows($header),
+            Ok(vec![$value]),
             stringify!($accessor)
         );
         assert_eq!(
@@ -151,11 +151,8 @@ fn every_accessor_surfaces_the_row_error() {
     assert_row_error!(SipHeader::AcceptEncoding, "gzip", accept_encoding);
     assert_row_error!(SipHeader::AcceptLanguage, "fr", accept_language);
     assert_row_error!(SipHeader::Geolocation, "<cid:a@example.com>", geolocation);
-    #[cfg(feature = "draft")]
-    {
-        assert_row_error!(SipHeader::Diversion, addr, diversion);
-        assert_row_error!(SipHeader::RemotePartyId, addr, remote_party_id);
-    }
+    assert_row_error!(SipHeader::Diversion, addr, diversion);
+    assert_row_error!(SipHeader::RemotePartyId, addr, remote_party_id);
 }
 
 #[test]

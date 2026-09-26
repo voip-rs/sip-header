@@ -581,99 +581,6 @@ mod compact_form_tests {
 }
 
 #[cfg(test)]
-mod multi_valued_tests {
-    use super::*;
-
-    #[test]
-    fn rfc3261_multi_valued_headers() {
-        assert!(SipHeader::Via.is_multi_valued());
-        assert!(SipHeader::Route.is_multi_valued());
-        assert!(SipHeader::RecordRoute.is_multi_valued());
-        assert!(SipHeader::Contact.is_multi_valued());
-        assert!(SipHeader::Allow.is_multi_valued());
-        assert!(SipHeader::Supported.is_multi_valued());
-        assert!(SipHeader::Require.is_multi_valued());
-        assert!(SipHeader::ProxyRequire.is_multi_valued());
-        assert!(SipHeader::Unsupported.is_multi_valued());
-        assert!(SipHeader::Authorization.is_multi_valued());
-        assert!(SipHeader::ProxyAuthorization.is_multi_valued());
-        assert!(SipHeader::WwwAuthenticate.is_multi_valued());
-        assert!(SipHeader::ProxyAuthenticate.is_multi_valued());
-        assert!(SipHeader::Warning.is_multi_valued());
-        assert!(SipHeader::ErrorInfo.is_multi_valued());
-        assert!(SipHeader::CallInfo.is_multi_valued());
-        assert!(SipHeader::AlertInfo.is_multi_valued());
-        assert!(SipHeader::Accept.is_multi_valued());
-        assert!(SipHeader::AcceptEncoding.is_multi_valued());
-        assert!(SipHeader::AcceptLanguage.is_multi_valued());
-        assert!(SipHeader::ContentEncoding.is_multi_valued());
-        assert!(SipHeader::ContentLanguage.is_multi_valued());
-        assert!(SipHeader::InReplyTo.is_multi_valued());
-    }
-
-    #[test]
-    fn extension_multi_valued_headers() {
-        assert!(SipHeader::PAssertedIdentity.is_multi_valued());
-        assert!(SipHeader::PPreferredIdentity.is_multi_valued());
-        assert!(SipHeader::AllowEvents.is_multi_valued());
-        assert!(SipHeader::SecurityClient.is_multi_valued());
-        assert!(SipHeader::SecurityServer.is_multi_valued());
-        assert!(SipHeader::SecurityVerify.is_multi_valued());
-        assert!(SipHeader::Path.is_multi_valued());
-        assert!(SipHeader::ServiceRoute.is_multi_valued());
-        assert!(SipHeader::HistoryInfo.is_multi_valued());
-        assert!(SipHeader::Reason.is_multi_valued());
-        assert!(SipHeader::AcceptContact.is_multi_valued());
-        assert!(SipHeader::RejectContact.is_multi_valued());
-        assert!(SipHeader::RequestDisposition.is_multi_valued());
-        assert!(SipHeader::ResourcePriority.is_multi_valued());
-        assert!(SipHeader::AcceptResourcePriority.is_multi_valued());
-        assert!(SipHeader::PAssociatedUri.is_multi_valued());
-        assert!(SipHeader::Geolocation.is_multi_valued());
-    }
-
-    #[test]
-    fn single_valued_headers() {
-        assert!(!SipHeader::From.is_multi_valued());
-        assert!(!SipHeader::To.is_multi_valued());
-        assert!(!SipHeader::CallId.is_multi_valued());
-        assert!(!SipHeader::Cseq.is_multi_valued());
-        assert!(!SipHeader::MaxForwards.is_multi_valued());
-        assert!(!SipHeader::ContentType.is_multi_valued());
-        assert!(!SipHeader::ContentLength.is_multi_valued());
-        assert!(!SipHeader::Expires.is_multi_valued());
-        assert!(!SipHeader::Date.is_multi_valued());
-        assert!(!SipHeader::Subject.is_multi_valued());
-        assert!(!SipHeader::ReplyTo.is_multi_valued());
-        assert!(!SipHeader::Server.is_multi_valued());
-        assert!(!SipHeader::UserAgent.is_multi_valued());
-    }
-
-    #[test]
-    #[cfg(feature = "draft")]
-    fn draft_multi_valued_headers() {
-        assert!(SipHeader::Diversion.is_multi_valued());
-        assert!(SipHeader::RemotePartyId.is_multi_valued());
-    }
-
-    #[test]
-    #[cfg(feature = "draft")]
-    fn draft_parse_roundtrip() {
-        let d: SipHeader = "Diversion"
-            .parse()
-            .unwrap();
-        assert_eq!(d, SipHeader::Diversion);
-        assert_eq!(d.to_string(), "Diversion");
-
-        let r: SipHeader = "remote-party-id"
-            .parse()
-            .unwrap();
-        assert_eq!(r, SipHeader::RemotePartyId);
-        assert_eq!(r.to_string(), "Remote-Party-ID");
-    }
-}
-
-#[cfg(test)]
 mod special_case_tests {
     use super::*;
 
@@ -736,5 +643,235 @@ mod special_case_tests {
             SipHeader::PDcsTracePartyId.to_string(),
             "P-DCS-Trace-Party-ID"
         );
+    }
+}
+
+#[cfg(test)]
+mod occurrence_tests {
+    use super::*;
+
+    const LISTS: &[SipHeader] = &[
+        SipHeader::Accept,
+        SipHeader::AcceptContact,
+        SipHeader::AcceptEncoding,
+        SipHeader::AcceptLanguage,
+        SipHeader::AcceptResourcePriority,
+        SipHeader::AlertInfo,
+        SipHeader::Allow,
+        SipHeader::AllowEvents,
+        SipHeader::CallInfo,
+        SipHeader::Contact,
+        SipHeader::ContentEncoding,
+        SipHeader::ContentLanguage,
+        SipHeader::Diversion,
+        SipHeader::ErrorInfo,
+        SipHeader::FeatureCaps,
+        SipHeader::Geolocation,
+        SipHeader::HistoryInfo,
+        SipHeader::InReplyTo,
+        SipHeader::PAccessNetworkInfo,
+        SipHeader::PAssertedIdentity,
+        SipHeader::PAssertedService,
+        SipHeader::PAssociatedUri,
+        SipHeader::PChargingFunctionAddresses,
+        SipHeader::PEarlyMedia,
+        SipHeader::PMediaAuthorization,
+        SipHeader::PPreferredIdentity,
+        SipHeader::PPreferredService,
+        SipHeader::PRefusedUriList,
+        SipHeader::PVisitedNetworkId,
+        SipHeader::Path,
+        SipHeader::PermissionMissing,
+        SipHeader::PolicyContact,
+        SipHeader::PolicyId,
+        SipHeader::ProxyRequire,
+        SipHeader::Reason,
+        SipHeader::RecordRoute,
+        SipHeader::RecvInfo,
+        SipHeader::RejectContact,
+        SipHeader::RequestDisposition,
+        SipHeader::Require,
+        SipHeader::ResourcePriority,
+        SipHeader::Route,
+        SipHeader::SecurityClient,
+        SipHeader::SecurityServer,
+        SipHeader::SecurityVerify,
+        SipHeader::ServiceRoute,
+        SipHeader::Supported,
+        SipHeader::TriggerConsent,
+        SipHeader::Unsupported,
+        SipHeader::UserToUser,
+        SipHeader::Via,
+        SipHeader::Warning,
+    ];
+
+    const REPEATED_VALUES: &[SipHeader] = &[
+        SipHeader::Authorization,
+        SipHeader::Identity,
+        SipHeader::ProxyAuthenticate,
+        SipHeader::ProxyAuthorization,
+        SipHeader::RemotePartyId,
+        SipHeader::WwwAuthenticate,
+    ];
+
+    #[test]
+    fn every_header_is_classified() {
+        for h in SipHeader::ALL {
+            let list = LISTS.contains(h);
+            let repeated = REPEATED_VALUES.contains(h);
+            assert_eq!(h.is_list(), list, "is_list({h})");
+            assert_eq!(h.may_repeat(), list || repeated, "may_repeat({h})");
+        }
+    }
+
+    #[test]
+    fn authentication_headers_repeat_but_never_split() {
+        for h in [
+            SipHeader::Authorization,
+            SipHeader::ProxyAuthorization,
+            SipHeader::WwwAuthenticate,
+            SipHeader::ProxyAuthenticate,
+        ] {
+            assert!(h.may_repeat() && !h.is_list(), "{h}");
+        }
+        assert!(!SipHeader::AuthenticationInfo.is_list());
+        assert!(!SipHeader::AuthenticationInfo.may_repeat());
+    }
+
+    #[test]
+    fn single_values() {
+        for h in [
+            SipHeader::From,
+            SipHeader::To,
+            SipHeader::CallId,
+            SipHeader::Cseq,
+            SipHeader::Privacy,
+            SipHeader::Server,
+            SipHeader::UserAgent,
+            SipHeader::Replaces,
+        ] {
+            assert!(!h.is_list() && !h.may_repeat(), "{h}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    fn listed(file: &str) -> Vec<&str> {
+        let mut names: Vec<&str> = file
+            .lines()
+            .map(|l| {
+                l.split('#')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+            })
+            .filter(|l| !l.is_empty())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    fn catalog(registry: Registry) -> Vec<&'static str> {
+        let mut names: Vec<&str> = SipHeader::ALL
+            .iter()
+            .filter(|h| h.registry() == registry)
+            .map(|h| h.as_str())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    #[test]
+    fn iana_list_matches_catalog() {
+        assert_eq!(
+            catalog(Registry::Iana),
+            listed(include_str!("../iana-sip-headers.txt"))
+        );
+    }
+
+    #[test]
+    fn draft_list_matches_catalog() {
+        assert_eq!(
+            catalog(Registry::Draft),
+            listed(include_str!("../draft-sip-headers.txt"))
+        );
+    }
+
+    #[test]
+    fn draft_headers_are_always_present() {
+        assert_eq!("Diversion".parse::<SipHeader>(), Ok(SipHeader::Diversion));
+        assert_eq!(
+            "remote-party-id".parse::<SipHeader>(),
+            Ok(SipHeader::RemotePartyId)
+        );
+        assert_eq!(SipHeader::RemotePartyId.to_string(), "Remote-Party-ID");
+        assert_eq!(SipHeader::Diversion.registry(), Registry::Draft);
+        assert_eq!(SipHeader::Via.registry(), Registry::Iana);
+    }
+
+    #[test]
+    fn from_str_takes_canonical_names_only() {
+        assert!("v"
+            .parse::<SipHeader>()
+            .is_err());
+        assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use super::*;
+
+    #[test]
+    fn serializes_as_the_wire_name() {
+        assert_eq!(
+            serde_json::to_string(&[
+                SipHeader::CallId,
+                SipHeader::WwwAuthenticate,
+                SipHeader::Cseq,
+                SipHeader::UserToUser,
+                SipHeader::RemotePartyId,
+            ])
+            .unwrap(),
+            r#"["Call-ID","WWW-Authenticate","CSeq","User-to-User","Remote-Party-ID"]"#
+        );
+        for h in SipHeader::ALL {
+            assert_eq!(
+                serde_json::to_string(h).unwrap(),
+                format!("\"{}\"", h.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn deserializes_any_spelling_parse_name_accepts() {
+        for h in SipHeader::ALL {
+            for spelling in [
+                h.as_str()
+                    .to_string(),
+                h.as_str()
+                    .to_lowercase(),
+                h.as_str()
+                    .to_uppercase(),
+            ] {
+                let json = format!("\"{spelling}\"");
+                assert_eq!(serde_json::from_str::<SipHeader>(&json).unwrap(), *h);
+            }
+        }
+        assert_eq!(
+            serde_json::from_str::<Vec<SipHeader>>(r#"["v","F","call-id"]"#).unwrap(),
+            vec![SipHeader::Via, SipHeader::From, SipHeader::CallId]
+        );
+    }
+
+    #[test]
+    fn unknown_name_error_omits_the_input() {
+        let e = serde_json::from_str::<SipHeader>(r#""X-Secret-Token""#).unwrap_err();
+        let msg = e.to_string();
+        assert!(msg.contains("unknown SIP header name"), "{msg}");
+        assert!(!msg.contains("Secret"), "{msg}");
     }
 }

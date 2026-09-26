@@ -32,7 +32,7 @@ pub use sip_header_catalog::{ParseSipHeaderError, SipHeader, SipHeaderRows};
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use sip_header::{SipHeader, SipHeaderLookup, SipHeaderRows};
+/// use sip_header::{SipHeader, SipHeaderLookup, SipHeaderRowsExt};
 ///
 /// let mut headers = HashMap::new();
 /// headers.insert(
@@ -42,7 +42,7 @@ pub use sip_header_catalog::{ParseSipHeaderError, SipHeader, SipHeaderRows};
 ///
 /// assert_eq!(
 ///     headers.sip_header(SipHeader::CallInfo),
-///     Some("<urn:emergency:uid:callid:abc>;purpose=emergency-CallId"),
+///     Ok(Some("<urn:emergency:uid:callid:abc>;purpose=emergency-CallId")),
 /// );
 ///
 /// let ci = headers.call_info().unwrap().unwrap();
@@ -352,7 +352,7 @@ mod tests {
         let h = headers_with(&[("Call-Info", "<urn:x>;purpose=icon")]);
         assert_eq!(
             h.sip_header(SipHeader::CallInfo),
-            Some("<urn:x>;purpose=icon")
+            Ok(Some("<urn:x>;purpose=icon"))
         );
     }
 
@@ -364,7 +364,9 @@ mod tests {
         )]);
         assert_eq!(
             h.sip_header(SipHeader::CallInfo),
-            Some("<urn:emergency:uid:callid:test:bcf.example.com>;purpose=emergency-CallId")
+            Ok(Some(
+                "<urn:emergency:uid:callid:test:bcf.example.com>;purpose=emergency-CallId"
+            ))
         );
     }
 
@@ -440,6 +442,7 @@ mod tests {
         assert!(h
             .sip_header(SipHeader::HistoryInfo)
             .unwrap()
+            .unwrap()
             .contains("esrp.example.com"));
     }
 
@@ -469,19 +472,18 @@ mod tests {
     }
 
     #[test]
-    fn sip_header_all_str_default() {
+    fn sip_header_rows_single_value_map() {
         let h = headers_with(&[("Via", "SIP/2.0/UDP host1")]);
-        let all = h.sip_header_all(SipHeader::Via);
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0], "SIP/2.0/UDP host1");
+        assert_eq!(
+            h.sip_header_rows(SipHeader::Via),
+            Ok(vec!["SIP/2.0/UDP host1"])
+        );
     }
 
     #[test]
-    fn sip_header_all_str_absent() {
+    fn sip_header_rows_absent() {
         let h = headers_with(&[]);
-        assert!(h
-            .sip_header_all(SipHeader::Via)
-            .is_empty());
+        assert_eq!(h.sip_header_rows(SipHeader::Via), Ok(Vec::<&str>::new()));
     }
 
     #[test]
@@ -491,29 +493,29 @@ mod tests {
             "Via".into(),
             vec!["SIP/2.0/UDP host1".into(), "SIP/2.0/UDP host2".into()],
         );
-        assert_eq!(h.sip_header_str("Via"), Some("SIP/2.0/UDP host1"));
-        let all = h.sip_header_all_str("Via");
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0], "SIP/2.0/UDP host1");
-        assert_eq!(all[1], "SIP/2.0/UDP host2");
+        assert_eq!(h.sip_header_str("Via"), Ok(Some("SIP/2.0/UDP host1")));
+        assert_eq!(
+            h.sip_header_rows_str("Via"),
+            Ok(vec!["SIP/2.0/UDP host1", "SIP/2.0/UDP host2"])
+        );
     }
 
     #[test]
     fn missing_headers_return_none() {
         let h = headers_with(&[]);
-        assert_eq!(h.sip_header(SipHeader::CallInfo), None);
+        assert_eq!(h.sip_header(SipHeader::CallInfo), Ok(None));
         assert_eq!(
             h.call_info()
                 .unwrap(),
             None
         );
-        assert_eq!(h.sip_header(SipHeader::HistoryInfo), None);
+        assert_eq!(h.sip_header(SipHeader::HistoryInfo), Ok(None));
         assert_eq!(
             h.history_info()
                 .unwrap(),
             None
         );
-        assert_eq!(h.sip_header(SipHeader::PAssertedIdentity), None);
+        assert_eq!(h.sip_header(SipHeader::PAssertedIdentity), Ok(None));
         assert!(h
             .p_asserted_identity()
             .unwrap()
@@ -848,6 +850,32 @@ mod tests {
         assert_eq!(geo.len(), 2);
         assert_eq!(geo.cid(), Some("loc@example.com"));
         assert_eq!(geo.url(), Some("https://lis.example.com/held/a"));
+    }
+
+    #[test]
+    fn draft_header_accessors_are_always_present() {
+        let h = headers_with(&[
+            (
+                "Diversion",
+                "<sip:a@example.com>;reason=unconditional, <sip:b@example.com>",
+            ),
+            (
+                "Remote-Party-ID",
+                "<sip:+15551234567@example.com>;party=calling",
+            ),
+        ]);
+        assert_eq!(
+            h.diversion()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            h.remote_party_id()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
