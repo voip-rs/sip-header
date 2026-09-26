@@ -858,6 +858,21 @@ mod tests {
     }
 
     #[test]
+    fn valueless_uri_header_is_error_not_absent() {
+        let addr = SipHeaderAddr::parse("<sip:bob@203.0.113.9?Replaces&Reason>").unwrap();
+        assert_eq!(
+            addr.replaces()
+                .map(|r| r.err()),
+            Some(Some(ParseError::Empty))
+        );
+        assert_eq!(
+            addr.reason()
+                .map(|r| r.err()),
+            Some(Some(ParseError::Empty))
+        );
+    }
+
+    #[test]
     fn replaces_uri_header() {
         let addr = SipHeaderAddr::parse(
             "<sip:bob@203.0.113.9?Replaces=abc123%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1>",

@@ -443,6 +443,22 @@ mod tests {
             .reason_with_warnings()
     }
 
+    #[test]
+    fn reason_without_protocol_is_error() {
+        assert_eq!(
+            entry_reason("").map(|r| r.err()),
+            Some(Some(ParseError::Empty))
+        );
+        assert_eq!(
+            entry_reason("%20%3Bcause%3D16").map(|r| r.err()),
+            Some(Some(ParseError::malformed(
+                Field::Value,
+                crate::error::FaultCode::Missing,
+                Some(0)
+            )))
+        );
+    }
+
     fn only_warning(
         p: &Parsed<HistoryInfoReason>,
     ) -> (Field, WarningCode, WarningKind, Option<usize>) {
