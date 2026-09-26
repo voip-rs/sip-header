@@ -4,6 +4,14 @@ use std::fmt;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        try_from = "SipSecurityMechanismParts",
+        into = "SipSecurityMechanismParts"
+    )
+)]
 #[non_exhaustive]
 pub struct SipSecurityMechanism {
     mechanism: String,
@@ -95,3 +103,52 @@ impl fmt::Display for SipSecurityMechanism {
 pub struct SipSecurity(Vec<SipSecurityMechanism>);
 
 list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MechParamParts {
+    key: String,
+    value: Option<String>,
+    #[serde(default)]
+    quoted: bool,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipSecurityMechanismParts {
+    mechanism: String,
+    #[serde(default)]
+    params: Vec<MechParamParts>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<SipSecurityMechanismParts> for SipSecurityMechanism {
+    type Error = &'static str;
+
+    fn try_from(p: SipSecurityMechanismParts) -> Result<Self, Self::Error> {
+        p.params
+            .into_iter()
+            .try_fold(SipSecurityMechanism::new(p.mechanism), |m, param| {
+                match (param.value, param.quoted) {
+                    (Some(value), true) => Ok(m.with_quoted_param(param.key, value)),
+                    (None, true) => Err("a quoted mechanism parameter needs a value"),
+                    (value, false) => Ok(m.with_param(param.key, value)),
+                }
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipSecurityMechanism> for SipSecurityMechanismParts {
+    fn from(m: SipSecurityMechanism) -> Self {
+        SipSecurityMechanismParts {
+            mechanism: m.mechanism,
+            params: m
+                .params
+                .into_iter()
+                .zip(m.quoted)
+                .map(|((key, value), quoted)| MechParamParts { key, value, quoted })
+                .collect(),
+        }
+    }
+}

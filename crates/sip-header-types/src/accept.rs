@@ -4,6 +4,11 @@ use std::fmt;
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "SipAcceptEntryParts", into = "SipAcceptEntryParts")
+)]
 #[non_exhaustive]
 pub struct SipAcceptEntry {
     media_range: String,
@@ -81,3 +86,38 @@ impl fmt::Display for SipAcceptEntry {
 pub struct SipAccept(Vec<SipAcceptEntry>);
 
 list_type!(SipAccept, SipAcceptEntry, sep: ", ", may_be_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipAcceptEntryParts {
+    media_type: String,
+    subtype: String,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptEntryParts> for SipAcceptEntry {
+    fn from(p: SipAcceptEntryParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(SipAcceptEntry::new(p.media_type, p.subtype), |e, (k, v)| {
+                e.with_param(k, v)
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptEntry> for SipAcceptEntryParts {
+    fn from(e: SipAcceptEntry) -> Self {
+        SipAcceptEntryParts {
+            media_type: e
+                .media_type()
+                .to_string(),
+            subtype: e
+                .subtype()
+                .to_string(),
+            params: e.params,
+        }
+    }
+}

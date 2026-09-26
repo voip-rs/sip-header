@@ -4,6 +4,14 @@ use std::fmt;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        from = "SipAcceptEncodingEntryParts",
+        into = "SipAcceptEncodingEntryParts"
+    )
+)]
 #[non_exhaustive]
 pub struct SipAcceptEncodingEntry {
     encoding: String,
@@ -62,3 +70,32 @@ impl fmt::Display for SipAcceptEncodingEntry {
 pub struct SipAcceptEncoding(Vec<SipAcceptEncodingEntry>);
 
 list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", may_be_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipAcceptEncodingEntryParts {
+    encoding: String,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptEncodingEntryParts> for SipAcceptEncodingEntry {
+    fn from(p: SipAcceptEncodingEntryParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(SipAcceptEncodingEntry::new(p.encoding), |e, (k, v)| {
+                e.with_param(k, v)
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptEncodingEntry> for SipAcceptEncodingEntryParts {
+    fn from(e: SipAcceptEncodingEntry) -> Self {
+        SipAcceptEncodingEntryParts {
+            encoding: e.encoding,
+            params: e.params,
+        }
+    }
+}

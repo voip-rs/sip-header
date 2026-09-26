@@ -12,6 +12,11 @@ use std::fmt;
 /// warn-text = quoted-string
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "SipWarningEntryParts", into = "SipWarningEntryParts")
+)]
 #[non_exhaustive]
 pub struct SipWarningEntry {
     code: u16,
@@ -63,3 +68,29 @@ impl fmt::Display for SipWarningEntry {
 pub struct SipWarning(Vec<SipWarningEntry>);
 
 list_type!(SipWarning, SipWarningEntry, sep: ", ", non_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipWarningEntryParts {
+    code: u16,
+    agent: String,
+    text: String,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipWarningEntryParts> for SipWarningEntry {
+    fn from(p: SipWarningEntryParts) -> Self {
+        SipWarningEntry::new(p.code, p.agent, p.text)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipWarningEntry> for SipWarningEntryParts {
+    fn from(e: SipWarningEntry) -> Self {
+        SipWarningEntryParts {
+            code: e.code,
+            agent: e.agent,
+            text: e.text,
+        }
+    }
+}

@@ -4,6 +4,11 @@ use std::fmt;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "UriInfoEntryParts", into = "UriInfoEntryParts")
+)]
 #[non_exhaustive]
 pub struct UriInfoEntry {
     uri: String,
@@ -74,3 +79,30 @@ impl fmt::Display for UriInfoEntry {
 pub struct UriInfo(Vec<UriInfoEntry>);
 
 list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UriInfoEntryParts {
+    uri: String,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl From<UriInfoEntryParts> for UriInfoEntry {
+    fn from(p: UriInfoEntryParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(UriInfoEntry::new(p.uri), |e, (k, v)| e.with_param(k, v))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<UriInfoEntry> for UriInfoEntryParts {
+    fn from(e: UriInfoEntry) -> Self {
+        UriInfoEntryParts {
+            uri: e.uri,
+            params: e.params,
+        }
+    }
+}

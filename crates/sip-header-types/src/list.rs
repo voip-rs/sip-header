@@ -14,6 +14,19 @@ macro_rules! list_type {
             }
         }
 
+        #[cfg(feature = "serde")]
+        impl<'de> serde::Deserialize<'de> for $Type {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let entries = <Vec<$Entry> as serde::Deserialize>::deserialize(deserializer)?;
+                Self::new(entries).ok_or_else(|| {
+                    <D::Error as serde::de::Error>::custom(concat!(
+                        stringify!($Type),
+                        " needs one entry or more"
+                    ))
+                })
+            }
+        }
+
         list_type!(@common $Type, $Entry, $sep);
     };
     ($Type:ident, $Entry:ty, sep: $sep:literal, may_be_empty) => {
@@ -24,9 +37,23 @@ macro_rules! list_type {
             }
         }
 
+        #[cfg(feature = "serde")]
+        impl<'de> serde::Deserialize<'de> for $Type {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                <Vec<$Entry> as serde::Deserialize>::deserialize(deserializer).map(Self::new)
+            }
+        }
+
         list_type!(@common $Type, $Entry, $sep);
     };
     (@common $Type:ident, $Entry:ty, $sep:literal) => {
+        #[cfg(feature = "serde")]
+        impl serde::Serialize for $Type {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.collect_seq(&self.0)
+            }
+        }
+
         impl $Type {
             /// The entries as a slice.
             pub fn entries(&self) -> &[$Entry] {

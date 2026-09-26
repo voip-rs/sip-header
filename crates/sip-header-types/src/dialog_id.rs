@@ -9,6 +9,11 @@ pub(crate) mod sealed {
 
 /// How a dialog identifier is framed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
 #[non_exhaustive]
 pub enum DialogFraming {
     /// The value as a header field carries it.

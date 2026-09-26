@@ -9,6 +9,11 @@ use crate::header_addr::SipHeaderAddr;
 /// The Reason header embedded in History-Info URIs as `?Reason=...` follows
 /// the format: `protocol ;cause=code ;text="description"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "HistoryInfoReasonParts", into = "HistoryInfoReasonParts")
+)]
 pub struct HistoryInfoReason {
     protocol: String,
     cause: Option<u16>,
@@ -61,6 +66,11 @@ impl HistoryInfoReason {
 /// Each entry is a SIP name-addr (`<URI>;params`) where the URI may contain
 /// an embedded `?Reason=...` header and the params typically include `index`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "HistoryInfoEntryParts", into = "HistoryInfoEntryParts")
+)]
 pub struct HistoryInfoEntry {
     addr: SipHeaderAddr,
 }
@@ -130,3 +140,53 @@ impl fmt::Display for HistoryInfoEntry {
 pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 
 list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", non_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct HistoryInfoReasonParts {
+    protocol: String,
+    cause: Option<u16>,
+    text: Option<String>,
+}
+
+#[cfg(feature = "serde")]
+impl From<HistoryInfoReasonParts> for HistoryInfoReason {
+    fn from(p: HistoryInfoReasonParts) -> Self {
+        HistoryInfoReason {
+            protocol: p.protocol,
+            cause: p.cause,
+            text: p.text,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<HistoryInfoReason> for HistoryInfoReasonParts {
+    fn from(r: HistoryInfoReason) -> Self {
+        HistoryInfoReasonParts {
+            protocol: r.protocol,
+            cause: r.cause,
+            text: r.text,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct HistoryInfoEntryParts {
+    addr: SipHeaderAddr,
+}
+
+#[cfg(feature = "serde")]
+impl From<HistoryInfoEntryParts> for HistoryInfoEntry {
+    fn from(p: HistoryInfoEntryParts) -> Self {
+        HistoryInfoEntry::new(p.addr)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<HistoryInfoEntry> for HistoryInfoEntryParts {
+    fn from(e: HistoryInfoEntry) -> Self {
+        HistoryInfoEntryParts { addr: e.addr }
+    }
+}

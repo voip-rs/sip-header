@@ -10,6 +10,11 @@ use std::fmt;
 /// Resolving `cid:` references against the SIP message body (multipart
 /// MIME) or dereferencing HTTP URLs is the caller's responsibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
 #[non_exhaustive]
 pub enum SipGeolocationRef {
     /// Content-ID reference to a MIME body part (e.g., `cid:uuid`).
@@ -30,6 +35,11 @@ impl fmt::Display for SipGeolocationRef {
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
 /// (RFC 6442 §4.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "SipGeolocationEntryParts", into = "SipGeolocationEntryParts")
+)]
 #[non_exhaustive]
 pub struct SipGeolocationEntry {
     reference: SipGeolocationRef,
@@ -131,5 +141,34 @@ impl SipGeolocation {
                 SipGeolocationRef::Url(url) => Some(url.as_str()),
                 _ => None,
             })
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipGeolocationEntryParts {
+    reference: SipGeolocationRef,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipGeolocationEntryParts> for SipGeolocationEntry {
+    fn from(p: SipGeolocationEntryParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(SipGeolocationEntry::new(p.reference), |e, (k, v)| {
+                e.with_param(k, v)
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipGeolocationEntry> for SipGeolocationEntryParts {
+    fn from(e: SipGeolocationEntry) -> Self {
+        SipGeolocationEntryParts {
+            reference: e.reference,
+            params: e.params,
+        }
     }
 }

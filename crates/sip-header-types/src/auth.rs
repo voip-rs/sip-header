@@ -20,6 +20,11 @@ use std::fmt;
 /// assert_eq!(SipAuthValue::from_token68("Bearer", "abc.def").to_string(), "Bearer abc.def");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "SipAuthValueParts", into = "SipAuthValueParts")
+)]
 #[non_exhaustive]
 pub struct SipAuthValue {
     scheme: String,
@@ -176,5 +181,67 @@ impl fmt::Display for SipAuthValue {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AuthParamParts {
+    key: String,
+    value: String,
+    #[serde(default)]
+    quoted: bool,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipAuthValueParts {
+    scheme: String,
+    #[serde(default)]
+    params: Vec<AuthParamParts>,
+    token68: Option<String>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<SipAuthValueParts> for SipAuthValue {
+    type Error = &'static str;
+
+    fn try_from(p: SipAuthValueParts) -> Result<Self, Self::Error> {
+        match p.token68 {
+            Some(_)
+                if !p
+                    .params
+                    .is_empty() =>
+            {
+                Err("an auth value holds a token68 or parameters, not both")
+            }
+            Some(token68) => Ok(SipAuthValue::from_token68(p.scheme, token68)),
+            None => Ok(p
+                .params
+                .into_iter()
+                .fold(SipAuthValue::new(p.scheme), |a, param| {
+                    if param.quoted {
+                        a.with_quoted_param(param.key, param.value)
+                    } else {
+                        a.with_param(param.key, param.value)
+                    }
+                })),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAuthValue> for SipAuthValueParts {
+    fn from(a: SipAuthValue) -> Self {
+        SipAuthValueParts {
+            scheme: a.scheme,
+            params: a
+                .params
+                .into_iter()
+                .zip(a.quoted)
+                .map(|((key, value), quoted)| AuthParamParts { key, value, quoted })
+                .collect(),
+            token68: a.token68,
+        }
     }
 }

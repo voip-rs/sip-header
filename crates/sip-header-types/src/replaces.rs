@@ -1,5 +1,7 @@
 //! RFC 3891 `Replaces` / RFC 3911 `Join` header value.
 
+#[cfg(feature = "serde")]
+use crate::dialog_id::DialogFraming;
 use crate::dialog_id::DialogId;
 
 /// A `Replaces` header value (RFC 3891 §6.1).
@@ -20,6 +22,11 @@ use crate::dialog_id::DialogId;
 /// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "SipReplacesParts", into = "SipReplacesParts")
+)]
 #[non_exhaustive]
 pub struct SipReplaces(DialogId);
 
@@ -37,5 +44,55 @@ impl SipReplaces {
         self.0
             .set_early_only(early_only);
         self
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipReplacesParts {
+    call_id: String,
+    to_tag: String,
+    from_tag: String,
+    #[serde(default)]
+    early_only: bool,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+    #[serde(default)]
+    framing: DialogFraming,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipReplacesParts> for SipReplaces {
+    fn from(p: SipReplacesParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(
+                SipReplaces::new(p.call_id, p.to_tag, p.from_tag)
+                    .with_early_only(p.early_only)
+                    .with_framing(p.framing),
+                |r, (k, v)| r.with_param(k, v),
+            )
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipReplaces> for SipReplacesParts {
+    fn from(r: SipReplaces) -> Self {
+        SipReplacesParts {
+            call_id: r
+                .call_id()
+                .to_string(),
+            to_tag: r
+                .to_tag()
+                .to_string(),
+            from_tag: r
+                .from_tag()
+                .to_string(),
+            early_only: r.early_only(),
+            params: r
+                .params()
+                .to_vec(),
+            framing: r.framing(),
+        }
     }
 }

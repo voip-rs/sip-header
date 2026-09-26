@@ -17,6 +17,11 @@ use std::fmt;
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP [2001:db8::1]:5060;rport;branch=z9hG4bK776");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "SipViaEntryParts", into = "SipViaEntryParts")
+)]
 #[non_exhaustive]
 pub struct SipViaEntry {
     protocol_name: String,
@@ -182,3 +187,50 @@ impl fmt::Display for SipViaEntry {
 pub struct SipVia(Vec<SipViaEntry>);
 
 list_type!(SipVia, SipViaEntry, sep: ", ", non_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipViaEntryParts {
+    protocol: String,
+    version: String,
+    transport: String,
+    host: Option<String>,
+    port: Option<u16>,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<SipViaEntryParts> for SipViaEntry {
+    type Error = &'static str;
+
+    fn try_from(p: SipViaEntryParts) -> Result<Self, Self::Error> {
+        let mut via = SipViaEntry::new(p.protocol, p.version, p.transport);
+        if let Some(host) = p.host {
+            via = via.with_host(host);
+        }
+        if let Some(port) = p.port {
+            via = via.with_port(port);
+        }
+        p.params
+            .into_iter()
+            .try_fold(via, |via, (k, v)| {
+                via.with_param(k, v)
+                    .ok_or("a Via rport value must be a port number")
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipViaEntry> for SipViaEntryParts {
+    fn from(e: SipViaEntry) -> Self {
+        SipViaEntryParts {
+            protocol: e.protocol_name,
+            version: e.protocol_version,
+            transport: e.transport,
+            host: e.host,
+            port: e.port,
+            params: e.params,
+        }
+    }
+}

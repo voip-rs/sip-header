@@ -4,6 +4,14 @@ use std::fmt;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(
+        from = "SipAcceptLanguageEntryParts",
+        into = "SipAcceptLanguageEntryParts"
+    )
+)]
 #[non_exhaustive]
 pub struct SipAcceptLanguageEntry {
     language: String,
@@ -62,3 +70,32 @@ impl fmt::Display for SipAcceptLanguageEntry {
 pub struct SipAcceptLanguage(Vec<SipAcceptLanguageEntry>);
 
 list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", may_be_empty);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SipAcceptLanguageEntryParts {
+    language: String,
+    #[serde(default)]
+    params: Vec<(String, Option<String>)>,
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptLanguageEntryParts> for SipAcceptLanguageEntry {
+    fn from(p: SipAcceptLanguageEntryParts) -> Self {
+        p.params
+            .into_iter()
+            .fold(SipAcceptLanguageEntry::new(p.language), |e, (k, v)| {
+                e.with_param(k, v)
+            })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl From<SipAcceptLanguageEntry> for SipAcceptLanguageEntryParts {
+    fn from(e: SipAcceptLanguageEntry) -> Self {
+        SipAcceptLanguageEntryParts {
+            language: e.language,
+            params: e.params,
+        }
+    }
+}

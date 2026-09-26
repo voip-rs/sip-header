@@ -6,6 +6,11 @@ use crate::header_addr::SipHeaderAddr;
 
 /// A single Contact header value: either the `*` wildcard or an address.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
 #[non_exhaustive]
 pub enum ContactValue {
     /// The `*` wildcard (RFC 3261 §10.2.2, used in REGISTER).

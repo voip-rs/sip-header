@@ -46,6 +46,11 @@ use crate::is_token_char;
 /// even for bare addr-spec input. This is the canonical form required by
 /// RFC 3261 when header-level parameters are present.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(from = "SipHeaderAddrParts", into = "SipHeaderAddrParts")
+)]
 #[non_exhaustive]
 pub struct SipHeaderAddr {
     display_name: Option<String>,
@@ -56,13 +61,16 @@ pub struct SipHeaderAddr {
 /// The components of a [`SipHeaderAddr`], held as given; conversion
 /// lowercases the parameter keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct SipHeaderAddrParts {
     /// The display name.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub display_name: Option<String>,
     /// The URI.
     pub uri: sip_uri_types::Uri,
     /// Header-level parameters as `(key, value)`, values as emitted.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub params: Vec<(String, Option<String>)>,
 }
 
