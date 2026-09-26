@@ -58,6 +58,7 @@ pub mod history_info;
 #[cfg(feature = "message")]
 pub mod message;
 pub mod replaces;
+mod rows;
 pub mod security;
 pub mod target_dialog;
 mod traits;
@@ -81,6 +82,7 @@ pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 #[cfg(feature = "message")]
 pub use message::{extract_all_headers, extract_body, extract_header, extract_request_uri};
 pub use replaces::SipReplaces;
+pub use rows::{RowError, RowErrorKind, SipHeaderRows};
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;
 pub use traits::{AddrBuild, AddrParts, DialogIdEdit, HeaderParse, ListParse, Redact};

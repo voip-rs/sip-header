@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::diagnostic::{write_location, Field, ParseWarning};
+use crate::rows::RowError;
 
 /// Error returned by every header-value parser in this crate.
 ///
@@ -28,6 +29,8 @@ pub enum ParseError {
     },
     /// A strict parse met a grammar breach.
     NonConformant(ParseWarning),
+    /// The lookup store could not frame the header's rows.
+    Row(RowError),
 }
 
 impl ParseError {
@@ -64,6 +67,7 @@ impl ParseError {
                 position: None,
                 ..w
             }),
+            ParseError::Row(e) => ParseError::Row(e),
             ParseError::Empty => ParseError::Empty,
         }
     }
@@ -84,6 +88,7 @@ impl ParseError {
             },
             ParseError::NonConformant(w) => ParseError::NonConformant(w.in_entry(index)),
             ParseError::Empty => ParseError::Empty,
+            ParseError::Row(e) => ParseError::Row(e),
         }
     }
 }
@@ -102,7 +107,14 @@ impl fmt::Display for ParseError {
                 write_location(f, *position, *entry)
             }
             ParseError::NonConformant(w) => write!(f, "non-conformant header value: {w}"),
+            ParseError::Row(e) => write!(f, "header rows: {e}"),
         }
+    }
+}
+
+impl From<RowError> for ParseError {
+    fn from(e: RowError) -> Self {
+        ParseError::Row(e)
     }
 }
 
@@ -110,6 +122,7 @@ impl std::error::Error for ParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ParseError::Uri { source, .. } => Some(source),
+            ParseError::Row(e) => Some(e),
             _ => None,
         }
     }
@@ -135,9 +148,7 @@ pub struct Fault {
 impl Fault {
     /// A fault in `field`, with no position or entry.
     ///
-    /// For a layer outside this crate that decodes header rows, such as a
-    /// [`SipHeaderLookup::sip_header_rows_str`](crate::SipHeaderLookup::sip_header_rows_str)
-    /// override:
+    /// For a layer outside this crate that decodes header values:
     ///
     /// ```
     /// use sip_header::{Fault, FaultCode, Field, ParseError};

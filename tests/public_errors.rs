@@ -33,13 +33,19 @@ fn row_error() -> RowError {
 }
 
 #[test]
-fn row_error_converts_to_a_fault() {
+fn row_error_is_kept_as_the_source() {
     let e = row_error();
     assert_eq!((e.kind(), e.entry()), (RowErrorKind::TooManyEntries, 4000));
     assert_eq!(e.to_string(), "too-many-entries in entry 4000");
+    let parsed = ParseError::from(e);
+    assert_eq!(parsed, ParseError::Row(e));
     assert_eq!(
-        ParseError::from(e),
-        ParseError::Malformed(Fault::new(Field::Value, FaultCode::TooManyEntries).in_entry(4000))
+        parsed.to_string(),
+        "header rows: too-many-entries in entry 4000"
+    );
+    assert_eq!(
+        std::error::Error::source(&parsed).map(ToString::to_string),
+        Some(e.to_string())
     );
 }
 

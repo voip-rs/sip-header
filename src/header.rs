@@ -16,6 +16,7 @@ use crate::header_addr::{AddrList, SipHeaderAddr};
 use crate::history_info::HistoryInfo;
 use crate::list::CommaList;
 use crate::replaces::SipReplaces;
+use crate::rows::SipHeaderRows;
 use crate::security::SipSecurity;
 use crate::target_dialog::SipTargetDialog;
 use crate::traits::HeaderParse;
@@ -448,16 +449,17 @@ impl SipHeader {
     }
 }
 
-/// Trait for looking up standard SIP headers from any key-value store.
+/// Typed accessors over any [`SipHeaderRows`] store.
 ///
-/// Implementors provide `sip_header_str()` and get all typed accessors as
-/// default implementations.
+/// Implemented for every store; each accessor reads
+/// [`sip_header_rows_str`](SipHeaderRows::sip_header_rows_str), so a
+/// [`RowError`](crate::RowError) the store reports surfaces as a [`ParseError`].
 ///
 /// # Example
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use sip_header::{SipHeaderLookup, SipHeader};
+/// use sip_header::{SipHeader, SipHeaderLookup, SipHeaderRows};
 ///
 /// let mut headers = HashMap::new();
 /// headers.insert(
@@ -473,51 +475,7 @@ impl SipHeader {
 /// let ci = headers.call_info().unwrap().unwrap();
 /// assert_eq!(ci.entries()[0].purpose(), Some("emergency-CallId"));
 /// ```
-pub trait SipHeaderLookup {
-    /// Look up a SIP header by its canonical name (e.g. `"Call-Info"`).
-    fn sip_header_str(&self, name: &str) -> Option<&str>;
-
-    /// Look up a SIP header by its [`SipHeader`] enum variant.
-    fn sip_header(&self, name: SipHeader) -> Option<&str> {
-        self.sip_header_str(name.as_str())
-    }
-
-    /// Return all occurrences of a header by canonical name.
-    ///
-    /// Unlike [`sip_header_str`](SipHeaderLookup::sip_header_str) which returns
-    /// at most one value, this method returns every occurrence. The default
-    /// implementation wraps `sip_header_str` in a single-element `Vec`; storage
-    /// backends that preserve per-occurrence values (e.g. `HashMap<String,
-    /// Vec<String>>`) should override this.
-    fn sip_header_all_str<'a>(&'a self, name: &str) -> Vec<&'a str> {
-        self.sip_header_str(name)
-            .into_iter()
-            .collect()
-    }
-
-    /// Return all occurrences of a header by [`SipHeader`] variant.
-    fn sip_header_all(&self, name: SipHeader) -> Vec<&str> {
-        self.sip_header_all_str(name.as_str())
-    }
-
-    /// Every occurrence of a header by canonical name, as the typed accessors
-    /// read it.
-    ///
-    /// Defaults to [`sip_header_all_str`](SipHeaderLookup::sip_header_all_str).
-    /// A store that decodes its own framing overrides this to report a
-    /// decoding failure, which every list accessor then returns unchanged;
-    /// [`FaultCode::TooManyEntries`](crate::FaultCode::TooManyEntries) names a
-    /// breached entry cap.
-    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, ParseError> {
-        Ok(self.sip_header_all_str(name))
-    }
-
-    /// Every occurrence of a header by [`SipHeader`] variant, as the typed
-    /// accessors read it.
-    fn sip_header_rows(&self, name: SipHeader) -> Result<Vec<&str>, ParseError> {
-        self.sip_header_rows_str(name.as_str())
-    }
-
+pub trait SipHeaderLookup: SipHeaderRows {
     /// Parse the `Call-Info` header into a [`UriInfo`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
@@ -670,7 +628,7 @@ pub trait SipHeaderLookup {
     /// Parse `Authorization` into a list of [`SipAuthValue`] (RFC 3261 §20.7).
     ///
     /// Auth headers MUST NOT be comma-combined (RFC 3261 §7.3.1), so each
-    /// occurrence is parsed separately via [`sip_header_all`](SipHeaderLookup::sip_header_all);
+    /// occurrence is parsed separately via [`sip_header_rows`](SipHeaderRows::sip_header_rows);
     /// an error's entry index is the occurrence.
     fn authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
         parse_auth_rows(self.sip_header_rows(SipHeader::Authorization)?)
@@ -786,7 +744,7 @@ fn parse_auth_rows(rows: Vec<&str>) -> Result<Vec<SipAuthValue>, ParseError> {
 /// The one occurrence of a header whose grammar admits a single value.
 fn single_row<L>(lookup: &L, name: SipHeader) -> Result<Option<&str>, ParseError>
 where
-    L: SipHeaderLookup + ?Sized,
+    L: SipHeaderRows + ?Sized,
 {
     match lookup
         .sip_header_rows(name)?
@@ -802,32 +760,7 @@ where
     }
 }
 
-/// Keys are matched exactly, case included.
-impl SipHeaderLookup for std::collections::HashMap<String, String> {
-    fn sip_header_str(&self, name: &str) -> Option<&str> {
-        self.get(name)
-            .map(|s| s.as_str())
-    }
-}
-
-/// Keys are matched exactly, case included.
-impl SipHeaderLookup for std::collections::HashMap<String, Vec<String>> {
-    fn sip_header_str(&self, name: &str) -> Option<&str> {
-        self.get(name)
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
-    }
-
-    fn sip_header_all_str(&self, name: &str) -> Vec<&str> {
-        self.get(name)
-            .map(|v| {
-                v.iter()
-                    .map(|s| s.as_str())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
+impl<T: SipHeaderRows + ?Sized> SipHeaderLookup for T {}
 
 #[cfg(test)]
 mod tests {

@@ -141,7 +141,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | 0.3 | 0.4 |
 |---|---|
 | `SipViaError`, `SipAuthError`, `UriInfoError`, `HistoryInfoError`, `ParseSipHeaderAddrError`, … | one `ParseError`; a URI failure keeps `sip_uri::ParseError` as its `source()` |
-| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store overrides `sip_header_rows_str` and returns `ParseError::Malformed(Fault::new(Field::Value, FaultCode::TooManyEntries))` |
+| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store implements `SipHeaderRows`, overrides `sip_header_rows_str` and returns `RowError::new(RowErrorKind::TooManyEntries, entry)`, which accessors return as `ParseError::Row` |
 | token-list accessors (`allow()`, `supported()`, …) return `Vec<&str>` | `Result<Vec<&str>, ParseError>` |
 | parsers reject some non-conformant input | `FromStr` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
 | `from_entries` only | also `from_entries_with_warnings` on every list type |
