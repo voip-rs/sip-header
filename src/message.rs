@@ -523,10 +523,11 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         let to: SipHeaderAddr = to_raw[0]
             .parse()
             .unwrap();
-        assert!(to
-            .uri()
-            .to_string()
-            .contains("urn:service:sos"));
+        assert_eq!(
+            to.uri()
+                .to_string(),
+            "sip:urn:service%3Asos@bcf.example.com"
+        );
     }
 
     // -- extract_request_uri tests (RFC 3261 §7.1) --

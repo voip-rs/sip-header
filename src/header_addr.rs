@@ -5,6 +5,7 @@ use std::fmt::{self, Write as _};
 use std::str::{FromStr, Utf8Error};
 
 use percent_encoding::percent_decode_str;
+use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
@@ -76,11 +77,12 @@ impl SipHeaderAddr {
     ///
     /// ```
     /// use sip_header::SipHeaderAddr;
+    /// use sip_uri::{Uri, UriParse};
     ///
-    /// let addr = SipHeaderAddr::new("sip:alice@example.com".parse()?)
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
     ///     .with_display_name("Alice Smith")?;
     /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
-    /// assert!(SipHeaderAddr::new("sip:alice@example.com".parse()?)
+    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
     ///     .with_display_name("a\r\nb")
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -107,12 +109,13 @@ impl SipHeaderAddr {
     ///
     /// ```
     /// use sip_header::SipHeaderAddr;
+    /// use sip_uri::{Uri, UriParse};
     ///
-    /// let addr = SipHeaderAddr::new("sip:alice@example.com".parse()?)
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
     ///     .with_param("tag", Some("abc123"))?
     ///     .with_param("lr", None::<&str>)?;
     /// assert_eq!(addr.to_string(), "<sip:alice@example.com>;tag=abc123;lr");
-    /// assert!(SipHeaderAddr::new("sip:alice@example.com".parse()?)
+    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
     ///     .with_param("tag", Some("a;b"))
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -827,9 +830,7 @@ mod tests {
 
     #[test]
     fn builder_new() {
-        let uri: sip_uri::Uri = "sip:alice@example.com"
-            .parse()
-            .unwrap();
+        let uri = sip_uri::Uri::parse("sip:alice@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri);
         assert_eq!(addr.display_name(), None);
         assert_eq!(
@@ -841,11 +842,7 @@ mod tests {
     }
 
     fn example_addr() -> SipHeaderAddr {
-        SipHeaderAddr::new(
-            "sip:alice@example.com"
-                .parse()
-                .unwrap(),
-        )
+        SipHeaderAddr::new(sip_uri::Uri::parse("sip:alice@example.com").unwrap())
     }
 
     #[test]
@@ -977,9 +974,7 @@ mod tests {
 
     #[test]
     fn builder_with_display_name_and_params() {
-        let uri: sip_uri::Uri = "sip:alice@example.com"
-            .parse()
-            .unwrap();
+        let uri = sip_uri::Uri::parse("sip:alice@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
             .with_display_name("Alice")
             .unwrap()
@@ -992,9 +987,7 @@ mod tests {
 
     #[test]
     fn builder_flag_param() {
-        let uri: sip_uri::Uri = "sip:proxy@example.com"
-            .parse()
-            .unwrap();
+        let uri = sip_uri::Uri::parse("sip:proxy@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
             .with_param("lr", None::<String>)
             .unwrap();

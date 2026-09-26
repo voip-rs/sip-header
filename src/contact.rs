@@ -98,6 +98,7 @@ pub fn parse_contact_entries<'a>(
 mod tests {
     use super::*;
     use crate::error::FaultCode;
+    use sip_uri::UriParse;
 
     #[test]
     fn wildcard() {
@@ -141,9 +142,7 @@ mod tests {
 
     #[test]
     fn display_addr() {
-        let addr = "sip:alice@198.51.100.1"
-            .parse::<sip_uri::Uri>()
-            .unwrap();
+        let addr = sip_uri::Uri::parse("sip:alice@198.51.100.1").unwrap();
         let cv = ContactValue::Addr(Box::new(SipHeaderAddr::new(addr)));
         assert!(cv
             .to_string()

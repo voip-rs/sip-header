@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use sip_uri::UriParse;
+
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
