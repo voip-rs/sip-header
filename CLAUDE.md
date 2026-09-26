@@ -1,17 +1,17 @@
 ## Project Type
 
-Cargo workspace of three library crates for SIP header field values, between
+Cargo workspace of two library crates for SIP header field values, between
 `sip-uri` and full SIP stacks (RFC 3261 header grammar and extensions):
 
 - `crates/sip-header-catalog` — `SipHeader`, `define_header_enum!`, the
-  IANA/draft lists, the raw `SipHeaderRows` lookup trait. No sip-uri
-  dependency; stable.
-- `crates/sip-header-types` — value types: shape, constructors, Display,
-  serde. Depends on `sip-uri-types`, never on a parser.
-- `sip-header` (repo root) — parsing, warnings, `ParseError`, validation,
-  redaction, `SipHeaderLookup`, as extension traits over the value types.
+  IANA/draft lists, the raw `SipHeaderRows` lookup trait, `RowError`. No
+  sip-uri dependency; aims for 1.0, so every public item is a forever
+  commitment.
+- `sip-header` (repo root) — value types, parsing, warnings, `ParseError`,
+  validated constructors, redaction, `SipHeaderLookup` (blanket over
+  `SipHeaderRows`). 0.x.
 
-Nothing parse-related goes into the two lower crates. `Cargo.lock` is
+Nothing value- or parse-related goes into the catalog. `Cargo.lock` is
 gitignored per Cargo convention for libraries.
 
 ## RFC Compliance Is Non-Negotiable
@@ -22,7 +22,7 @@ follow the grammar from its defining RFC. Non-conformant input is accepted
 
 1. It raises a `WarningCode` whose rustdoc cites the RFC production relaxed
 2. The relaxation is bounded (not open-ended leniency)
-3. A test proves `FromStr` accepts it, `parse_with_warnings` reports it,
+3. A test proves `parse` accepts it, `parse_with_warnings` reports it,
    and `parse_strict` refuses it
 
 Never invent syntax. Never guess at encoding. Input that yields no usable
@@ -62,40 +62,36 @@ exempt.
 ## SipHeader Enum — IANA Registry Sync
 
 The `SipHeader` enum covers all registered SIP header field names from
-the IANA registry. The pre-commit hook runs `hooks/check-sip-headers.sh`
-to verify the enum matches `crates/sip-header-catalog/iana-sip-headers.txt`.
+the IANA registry, plus deployed headers from expired drafts. A catalog
+test checks `SipHeader::ALL` filtered by `registry()` against
+`crates/sip-header-catalog/iana-sip-headers.txt` and `draft-sip-headers.txt`.
 
 **When IANA registers new SIP headers:**
 
 1. Add the header name to `crates/sip-header-catalog/iana-sip-headers.txt` (alphabetical order)
 2. Add the variant to `SipHeader` in `crates/sip-header-catalog/src/lib.rs`
-3. The check script validates the sync
+3. Classify it in `is_list()` and `may_repeat()`, citing its ABNF
 
-### `draft` feature — non-IANA headers
+### Non-IANA headers
 
-The enum is IANA-pure by default. Headers from expired or superseded IETF
-drafts that are still widely deployed (e.g. `Remote-Party-ID`, `Diversion`)
-live behind `#[cfg(feature = "draft")]`. Their wire names are tracked in
-`crates/sip-header-catalog/draft-sip-headers.txt` with comments citing the source draft. The
-pre-commit check script verifies both lists independently.
-
-When adding a draft header:
-
-1. Add the header name and source draft comment to `crates/sip-header-catalog/draft-sip-headers.txt`
-2. Add the variant to `SipHeader` with `#[cfg(feature = "draft")]`
-3. If multi-valued, add to the `#[cfg(feature = "draft")]` block in `is_multi_valued()`
-4. Add `#[cfg(feature = "draft")]` tests
+Headers from expired or superseded IETF drafts that are still widely
+deployed (e.g. `Remote-Party-ID`, `Diversion`) are ordinary variants whose
+`registry()` is `Draft`; there is no cargo feature for them. Their wire
+names are tracked in `crates/sip-header-catalog/draft-sip-headers.txt` with
+comments citing the source draft. A header IANA later registers moves
+between the two lists and changes only its `registry()` answer.
 
 Not every `SipHeader` variant needs a typed parser on `SipHeaderLookup`.
 Only headers with structured values (name-addr, comma-separated entries,
 etc.) get typed accessor methods. Simple string headers are accessed via
-`sip_header(SipHeader::Foo)` returning `Option<&str>`.
+`sip_header(SipHeader::Foo)` returning `Result<Option<&str>, _>`.
 
 ## API Boundary Rules
 
-- **`sip-uri` / `sip-uri-types` are the only accepted public dependencies.**
+- **`sip-uri` (which re-exports `sip-uri-types`) is the only accepted
+  public dependency of sip-header; the catalog has none but optional serde.**
   The `pub use sip_uri;` re-export, `SipHeaderAddr` returning
-  `sip_uri_types::Uri`, and sip-uri's warning
+  `sip_uri::Uri`, and sip-uri's warning
   types inside ours (`Component`, `WarningCode`, `WarningKind`, `ParseError`
   as a source) are intentional (same author, narrow scope, stable).
 - **Never expose other dependency types in public signatures.** Wrap them
@@ -106,9 +102,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
 ## Build & Test
 
 Before committing run `cargo clippy --workspace --fix --allow-dirty --message-format=short && cargo fmt --all`;
-the pre-commit hook is the verification: formatting, clippy and tests (plain,
-`draft`, `serde`), `-D missing_docs`, broken intra-doc links, all tests (including
-doctests), IANA sync, and gitleaks. It does not enable `conference-info`;
+the pre-commit hook is the verification: formatting, clippy and tests (plain and
+`serde`), `-D missing_docs`, broken intra-doc links, all tests (including
+doctests and the IANA sync test), and gitleaks. It does not enable `conference-info`;
 run `cargo test --release --features conference-info` after touching it.
 
 ## Library Code Rules

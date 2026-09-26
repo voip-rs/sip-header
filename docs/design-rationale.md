@@ -8,13 +8,15 @@ Quote state is tracked only at bracket depth zero. A conformant header never car
 
 ## Header parameters parse through one quote-aware reader
 
-Every `*(SEMI generic-param)` tail is read by the shared parameter reader in `lib.rs`, so a fix to parameter grammar (SWS around `;` and `=`, a `;` inside a quoted `gen-value`) reaches every header at once. The reader hands back the value as it appeared on the wire, quotes included; each type decides whether its accessors unescape, so a type's public values stay what its callers already compare against.
+Every `*(SEMI generic-param)` tail is read by the shared parameter reader in `lib.rs`, so a fix to parameter grammar (SWS around `;` and `=`, a `;` inside a quoted `gen-value`) reaches every header at once.
 
 A quote that never closes is not a quoted-string, and the reader falls back to splitting at the next `;`. Treating it as open would let one stray quote erase the mandatory parameters after it.
 
-## Parameter quotedness survives a round trip
+## Header parameters are one type
 
-Types that store unescaped values keep, per parameter, whether it arrived quoted, and Display re-quotes exactly those, plus any value that could not be emitted bare. Whether a parameter must be quoted depends on the role the header plays: a Digest challenge quotes `qop`, a credential does not, and one `SipAuthValue` serves both. The wire form is therefore the only reliable source.
+Every value type holds its parameters in `HeaderParams`, so key case, quoting, duplicates and serde behave one way across headers. Values are stored unescaped with, per parameter, whether it arrived quoted; Display re-quotes exactly those, plus any value that cannot be written bare. Whether a parameter must be quoted depends on the role the header plays: a Digest challenge quotes `qop`, a credential does not, and one `SipAuthValue` serves both, so the wire form is the only reliable source and quotedness is part of equality.
+
+Setting a key that exists replaces its value in place. A key its owner sets through a typed setter (a tag, `rport`, `index`) is refused by the generic setter, since a second copy would print a header naming something else. Duplicates arriving from the wire are kept and warned about, and lookup returns the first. Equality ignores order across keys but not among one key's values, because lookup would otherwise tell two equal values apart. Parameters are never percent-decoded: `%` is a token character in header parameters.
 
 ## header_addr keeps its own quoted-string reader
 
@@ -36,9 +38,11 @@ A Reason embedded in a URI header is percent-decoded and nothing else. `hvalue` 
 
 Namespace prefixes are stripped before deserialization, so an element is matched by local name alone. Below the root, an element bound to a declared namespace that is neither conference-info nor the root's own is dropped with its subtree; otherwise an extension element named like a base element would deserialize as one. Unbound and undeclared prefixes are still stripped, and the root is never dropped, so documents with a nonstandard namespace declaration keep parsing.
 
-## Mutators validate against the grammar their parser does not enforce
+## Constructors refuse what would print as a different value
 
-A parser's leniency is what makes real traffic survivable; a value handed to a mutator never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. sip-header's builder traits therefore return `Result` and check the RFC production for the field they set, and the resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a mutator. The types crate's own constructors keep structure only, since grammar is parse policy.
+A parser's leniency is what makes real traffic survivable; a value handed to a constructor or builder never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Every constructor, builder and deserializer therefore returns `Result`, and a value built through them prints something `parse_strict` reads back as the same value: control characters, a field's own delimiter, empty mandatory parts and out-of-range numbers are refused. The resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a builder.
+
+A leniently parsed value is not held to strict round-trip, only to safety: it never prints a CR, LF or NUL, and parsing its output yields it again. A folded line is whitespace and becomes one space; any other control character is dropped with a warning.
 
 ## Parsers are lenient; warnings report what strict parsing would refuse
 
@@ -46,27 +50,41 @@ Every header-value type parses the way sip-uri does, so the two crates read one 
 
 ## Lenient parsing fails only where no value exists
 
-`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection.
+`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection. Where a type cannot hold what the input carries, such as a wildcard beside addresses or a Via entry without a host, the parser drops that part under a warning whose kind says data was lost.
 
 ## One error type for every header value
 
-Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. A framing fault a lookup store reports arrives as the catalog's row error and is carried whole as the source, never mapped onto our fault codes, because the catalog's kinds are open-ended and a mapping would lose the ones added later. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
+Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. A framing fault a lookup store reports arrives as the catalog's row error and is carried whole as the source, never mapped onto our fault codes, because the catalog's kinds are open-ended and a mapping would lose the ones added later. `ParseError` stays `Clone` and `Eq` so callers can compare and keep it; no source it carries may therefore be a boxed foreign error. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
 
-## Multi-occurrence headers stay one entry per occurrence
+## Stores return one row per occurrence, borrowed and fallible
 
-`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. A lookup store exposes every occurrence through `sip_header_all_str`, and every typed accessor reads through the fallible `sip_header_rows_str`, never the infallible one, splitting each row untrimmed. A backing store that decodes its own framing reports a decoding failure there, so the caller gets that failure instead of a value parsed from undecoded text. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
+`extract_header` and every lookup store return one row per header occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers; splitting a row into list entries is the accessor's job, and each row is split untrimmed. A store has one required method, the fallible rows lookup, and everything else, the single-value lookup included, derives from it, so two views of one store cannot disagree and a store's decoding failure reaches every caller instead of a value parsed from undecoded text. Rows are borrowed from the store: a store that must unfold or unescape does it once when it is built, never per lookup. A present row that is only whitespace reaches the entry parser as an empty entry instead of vanishing, except where the header's grammar admits an empty value.
 
-## Value types live apart from their parsers
+Callers pass the canonical name. A store keyed by wire name matches it case-insensitively and through the compact alias, using the catalog's predicate, and returns both spellings in wire order; a store keyed another way translates the name and looks it up directly.
 
-The header-name catalog, the value types and the parsers are three crates, so a consumer that exchanges header data depends on the first two and never on parse policy. sip-header-catalog and sip-header-types hold shape and wire form only: constructors enforce structural invariants, Display writes the wire form, and serde goes through the same constructors, so no deserialized value can break an invariant a constructor keeps. Leniency, warnings, validation and redaction live in sip-header and may change every minor without changing the identity of a value a consumer holds. SipCallId stays with the parser: it borrows its input, and only the parser builds one.
+## Only the header catalog is a stable crate
+
+The header-name catalog and the raw row trait are a crate of their own that aims for 1.0, because a consumer that puts a header store or header names in its public API would otherwise take a major version with every parser minor. Value types stay in sip-header with their parsers: their shapes are still being settled against real traffic, and a frozen value crate would freeze each open question with it.
 
 ## Parsing is spelled through extension traits
 
-The orphan rule forbids sip-header from implementing `FromStr` or adding inherent methods to types defined in sip-header-types, so parsing, validated building and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings). Moving `FromStr` into the types crate instead would put parse policy back into the layer meant to be free of it.
+Parsing and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings, gathered in the prelude), matching sip-uri's `UriParse`, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway; spelling them as traits now keeps that move from breaking callers.
 
 ## Lookup stores implement the raw row trait
 
-A store implements `SipHeaderRows`, which lives in the catalog crate beside a small framing error, and receives every typed accessor from sip-header by blanket impl. A consumer's public API then names only the stable crate, while callers choose their own sip-header version for the accessors.
+A store implements `SipHeaderRows` from the catalog and receives every typed accessor from sip-header by blanket impl. A consumer's public API then names only the stable crate, while callers choose their own sip-header version for the accessors.
+
+## Comma-list and repeatable are separate predicates
+
+The catalog says of each header whether its grammar is a comma list, safe to split and join, and separately whether it may occur more than once. The authentication headers may repeat but are not lists, and a store that splits every repeatable header at commas cuts a credential apart. Each classification cites the header's ABNF.
+
+## Non-IANA headers are always present
+
+Headers from expired drafts that remain deployed are ordinary catalog entries, with an accessor reporting which registry they come from. A cargo feature would change what parses for every crate in a build as soon as one crate enabled it, and a header later registered by IANA changes only that accessor's answer.
+
+## Catalog serde uses the wire name
+
+A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type.
 
 ## Error Display never carries the rejected bytes
 
