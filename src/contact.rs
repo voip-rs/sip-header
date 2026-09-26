@@ -4,39 +4,13 @@
 //! or a comma-separated list of `name-addr / addr-spec` entries with
 //! optional parameters.
 
+pub use sip_header_types::{ContactList, ContactValue};
+
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
-use crate::header_addr::{parse_list_addr, SipHeaderAddr};
+use crate::header_addr::parse_list_addr;
 use crate::list::CommaList;
 use crate::traits::{HeaderParse, ListParse};
-use std::fmt;
-
-/// A single Contact header value: either the `*` wildcard or an address.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ContactValue {
-    /// The `*` wildcard (RFC 3261 §10.2.2, used in REGISTER).
-    Wildcard,
-    /// A `name-addr` or `addr-spec` with optional contact parameters.
-    Addr(Box<SipHeaderAddr>),
-}
-
-impl fmt::Display for ContactValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Wildcard => f.write_str("*"),
-            Self::Addr(addr) => write!(f, "{addr}"),
-        }
-    }
-}
-
-/// Parsed Contact header value: `STAR / (contact-param *(COMMA contact-param))`
-/// (RFC 3261 §20.10).
-///
-/// `*` is only valid alone. An empty value is the empty list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ContactList(Vec<ContactValue>);
 
 impl CommaList for ContactList {
     type Entry = ContactValue;
@@ -79,7 +53,6 @@ impl CommaList for ContactList {
     }
 }
 
-list_type!(ContactList, ContactValue, sep: ", ", may_be_empty);
 list_parse!(ContactList);
 
 /// Parse a comma-separated Contact header value into a list of [`ContactValue`].
@@ -100,6 +73,7 @@ pub fn parse_contact_entries<'a>(
 mod tests {
     use super::*;
     use crate::error::FaultCode;
+    use crate::SipHeaderAddr;
     use sip_uri::UriParse;
 
     #[test]

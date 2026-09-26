@@ -1,16 +1,10 @@
 //! RFC 4538 `Target-Dialog` header parser.
 
-use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
+pub use sip_header_types::SipTargetDialog;
 
-/// A parsed `Target-Dialog` header value (RFC 4538 §7).
-///
-/// Identifies an existing dialog: Call-ID plus the mandatory `local-tag`
-/// and `remote-tag`, both from the perspective of the request recipient.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SipTargetDialog(DialogId);
+use sip_header_types::DialogFraming;
 
-dialog_id_type!(SipTargetDialog, local_tag => "local-tag", remote_tag => "remote-tag", early_only: false);
+use crate::dialog_id::{DialogBuild, DialogFields};
 
 impl DialogBuild for SipTargetDialog {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self {

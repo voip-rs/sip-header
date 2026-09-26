@@ -1,6 +1,6 @@
 //! SIP Warning header parser (RFC 3261 §20.43).
 
-use std::fmt;
+pub use sip_header_types::{SipWarning, SipWarningEntry};
 
 use sip_uri::UriParse;
 
@@ -8,49 +8,6 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
-
-/// A single Warning header entry.
-///
-/// RFC 3261 §20.43:
-/// ```text
-/// warning-value = warn-code SP warn-agent SP warn-text
-/// warn-code = 3DIGIT
-/// warn-agent = hostport / pseudonym
-/// warn-text = quoted-string
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SipWarningEntry {
-    code: u16,
-    agent: String,
-    text: String,
-}
-
-impl SipWarningEntry {
-    /// An entry from its warn-code, warn-agent and unquoted warn-text.
-    pub fn new(code: u16, agent: impl Into<String>, text: impl Into<String>) -> Self {
-        SipWarningEntry {
-            code,
-            agent: agent.into(),
-            text: text.into(),
-        }
-    }
-
-    /// The 3-digit warning code.
-    pub fn code(&self) -> u16 {
-        self.code
-    }
-
-    /// The warn-agent (hostport or pseudonym).
-    pub fn agent(&self) -> &str {
-        &self.agent
-    }
-
-    /// The warn-text (unquoted).
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-}
 
 /// Parse one `warning-value`, positions relative to `entry`.
 fn parse_warning_entry(
@@ -113,13 +70,6 @@ fn parse_warning_entry(
     let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
 
     Ok(SipWarningEntry::new(code, agent, text))
-}
-
-impl fmt::Display for SipWarningEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:03} {} ", self.code, self.agent)?;
-        crate::write_quoted_pair(f, &self.text)
-    }
 }
 
 /// RFC 3261 §25.1 `hostport = host [ ":" port ]`, host as sip-uri reads it.
@@ -195,16 +145,6 @@ fn parse_quoted_string(
     ))
 }
 
-/// SIP Warning header.
-///
-/// RFC 3261 §20.43:
-/// ```text
-/// Warning = "Warning" HCOLON warning-value *(COMMA warning-value)
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SipWarning(Vec<SipWarningEntry>);
-
 impl CommaList for SipWarning {
     type Entry = SipWarningEntry;
 
@@ -220,7 +160,6 @@ impl CommaList for SipWarning {
     }
 }
 
-list_type!(SipWarning, SipWarningEntry, sep: ", ", non_empty);
 list_parse!(SipWarning);
 
 #[cfg(test)]

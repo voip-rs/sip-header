@@ -2,98 +2,11 @@
 //!
 //! Used by Security-Client, Security-Server, and Security-Verify headers.
 
-use std::fmt;
+pub use sip_header_types::{SipSecurity, SipSecurityMechanism};
 
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
-
-/// A parsed security mechanism entry: `mechanism-name *(SEMI mech-params)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SipSecurityMechanism {
-    mechanism: String,
-    params: Vec<(String, Option<String>)>,
-    quoted: Vec<bool>,
-}
-
-impl SipSecurityMechanism {
-    /// A mechanism by name, lowercased, with no parameters.
-    pub fn new(mechanism: impl Into<String>) -> Self {
-        let mut mechanism = mechanism.into();
-        mechanism.make_ascii_lowercase();
-        SipSecurityMechanism {
-            mechanism,
-            params: Vec::new(),
-            quoted: Vec::new(),
-        }
-    }
-
-    fn push(mut self, key: String, value: Option<String>, quoted: bool) -> Self {
-        crate::push_lowercased(&mut self.params, key, value);
-        self.quoted
-            .push(quoted);
-        self
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        self.push(key.into(), value.map(Into::into), false)
-    }
-
-    /// Add a parameter whose value [`Display`](fmt::Display) emits as a
-    /// `quoted-string`.
-    pub fn with_quoted_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.push(key.into(), Some(value.into()), true)
-    }
-
-    /// The mechanism name (e.g. `"digest"`, `"tls"`, `"ipsec-ike"`).
-    pub fn mechanism(&self) -> &str {
-        &self.mechanism
-    }
-
-    /// All parameters as `(key, optional_value)` pairs.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Look up a parameter by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
-    }
-
-    /// The `q` preference value, if present.
-    pub fn q(&self) -> Option<&str> {
-        self.param("q")
-            .flatten()
-    }
-
-    /// The `d-alg` parameter, if present.
-    pub fn d_alg(&self) -> Option<&str> {
-        self.param("d-alg")
-            .flatten()
-    }
-
-    /// The `d-qop` parameter, if present.
-    pub fn d_qop(&self) -> Option<&str> {
-        self.param("d-qop")
-            .flatten()
-    }
-}
-
-impl fmt::Display for SipSecurityMechanism {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.mechanism)?;
-        for ((key, value), quoted) in self
-            .params
-            .iter()
-            .zip(&self.quoted)
-        {
-            crate::write_param(f, key, value.as_deref(), *quoted)?;
-        }
-        Ok(())
-    }
-}
 
 fn parse_mechanism(
     entry: &str,
@@ -132,11 +45,6 @@ fn parse_mechanism(
         }))
 }
 
-/// Parsed security mechanism header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SipSecurity(Vec<SipSecurityMechanism>);
-
 impl CommaList for SipSecurity {
     type Entry = SipSecurityMechanism;
 
@@ -152,7 +60,6 @@ impl CommaList for SipSecurity {
     }
 }
 
-list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
 list_parse!(SipSecurity);
 
 #[cfg(test)]

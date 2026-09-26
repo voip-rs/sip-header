@@ -2,85 +2,18 @@
 //!
 //! Shared by Call-Info (RFC 3261 §20.9), Alert-Info (RFC 3261 §20.4),
 //! and Error-Info (RFC 3261 §20.18).
+//!
+//! An entry without its angle brackets is kept with
+//! [`MissingBrackets`](crate::WarningCode::MissingBrackets); one that yields
+//! no URI is dropped with [`SkippedEntry`](crate::WarningCode::SkippedEntry),
+//! a blank one with [`EmptyEntry`](crate::WarningCode::EmptyEntry), and
+//! `Err(Empty)` means no entry yielded a URI.
 
-use std::fmt;
+pub use sip_header_types::{UriInfo, UriInfoEntry};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
-
-/// One `<uri>;key=value;key=value` entry from a URI-info-style header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct UriInfoEntry {
-    uri: String,
-    params: Vec<(String, Option<String>)>,
-}
-
-impl UriInfoEntry {
-    /// An entry for `uri`, written inside angle brackets, with no parameters.
-    pub fn new(uri: impl Into<String>) -> Self {
-        UriInfoEntry {
-            uri: uri.into(),
-            params: Vec::new(),
-        }
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
-    }
-
-    /// The URI or data inside the angle brackets, with brackets stripped.
-    pub fn uri(&self) -> &str {
-        &self.uri
-    }
-
-    /// All parameters as `(key, value)` pairs; keys lowercased, values as
-    /// sent, `None` for a flag.
-    pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        crate::iter_params(&self.params)
-    }
-
-    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
-    }
-
-    /// The `purpose` parameter value, if present with a value.
-    pub fn purpose(&self) -> Option<&str> {
-        self.param("purpose")
-            .flatten()
-    }
-}
-
-impl fmt::Display for UriInfoEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<{}>", self.uri)?;
-        crate::write_params(f, &self.params)
-    }
-}
-
-/// Parsed `<absoluteURI> *(SEMI generic-param)` header value.
-///
-/// Used by Call-Info, Alert-Info, and Error-Info. Contains one or more entries.
-/// An entry without its angle brackets is kept with
-/// [`MissingBrackets`](crate::WarningCode::MissingBrackets); one that yields
-/// no URI is dropped with [`SkippedEntry`](crate::WarningCode::SkippedEntry),
-/// a blank one with [`EmptyEntry`](crate::WarningCode::EmptyEntry), and
-/// `Err(Empty)` means no entry yielded a URI.
-///
-/// ```
-/// use sip_header::{HeaderParse, UriInfo};
-///
-/// let raw = "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>;purpose=EmergencyCallData.ServiceInfo";
-/// let info = UriInfo::parse(raw).unwrap();
-/// assert_eq!(info.entries().len(), 2);
-/// assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UriInfo(Vec<UriInfoEntry>);
 
 /// Read one entry, positions relative to `entry`; `None` when it yields no URI.
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEntry> {
@@ -156,7 +89,6 @@ impl CommaList for UriInfo {
     }
 }
 
-list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
 list_parse!(UriInfo);
 
 #[cfg(test)]
