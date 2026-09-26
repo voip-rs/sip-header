@@ -29,8 +29,6 @@
 //! - `conference_info` — RFC 4575 conference event package (feature: `conference-info`)
 
 #[macro_use]
-mod macros;
-#[macro_use]
 mod list;
 #[macro_use]
 mod dialog_id;
@@ -39,6 +37,10 @@ mod dialog_id;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
+pub use sip_header_catalog;
+pub use sip_header_catalog::{
+    define_header_enum, ParseSipHeaderError, RowError, RowErrorKind, SipHeader, SipHeaderRows,
+};
 pub use sip_uri;
 
 pub mod accept;
@@ -58,7 +60,6 @@ pub mod history_info;
 #[cfg(feature = "message")]
 pub mod message;
 pub mod replaces;
-mod rows;
 pub mod security;
 pub mod target_dialog;
 mod traits;
@@ -76,13 +77,14 @@ pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
 pub use error::{Fault, FaultCode, ParseError};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
-pub use header::{ParseSipHeaderError, SipHeader, SipHeaderLookup};
+pub use header::SipHeaderLookup;
 pub use header_addr::{SipHeaderAddr, SipHeaderAddrParts};
 pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 #[cfg(feature = "message")]
-pub use message::{extract_all_headers, extract_body, extract_header, extract_request_uri};
+pub use message::{
+    extract_all_headers, extract_body, extract_header, extract_request_uri, SipHeaderExtract,
+};
 pub use replaces::SipReplaces;
-pub use rows::{RowError, RowErrorKind, SipHeaderRows};
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;
 pub use traits::{AddrBuild, AddrParts, DialogIdEdit, HeaderParse, ListParse, Redact};

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::header::SipHeader;
+use crate::SipHeader;
 
 /// What a store's framing of a header's rows broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,7 +32,7 @@ impl fmt::Display for RowErrorKind {
 /// Names the entry at fault, never its text.
 ///
 /// ```
-/// use sip_header::{RowError, RowErrorKind};
+/// use sip_header_catalog::{RowError, RowErrorKind};
 ///
 /// let e = RowError::new(RowErrorKind::TooManyEntries, 4000);
 /// assert_eq!(e.to_string(), "too-many-entries in entry 4000");
@@ -75,7 +75,7 @@ impl std::error::Error for RowError {}
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use sip_header::{SipHeader, SipHeaderRows};
+/// use sip_header_catalog::{SipHeader, SipHeaderRows};
 ///
 /// let mut headers = HashMap::new();
 /// headers.insert("Via".to_string(), vec!["SIP/2.0/UDP a".to_string(), "SIP/2.0/UDP b".to_string()]);

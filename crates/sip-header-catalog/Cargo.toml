@@ -1,0 +1,20 @@
+[package]
+name = "sip-header-catalog"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "IANA SIP header name catalog with compact forms, and the raw header-row lookup trait"
+license.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/sip-header-catalog"
+readme = "README.md"
+keywords = ["sip", "header", "voip", "rfc3261", "iana"]
+categories = ["network-programming", "data-structures"]
+
+[features]
+serde = ["dep:serde"]
+draft = []
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"], optional = true }

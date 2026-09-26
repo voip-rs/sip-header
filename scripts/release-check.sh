@@ -5,14 +5,16 @@
 set -e
 
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo clippy --all-targets --features draft -- -D warnings
-cargo check --features serde --all-targets
-cargo check --features conference-info --all-targets
-RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no-deps
-cargo test --release
-cargo test --release --features draft
-cargo semver-checks check-release
-cargo publish --dry-run
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features sip-header/draft -- -D warnings
+cargo check --workspace --features sip-header/serde --all-targets
+cargo check --workspace --features sip-header/conference-info --all-targets
+RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps
+cargo test --release --workspace
+cargo test --release --workspace --features sip-header/draft
+cargo semver-checks check-release -p sip-header
+# sip-header-catalog has no crates.io baseline until its first release;
+# add it here once published.
+cargo publish --dry-run --workspace
 
 echo "Pre-release checks passed"

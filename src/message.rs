@@ -198,13 +198,24 @@ pub fn extract_request_uri(message: &str) -> Option<String> {
     Some(uri.to_string())
 }
 
-impl SipHeader {
+mod sealed {
+    pub trait Sealed {}
+}
+
+impl sealed::Sealed for SipHeader {}
+
+/// Extraction of a catalog header from raw SIP message text.
+pub trait SipHeaderExtract: sealed::Sealed {
     /// Extract all occurrences of this header from a raw SIP message.
     ///
     /// Recognizes both the canonical header name and its compact form
     /// (RFC 3261 §7.3.3). For example, `SipHeader::From.extract_from(msg)`
     /// matches both `From:` and `f:` lines.
-    pub fn extract_from(&self, message: &str) -> Vec<String> {
+    fn extract_from(&self, message: &str) -> Vec<String>;
+}
+
+impl SipHeaderExtract for SipHeader {
+    fn extract_from(&self, message: &str) -> Vec<String> {
         extract_header(message, self.as_str())
     }
 }
@@ -831,5 +842,45 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             vec![("From".into(), "<sip:alice@example.com>".into())]
         );
         assert_eq!(extract_header(msg, "f"), vec!["<sip:alice@example.com>"]);
+    }
+
+    #[test]
+    fn extract_from_sip_message() {
+        let msg = concat!(
+            "INVITE sip:bob@host SIP/2.0\r\n",
+            "Call-Info: <urn:emergency:uid:callid:abc>;purpose=emergency-CallId\r\n",
+            "History-Info: <sip:esrp@example.com>;index=1\r\n",
+            "P-Asserted-Identity: \"Corp\" <sip:+15551234567@198.51.100.1>\r\n",
+            "\r\n",
+        );
+        let ci = SipHeader::CallInfo.extract_from(msg);
+        assert_eq!(ci.len(), 1);
+        assert_eq!(
+            ci[0],
+            "<urn:emergency:uid:callid:abc>;purpose=emergency-CallId"
+        );
+
+        let hi = SipHeader::HistoryInfo.extract_from(msg);
+        assert_eq!(hi.len(), 1);
+        assert_eq!(hi[0], "<sip:esrp@example.com>;index=1");
+
+        let pai = SipHeader::PAssertedIdentity.extract_from(msg);
+        assert_eq!(pai.len(), 1);
+        assert_eq!(pai[0], "\"Corp\" <sip:+15551234567@198.51.100.1>");
+    }
+
+    #[test]
+    fn extract_from_missing() {
+        let msg = concat!(
+            "INVITE sip:bob@host SIP/2.0\r\n",
+            "From: Alice <sip:alice@host>\r\n",
+            "\r\n",
+        );
+        assert!(SipHeader::CallInfo
+            .extract_from(msg)
+            .is_empty());
+        assert!(SipHeader::PAssertedIdentity
+            .extract_from(msg)
+            .is_empty());
     }
 }

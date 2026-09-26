@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::diagnostic::{write_location, Field, ParseWarning};
-use crate::rows::RowError;
+use sip_header_catalog::RowError;
 
 /// Error returned by every header-value parser in this crate.
 ///

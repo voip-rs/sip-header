@@ -18,14 +18,14 @@ jobs:
     # Lib only: dev-dependencies are free to require a newer toolchain than
     # what we promise published consumers.
     - name: Read rust-version from Cargo.toml
-      run: echo "MSRV=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')" >> "$GITHUB_ENV"
+      run: echo "MSRV=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "sip-header") | .rust_version')" >> "$GITHUB_ENV"
 
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.MSRV }}
 
     - name: Check (all features)
-      run: cargo check --all-features
+      run: cargo check --workspace --all-features
 
   test:
     runs-on: ubuntu-latest
@@ -54,22 +54,22 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Check (no features)
-      run: cargo check --all-targets
+      run: cargo check --workspace --all-targets
 
     - name: Check (serde)
-      run: cargo check --features serde --all-targets
+      run: cargo check --workspace --features sip-header/serde --all-targets
 
     - name: Check (conference-info)
-      run: cargo check --features conference-info --all-targets
+      run: cargo check --workspace --features sip-header/conference-info --all-targets
 
     - name: Check (draft)
-      run: cargo check --features draft --all-targets
+      run: cargo check --workspace --features sip-header/draft --all-targets
 
     - name: Clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
 
     - name: Clippy (draft)
-      run: cargo clippy --features draft --all-targets -- -D warnings
+      run: cargo clippy --workspace --features sip-header/draft --all-targets -- -D warnings
 
     - name: Verify SipHeader against IANA registry
       run: |
@@ -84,7 +84,7 @@ jobs:
     - name: Test
       run: |
         set -o pipefail
-        CARGO_TERM_COLOR=never cargo test --features draft 2>&1 | tee test-output.txt
+        CARGO_TERM_COLOR=never cargo test --workspace --features sip-header/draft 2>&1 | tee test-output.txt
         passed=$(grep '^test result:' test-output.txt | sed 's/.*ok\. \([0-9]*\) passed.*/\1/' | paste -sd+ | bc)
         echo "TEST_PASSED=$passed" >> "$GITHUB_ENV"
 
@@ -122,4 +122,4 @@ jobs:
         color: blue
 
     - name: Build
-      run: cargo build --release
+      run: cargo build --workspace --release

@@ -224,7 +224,7 @@ cargo test
 ```
 
 The pre-commit hook validates the `SipHeader` enum against the IANA
-registry (`iana-sip-headers.txt`).
+registry (`crates/sip-header-catalog/iana-sip-headers.txt`).
 
 ## License
 

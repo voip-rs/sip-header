@@ -4,7 +4,7 @@
 # Usage: check-sip-headers.sh
 #
 # Reads header names from iana-sip-headers.txt and draft-sip-headers.txt,
-# then compares with the SipHeader enum in src/header.rs.
+# then compares with the SipHeader enum in crates/sip-header-catalog/src/lib.rs.
 # IANA variants have no #[cfg] gate; draft variants have #[cfg(feature = "draft")].
 #
 # Output: last line is "SipHeader <iana_rust>/<iana_file> [draft <draft_rust>/<draft_file>]"
@@ -13,9 +13,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-IANA_FILE="$REPO_ROOT/iana-sip-headers.txt"
-DRAFT_FILE="$REPO_ROOT/draft-sip-headers.txt"
-RUST_FILE="$REPO_ROOT/src/header.rs"
+CATALOG="$REPO_ROOT/crates/sip-header-catalog"
+IANA_FILE="$CATALOG/iana-sip-headers.txt"
+DRAFT_FILE="$CATALOG/draft-sip-headers.txt"
+RUST_FILE="$CATALOG/src/lib.rs"
 
 for f in "$IANA_FILE" "$RUST_FILE"; do
 	if [ ! -f "$f" ]; then
