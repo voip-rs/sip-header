@@ -1,8 +1,18 @@
 ## Project Type
 
-Library crate for SIP header field value parsing. Sits between `sip-uri`
-(addr-spec/name-addr) and full SIP stacks. Covers RFC 3261 header grammar
-and extensions. `Cargo.lock` is gitignored per Cargo convention for libraries.
+Cargo workspace of three library crates for SIP header field values, between
+`sip-uri` and full SIP stacks (RFC 3261 header grammar and extensions):
+
+- `crates/sip-header-catalog` — `SipHeader`, `define_header_enum!`, the
+  IANA/draft lists, the raw `SipHeaderRows` lookup trait. No sip-uri
+  dependency; stable.
+- `crates/sip-header-types` — value types: shape, constructors, Display,
+  serde. Depends on `sip-uri-types`, never on a parser.
+- `sip-header` (repo root) — parsing, warnings, `ParseError`, validation,
+  redaction, `SipHeaderLookup`, as extension traits over the value types.
+
+Nothing parse-related goes into the two lower crates. `Cargo.lock` is
+gitignored per Cargo convention for libraries.
 
 ## RFC Compliance Is Non-Negotiable
 
@@ -53,12 +63,12 @@ exempt.
 
 The `SipHeader` enum covers all registered SIP header field names from
 the IANA registry. The pre-commit hook runs `hooks/check-sip-headers.sh`
-to verify the enum matches `iana-sip-headers.txt`.
+to verify the enum matches `crates/sip-header-catalog/iana-sip-headers.txt`.
 
 **When IANA registers new SIP headers:**
 
-1. Add the header name to `iana-sip-headers.txt` (alphabetical order)
-2. Add the variant to `SipHeader` in `src/header.rs`
+1. Add the header name to `crates/sip-header-catalog/iana-sip-headers.txt` (alphabetical order)
+2. Add the variant to `SipHeader` in `crates/sip-header-catalog/src/lib.rs`
 3. The check script validates the sync
 
 ### `draft` feature — non-IANA headers
@@ -66,12 +76,12 @@ to verify the enum matches `iana-sip-headers.txt`.
 The enum is IANA-pure by default. Headers from expired or superseded IETF
 drafts that are still widely deployed (e.g. `Remote-Party-ID`, `Diversion`)
 live behind `#[cfg(feature = "draft")]`. Their wire names are tracked in
-`draft-sip-headers.txt` with comments citing the source draft. The
+`crates/sip-header-catalog/draft-sip-headers.txt` with comments citing the source draft. The
 pre-commit check script verifies both lists independently.
 
 When adding a draft header:
 
-1. Add the header name and source draft comment to `draft-sip-headers.txt`
+1. Add the header name and source draft comment to `crates/sip-header-catalog/draft-sip-headers.txt`
 2. Add the variant to `SipHeader` with `#[cfg(feature = "draft")]`
 3. If multi-valued, add to the `#[cfg(feature = "draft")]` block in `is_multi_valued()`
 4. Add `#[cfg(feature = "draft")]` tests
@@ -83,8 +93,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
 
 ## API Boundary Rules
 
-- **`sip-uri` is the only accepted public dependency.** The `pub use sip_uri;`
-  re-export, `SipHeaderAddr` returning `sip_uri::Uri`, and sip-uri's warning
+- **`sip-uri` / `sip-uri-types` are the only accepted public dependencies.**
+  The `pub use sip_uri;` re-export, `SipHeaderAddr` returning
+  `sip_uri_types::Uri`, and sip-uri's warning
   types inside ours (`Component`, `WarningCode`, `WarningKind`, `ParseError`
   as a source) are intentional (same author, narrow scope, stable).
 - **Never expose other dependency types in public signatures.** Wrap them
@@ -94,9 +105,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
 
 ## Build & Test
 
-Before committing run `cargo clippy --fix --allow-dirty --message-format=short && cargo fmt`;
-the pre-commit hook is the verification: formatting, clippy (with and without
-`draft`), `-D missing_docs`, broken intra-doc links, all tests (including
+Before committing run `cargo clippy --workspace --fix --allow-dirty --message-format=short && cargo fmt --all`;
+the pre-commit hook is the verification: formatting, clippy and tests (plain,
+`draft`, `serde`), `-D missing_docs`, broken intra-doc links, all tests (including
 doctests), IANA sync, and gitleaks. It does not enable `conference-info`;
 run `cargo test --release --features conference-info` after touching it.
 

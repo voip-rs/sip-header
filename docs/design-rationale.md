@@ -38,23 +38,35 @@ Namespace prefixes are stripped before deserialization, so an element is matched
 
 ## Mutators validate against the grammar their parser does not enforce
 
-A parser's leniency is what makes real traffic survivable; a value handed to a mutator never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Public mutators and builders therefore return `Result` and check the RFC production for the field they set, and the resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a mutator.
+A parser's leniency is what makes real traffic survivable; a value handed to a mutator never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. sip-header's builder traits therefore return `Result` and check the RFC production for the field they set, and the resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a mutator. The types crate's own constructors keep structure only, since grammar is parse policy.
 
 ## Parsers are lenient; warnings report what strict parsing would refuse
 
-Every header-value type parses the way sip-uri does, so the two crates read one way: `FromStr` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions.
+Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions.
 
-## FromStr fails only where no value exists
+## Lenient parsing fails only where no value exists
 
-`FromStr` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection.
+`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection.
 
 ## One error type for every header value
 
-Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. A framing fault a lookup store reports travels as the same type, with a transport-neutral code. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
+Every header-value parser returns the crate's `ParseError`, so nested parsers compose with `?` and a consumer matches one type. A failed URI keeps sip-uri's error as its source rather than a string, and the strict path has one shape: a URI breach under `parse_strict` surfaces as the same non-conformance a header breach does. A framing fault a lookup store reports arrives as the catalog's row error and is carried whole as the source, never mapped onto our fault codes, because the catalog's kinds are open-ended and a mapping would lose the ones added later. The conference-info body is XML, not a header value, and keeps its own error, whose source is the XML reader's; header-name catalogs keep theirs, because an unknown name is not a malformed value.
 
 ## Multi-occurrence headers stay one entry per occurrence
 
-`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. `SipHeaderLookup` exposes every occurrence through `sip_header_all_str` / `sip_header_all`, and every list accessor reads through the fallible `sip_header_rows`, splitting each row untrimmed. A backing store that decodes its own framing reports a decoding failure there, so the caller gets that failure instead of a value parsed from undecoded text. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
+`extract_header` returns one value per occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers. A lookup store exposes every occurrence through `sip_header_all_str`, and every typed accessor reads through the fallible `sip_header_rows_str`, never the infallible one, splitting each row untrimmed. A backing store that decodes its own framing reports a decoding failure there, so the caller gets that failure instead of a value parsed from undecoded text. A present row that is only whitespace therefore reaches the entry parser as an empty entry instead of vanishing. The exception is a header whose grammar admits an empty value, where a blank row is the empty list.
+
+## Value types live apart from their parsers
+
+The header-name catalog, the value types and the parsers are three crates, so a consumer that exchanges header data depends on the first two and never on parse policy. sip-header-catalog and sip-header-types hold shape and wire form only: constructors enforce structural invariants, Display writes the wire form, and serde goes through the same constructors, so no deserialized value can break an invariant a constructor keeps. Leniency, warnings, validation and redaction live in sip-header and may change every minor without changing the identity of a value a consumer holds. SipCallId stays with the parser: it borrows its input, and only the parser builds one.
+
+## Parsing is spelled through extension traits
+
+The orphan rule forbids sip-header from implementing `FromStr` or adding inherent methods to types defined in sip-header-types, so parsing, validated building and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings). Moving `FromStr` into the types crate instead would put parse policy back into the layer meant to be free of it.
+
+## Lookup stores implement the raw row trait
+
+A store implements `SipHeaderRows`, which lives in the catalog crate beside a small framing error, and receives every typed accessor from sip-header by blanket impl. A consumer's public API then names only the stable crate, while callers choose their own sip-header version for the accessors.
 
 ## Error Display never carries the rejected bytes
 
