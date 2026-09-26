@@ -30,7 +30,7 @@ Callers re-deriving the header/body boundary as `split_once("\r\n\r\n")` silentl
 
 ## Reason text decodes as hvalue with `+` literal
 
-A Reason embedded in a URI header is percent-decoded and nothing else. sip-uri returns the same literal `+` whether the producer sent `+` or `%2B`, so a `+`-as-space convention cannot be applied after parsing without corrupting real plus signs. A caller that knows its producer form-encodes converts them itself.
+A Reason embedded in a URI header is percent-decoded and nothing else. `hvalue` gives `+` no meaning, and reading it as a space would corrupt the real plus signs a producer left unescaped. A caller that knows its producer form-encodes converts them itself, from the raw value.
 
 ## Conference-info normalization drops foreign-namespace subtrees
 
