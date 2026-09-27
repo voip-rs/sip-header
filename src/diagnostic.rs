@@ -312,11 +312,13 @@ impl WarningCode {
         }
     }
 
-    /// Stable kebab-case name, for logs and machine consumers; a sip-uri
-    /// code is its own name prefixed `uri-`, so no two codes share one.
+    /// Stable kebab-case name within the crate that defines the code: a
+    /// sip-uri code is sip-uri's own name, so it may equal one of ours.
+    /// [`Display`](fmt::Display) prefixes it `uri-`, so no two codes print
+    /// the same.
     pub fn as_str(self) -> &'static str {
         match self {
-            WarningCode::Uri(c) => uri_code_name(c),
+            WarningCode::Uri(c) => c.as_str(),
             WarningCode::TrailingContent => "trailing-content",
             WarningCode::InvalidToken => "invalid-token",
             WarningCode::UnterminatedQuote => "unterminated-quote",
@@ -339,46 +341,11 @@ impl WarningCode {
     }
 }
 
-fn uri_code_name(code: sip_uri::WarningCode) -> &'static str {
-    use sip_uri::WarningCode as U;
-    match code {
-        U::InvalidChar => "uri-invalid-char",
-        U::MalformedEscape => "uri-malformed-escape",
-        U::EmptyName => "uri-empty-name",
-        U::EmptySegment => "uri-empty-segment",
-        U::PasswordWithoutUser => "uri-password-without-user",
-        U::SignedPort => "uri-signed-port",
-        U::EmptyPort => "uri-empty-port",
-        U::InvalidHostLabel => "uri-invalid-host-label",
-        U::NumericToplabel => "uri-numeric-toplabel",
-        U::EscapedHost => "uri-escaped-host",
-        U::UnexpectedFragment => "uri-unexpected-fragment",
-        U::EmptyFragment => "uri-empty-fragment",
-        U::HeaderShapedUser => "uri-header-shaped-user",
-        U::MissingPhoneContext => "uri-missing-phone-context",
-        U::EmptyComponent => "uri-empty-component",
-        U::InvalidScheme => "uri-invalid-scheme",
-        U::MissingScheme => "uri-missing-scheme",
-        U::Wildcard => "uri-wildcard",
-        U::MissingHost => "uri-missing-host",
-        U::InvalidIpv6 => "uri-invalid-ipv6",
-        U::InvalidPort => "uri-invalid-port",
-        U::TrailingContent => "uri-trailing-content",
-        U::MissingValue => "uri-missing-value",
-        U::EmptyUser => "uri-empty-user",
-        U::EmptyUserinfo => "uri-empty-userinfo",
-        U::MissingNumber => "uri-missing-number",
-        U::NoDigits => "uri-no-digits",
-        U::MissingNid => "uri-missing-nid",
-        U::MissingNss => "uri-missing-nss",
-        U::InvalidNid => "uri-invalid-nid",
-        // A code newer than this table; sip-uri names none of its codes `uri`.
-        _ => "uri",
-    }
-}
-
 impl fmt::Display for WarningCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let WarningCode::Uri(_) = self {
+            f.write_str("uri-")?;
+        }
         f.write_str(self.as_str())
     }
 }
@@ -491,20 +458,27 @@ mod tests {
     }
 
     #[test]
-    fn code_names_are_injective() {
+    fn printed_code_names_are_injective() {
         let mut seen = std::collections::HashSet::new();
         for code in own_codes() {
-            assert!(seen.insert(code.as_str()), "{code:?}");
+            assert!(
+                !code
+                    .as_str()
+                    .starts_with("uri-"),
+                "{code:?}"
+            );
+            assert!(seen.insert(code.to_string()), "{code:?}");
         }
         for code in uri_codes() {
-            let ours = WarningCode::Uri(code).as_str();
-            assert_eq!(ours, format!("uri-{}", code.as_str()), "{code:?}");
-            assert!(seen.insert(ours), "{code:?}");
+            let ours = WarningCode::Uri(code);
+            assert_eq!(ours.as_str(), code.as_str(), "{code:?}");
+            assert_eq!(
+                ours.to_string(),
+                format!("uri-{}", code.as_str()),
+                "{code:?}"
+            );
+            assert!(seen.insert(ours.to_string()), "{code:?}");
         }
-        assert_ne!(
-            WarningCode::Uri(sip_uri::WarningCode::TrailingContent).as_str(),
-            WarningCode::TrailingContent.as_str()
-        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::fmt;
 use crate::diagnostic::Parsed;
 use crate::error::ParseError;
 use crate::reason::SipReason;
+use crate::redact::HeaderRedaction;
 use crate::replaces::SipReplaces;
 
 pub(crate) mod sealed {
@@ -115,9 +116,10 @@ pub trait UriHeaderParse: HeaderParse {
 
 /// Rendering for logs.
 pub trait Redact: sealed::Sealed {
-    /// Render for logs, the URI through sip-uri's
-    /// [`redacted`](sip_uri::UriRedact::redacted) and the display name as
-    /// `***` unless `how` shows the user part. Header parameters render as
+    /// Render for logs as `how` says: URIs through sip-uri's
+    /// [`redacted`](sip_uri::UriRedact::redacted), a display name as `***`
+    /// unless the URI redaction shows the user part, and the parameters
+    /// [`HeaderRedaction`] masks as `***`. Other parameters render as
     /// [`Display`](fmt::Display) writes them.
     ///
     /// ```
@@ -135,7 +137,7 @@ pub trait Redact: sealed::Sealed {
     /// );
     /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a;
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a;
 }
 
 /// Parsing the headers an address carries inside its URI.

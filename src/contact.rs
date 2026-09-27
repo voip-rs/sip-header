@@ -11,6 +11,8 @@ use crate::error::ParseError;
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
+use crate::redact::{HeaderRedaction, RedactedList};
+use crate::traits::Redact;
 
 /// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
 /// (RFC 3261 §20.10), either the `*` wildcard or one address or more.
@@ -85,6 +87,33 @@ impl fmt::Display for ContactList {
             Contacts::Wildcard => f.write_str("*"),
             Contacts::Addrs(addrs) => crate::fmt_joined(f, addrs, ", "),
         }
+    }
+}
+
+impl Redact for ContactList {
+    /// Render for logs: `*`, or every address as
+    /// [`SipHeaderAddr`]'s rendering writes it.
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
+        RedactedContacts(self, how.into())
+    }
+}
+
+struct RedactedContacts<'a>(&'a ContactList, HeaderRedaction<'a>);
+
+impl fmt::Display for RedactedContacts<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self
+            .0
+            .is_wildcard()
+        {
+            return f.write_str("*");
+        }
+        RedactedList(
+            self.0
+                .addrs(),
+            self.1,
+        )
+        .fmt(f)
     }
 }
 

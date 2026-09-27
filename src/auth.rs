@@ -317,8 +317,16 @@ impl Redact for SipAuthValue {
     /// );
     /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
-        RedactedAuth { auth: self, how }
+    fn redacted<'a>(
+        &'a self,
+        how: impl Into<crate::redact::HeaderRedaction<'a>>,
+    ) -> impl fmt::Display + 'a {
+        RedactedAuth {
+            auth: self,
+            how: how
+                .into()
+                .uri(),
+        }
     }
 }
 

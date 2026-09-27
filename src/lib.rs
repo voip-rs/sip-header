@@ -68,6 +68,7 @@ pub mod join;
 #[cfg(feature = "message")]
 pub mod message;
 pub mod reason;
+mod redact;
 pub mod replaces;
 mod scrub;
 pub mod security;
@@ -101,6 +102,7 @@ pub use message::{
 };
 pub use params::HeaderParams;
 pub use reason::{SipReason, SipReasonCause, SipReasonList};
+pub use redact::HeaderRedaction;
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;

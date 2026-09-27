@@ -497,9 +497,48 @@ impl Hash for HeaderParams {
 
 impl fmt::Display for HeaderParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for p in &self.0 {
+        self.masked(&[])
+            .fmt(f)
+    }
+}
+
+impl HeaderParams {
+    /// [`Display`](fmt::Display), the value of every parameter named in
+    /// `names` (lowercase) written as `***`.
+    pub(crate) fn masked<'a>(&'a self, names: &'a [&'a str]) -> MaskedParams<'a> {
+        MaskedParams {
+            params: self,
+            names,
+        }
+    }
+}
+
+/// [`HeaderParams::masked`].
+pub(crate) struct MaskedParams<'a> {
+    params: &'a HeaderParams,
+    names: &'a [&'a str],
+}
+
+impl fmt::Display for MaskedParams<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for p in &self
+            .params
+            .0
+        {
             f.write_char(';')?;
-            p.write(f)?;
+            if p.value
+                .is_some()
+                && self
+                    .names
+                    .contains(
+                        &p.name
+                            .as_str(),
+                    )
+            {
+                write!(f, "{}=***", p.name)?;
+            } else {
+                p.write(f)?;
+            }
         }
         Ok(())
     }

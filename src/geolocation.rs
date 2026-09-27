@@ -6,14 +6,16 @@
 //! no entry yielded a URI (RFC 6442 §4.1 `locationValue *(COMMA
 //! locationValue)`).
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
-use sip_uri::Uri;
+use sip_uri::{Uri, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::redact::HeaderRedaction;
+use crate::traits::Redact;
 use crate::uri_info::read_uri;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
@@ -74,6 +76,61 @@ impl SipGeolocationEntry {
 impl fmt::Display for SipGeolocationEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<{}>{}", self.uri, self.params)
+    }
+}
+
+impl SipGeolocationEntry {
+    fn write_redacted(&self, f: &mut fmt::Formatter<'_>, how: HeaderRedaction<'_>) -> fmt::Result {
+        f.write_char('<')?;
+        if how.masks_location() {
+            if let Some(scheme) = self
+                .uri
+                .scheme()
+            {
+                write!(f, "{scheme}:")?;
+            }
+            f.write_str("***")?;
+        } else {
+            write!(
+                f,
+                "{}",
+                self.uri
+                    .redacted(how.uri())
+            )?;
+        }
+        write!(
+            f,
+            ">{}",
+            self.params
+                .masked(how.masked_params())
+        )
+    }
+}
+
+impl Redact for SipGeolocation {
+    /// Render for logs: each reference as its scheme and `***` unless `how`
+    /// shows locations, and then through sip-uri's redaction.
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
+        RedactedGeolocation(self, how.into())
+    }
+}
+
+struct RedactedGeolocation<'a>(&'a SipGeolocation, HeaderRedaction<'a>);
+
+impl fmt::Display for RedactedGeolocation<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, entry) in self
+            .0
+            .entries()
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            entry.write_redacted(f, self.1)?;
+        }
+        Ok(())
     }
 }
 

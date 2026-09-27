@@ -10,6 +10,7 @@ use crate::is_token_char;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 use crate::reason::SipReason;
+use crate::redact::{HeaderRedaction, RedactedList};
 use crate::replaces::SipReplaces;
 use crate::traits::{sealed, AddrParts, HeaderParse, Redact, UriHeaderParse};
 
@@ -234,15 +235,15 @@ impl SipHeaderAddr {
     }
 }
 
-/// An address written as Display does, with `display_name` and `uri` in
-/// place of its own.
-struct Rendered<'a, U> {
-    addr: &'a SipHeaderAddr,
+/// An address written as Display does, with `display_name`, `uri` and
+/// `params` in place of its own.
+struct Rendered<'a, U, P> {
     display_name: Option<&'a str>,
     uri: U,
+    params: P,
 }
 
-impl<U: fmt::Display> fmt::Display for Rendered<'_, U> {
+impl<U: fmt::Display, P: fmt::Display> fmt::Display for Rendered<'_, U, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(name) = self
             .display_name
@@ -255,13 +256,7 @@ impl<U: fmt::Display> fmt::Display for Rendered<'_, U> {
             }
             f.write_char(' ')?;
         }
-        write!(
-            f,
-            "<{}>{}",
-            self.uri,
-            self.addr
-                .params
-        )
+        write!(f, "<{}>{}", self.uri, self.params)
     }
 }
 
@@ -275,9 +270,9 @@ fn needs_quoting(name: &str) -> bool {
 impl fmt::Display for SipHeaderAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Rendered {
-            addr: self,
             display_name: self.display_name(),
             uri: &self.uri,
+            params: &self.params,
         }
         .fmt(f)
     }
@@ -318,19 +313,31 @@ impl AddrParts for SipHeaderAddr {
 }
 
 impl Redact for SipHeaderAddr {
-    fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
-        let shows_user = how.user_mask() == sip_uri::UserMask::Visible;
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
+        let how = how.into();
+        let shows_user = how
+            .uri()
+            .user_mask()
+            == sip_uri::UserMask::Visible;
         let name = self
             .display_name()
             .filter(|n| !n.is_empty())
             .map(|n| if shows_user { n } else { "***" });
         Rendered {
-            addr: self,
             display_name: name,
             uri: self
                 .uri()
-                .redacted(how),
+                .redacted(how.uri()),
+            params: self
+                .params
+                .masked(how.masked_params()),
         }
+    }
+}
+
+impl Redact for SipHeaderAddrList {
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
+        RedactedList(self.entries(), how.into())
     }
 }
 
