@@ -50,7 +50,11 @@ A leniently parsed value is not held to strict round-trip, only to safety: it ne
 
 ## Parsers are lenient; warnings report what strict parsing would refuse
 
-Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions, and their code's name is prefixed so one name identifies one code across both crates.
+Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions, and their code's printed name is prefixed so one name identifies one code across both crates.
+
+## Tokens compare as their RFC says and print as sent
+
+A token compares case-insensitively, per RFC 3261 section 7.3.1, unless the header's own RFC says otherwise, as method names and event types do; Display keeps the case that was sent. Folding case on output would change what a proxy forwards, and comparing byte for byte where the RFC folds would make two equal headers differ.
 
 ## Lenient parsing fails only where no value exists
 
@@ -72,7 +76,7 @@ The header-name catalog and the raw row trait are a crate of their own that aims
 
 ## Parsing is spelled through extension traits
 
-Parsing and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings, gathered in the prelude), matching sip-uri's `UriParse`, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway; spelling them as traits now keeps that move from breaking callers.
+Parsing and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings, gathered in the prelude), matching sip-uri's `UriParse`, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway; spelling them as traits now keeps that move from breaking callers. The prelude holds traits only, so a caller can glob it beside sip-uri's without two `ParseError`s colliding, and names value types explicitly.
 
 ## Lookup stores implement the raw row trait
 
@@ -80,7 +84,11 @@ A store implements `SipHeaderRows` from the catalog and receives every typed acc
 
 ## Comma-list and repeatable are separate predicates
 
-The catalog says of each header whether its grammar is a comma list, safe to split and join, and separately whether it may occur more than once. The authentication headers may repeat but are not lists, and a store that splits every repeatable header at commas cuts a credential apart. Each classification cites the header's ABNF.
+The catalog says of each header whether its grammar is a comma list, safe to split and join, and separately whether it may occur more than once. The authentication headers may repeat but are not lists, and a store that splits every repeatable header at commas cuts a credential apart. Each classification cites the header's ABNF. Typed lookup takes its row handling from these two predicates rather than from each accessor, and refuses a header whose value type does not match it.
+
+## Redaction masks identity parameters and location references by default
+
+A redacted header hides, besides the URI's user part, the parameters that name a device or user (instance identifiers, GRUUs) and Geolocation references, since each identifies a caller as surely as a number does. A caller that needs one shown opts in per kind.
 
 ## Non-IANA headers are always present
 
