@@ -26,7 +26,7 @@ fn addr_builder_lowercases_keys() {
     let addr = SipHeaderAddr::new(uri("sip:alice@example.com"))
         .with_display_name("Alice Smith")
         .unwrap()
-        .with_param("Tag", Some("abc"))
+        .with_tag("abc")
         .unwrap()
         .with_param("lr", None::<&str>)
         .unwrap();
@@ -39,12 +39,16 @@ fn addr_build_validates() {
     let addr = SipHeaderAddr::new(uri("sip:alice@example.com"))
         .with_display_name("Alice")
         .unwrap()
-        .with_param("tag", Some("abc"))
+        .with_tag("abc")
         .unwrap();
     built_as(addr.clone(), "Alice <sip:alice@example.com>;tag=abc");
     assert!(addr
         .clone()
-        .with_param("tag", Some("a;b"))
+        .with_tag("a;b")
+        .is_err());
+    assert!(addr
+        .clone()
+        .with_param("x", Some("a\r\nb"))
         .is_err());
     assert!(addr
         .with_display_name("a\r\nb")
@@ -91,8 +95,8 @@ fn via_entry() {
     let entry = SipViaEntry::new("SIP", "2.0", "UDP")
         .with_host("[2001:db8::1]")
         .with_port(5060)
-        .with_param("rport", Some("5061"))
-        .and_then(|e| e.with_param("Branch", Some("z9hG4bK1")))
+        .with_rport(Some(5061))
+        .with_param("Branch", Some("z9hG4bK1"))
         .unwrap();
     assert_eq!(entry.host(), Some("2001:db8::1"));
     assert_eq!(entry.rport(), Some(Some(5061)));
@@ -102,15 +106,17 @@ fn via_entry() {
         "SIP/2.0/UDP [2001:db8::1]:5060;rport=5061;branch=z9hG4bK1",
     );
     assert!(SipViaEntry::new("SIP", "2.0", "UDP")
-        .with_param("rport", Some("x"))
-        .is_none());
+        .with_param("rport", Some("5061"))
+        .is_err());
     assert_eq!(SipVia::new(Vec::new()), None);
 }
 
 #[test]
 fn accept_family() {
     let accept = SipAccept::new(vec![
-        SipAcceptEntry::new("Application", "SDP").with_param("q", Some("0.5")),
+        SipAcceptEntry::new("Application", "SDP")
+            .with_param("q", Some("0.5"))
+            .unwrap(),
         SipAcceptEntry::new("text", "plain"),
     ]);
     assert_eq!(accept.entries()[0].media_type(), "application");
@@ -121,9 +127,9 @@ fn accept_family() {
         "gzip",
     );
     built_as(
-        SipAcceptLanguage::new(vec![
-            SipAcceptLanguageEntry::new("fr-CA").with_param("q", Some("1"))
-        ]),
+        SipAcceptLanguage::new(vec![SipAcceptLanguageEntry::new("fr-CA")
+            .with_param("q", Some("1"))
+            .unwrap()]),
         "fr-ca;q=1",
     );
     assert!(SipAccept::new(Vec::new()).is_empty());
@@ -148,15 +154,18 @@ fn auth_value() {
     built_as(
         SipAuthValue::new("Digest")
             .with_quoted_param("Realm", "example.com")
-            .with_quoted_param("qop", "auth")
-            .with_param("algorithm", "MD5"),
+            .and_then(|a| a.with_quoted_param("qop", "auth"))
+            .and_then(|a| a.with_param("algorithm", "MD5"))
+            .unwrap(),
         r#"Digest realm="example.com", qop="auth", algorithm=MD5"#,
     );
     built_as(
         SipAuthValue::from_token68("Bearer", "abc.def"),
         "Bearer abc.def",
     );
-    let replaced = SipAuthValue::from_token68("Bearer", "abc").with_param("realm", "x");
+    let replaced = SipAuthValue::from_token68("Bearer", "abc")
+        .with_param("realm", "x")
+        .unwrap();
     assert_eq!(replaced.token68(), None);
 }
 
@@ -165,7 +174,8 @@ fn security_mechanism() {
     built_as(
         SipSecurity::new(vec![SipSecurityMechanism::new("Digest")
             .with_param("q", Some("0.1"))
-            .with_quoted_param("d-alg", "md5")])
+            .and_then(|m| m.with_quoted_param("d-alg", "md5"))
+            .unwrap()])
         .unwrap(),
         r#"digest;q=0.1;d-alg="md5""#,
     );
@@ -174,9 +184,9 @@ fn security_mechanism() {
 #[test]
 fn uri_info_and_geolocation() {
     built_as(
-        UriInfo::new(vec![
-            UriInfoEntry::new("https://example.com/a").with_param("Purpose", Some("icon"))
-        ])
+        UriInfo::new(vec![UriInfoEntry::new("https://example.com/a")
+            .with_param("Purpose", Some("icon"))
+            .unwrap()])
         .unwrap(),
         "<https://example.com/a>;purpose=icon",
     );
@@ -185,7 +195,8 @@ fn uri_info_and_geolocation() {
         SipGeolocation::new(vec![
             SipGeolocationEntry::new(SipGeolocationRef::Cid("a@example.com".into())),
             SipGeolocationEntry::new(SipGeolocationRef::Url("https://example.com/l".into()))
-                .with_param("inserted-by", Some("example.com")),
+                .with_param("inserted-by", Some("example.com"))
+                .unwrap(),
         ]),
         "<cid:a@example.com>, <https://example.com/l>;inserted-by=example.com",
     );
@@ -212,7 +223,8 @@ fn history_info_and_contact() {
 fn dialog_ids() {
     let replaces = SipReplaces::new("a@example.com", "t", "f")
         .with_early_only(true)
-        .with_param("Foo", Some("bar"));
+        .with_param("Foo", Some("bar"))
+        .unwrap();
     built_as(
         replaces.clone(),
         "a@example.com;to-tag=t;from-tag=f;early-only;foo=bar",

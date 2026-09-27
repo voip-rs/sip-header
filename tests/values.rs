@@ -16,7 +16,7 @@ fn alice() -> Uri {
 fn addr() -> SipHeaderAddr {
     SipHeaderAddr::new(alice())
         .with_display_name("Alice Smith")
-        .and_then(|a| a.with_param("Tag", Some("abc")))
+        .and_then(|a| a.with_tag("abc"))
         .and_then(|a| a.with_param("lr", None::<&str>))
         .unwrap()
 }
@@ -25,8 +25,8 @@ fn via() -> SipVia {
     SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "TCP")
         .with_host("[2001:db8::1]")
         .with_port(5061)
-        .with_param("rport", None::<&str>)
-        .and_then(|e| e.with_param("branch", Some("z9hG4bK1")))
+        .with_rport(None)
+        .with_param("branch", Some("z9hG4bK1"))
         .unwrap()])
     .unwrap()
 }
@@ -35,6 +35,7 @@ fn replaces() -> SipReplaces {
     SipReplaces::new("a@example.com", "t", "f")
         .with_early_only(true)
         .with_param("foo", Some("bar"))
+        .unwrap()
 }
 
 #[test]
@@ -42,7 +43,7 @@ fn addr_constructors_and_display() {
     let addr = addr();
     assert_eq!(addr.display_name(), Some("Alice Smith"));
     assert_eq!(addr.tag(), Some("abc"));
-    assert_eq!(addr.param_raw("lr"), Some(None));
+    assert_eq!(addr.param("lr"), Some(None));
     assert_eq!(
         addr.to_string(),
         r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#
@@ -69,9 +70,9 @@ fn list_and_entry_display() {
     );
     assert_eq!(via().entries()[0].rport(), Some(None));
     assert_eq!(
-        SipAccept::new(vec![
-            SipAcceptEntry::new("Application", "SDP").with_param("q", Some("0.5"))
-        ])
+        SipAccept::new(vec![SipAcceptEntry::new("Application", "SDP")
+            .with_param("q", Some("0.5"))
+            .unwrap()])
         .to_string(),
         "application/sdp;q=0.5"
     );
@@ -90,17 +91,17 @@ fn list_and_entry_display() {
         r#"399 example.com "a \"b\"""#
     );
     assert_eq!(
-        SipSecurity::new(vec![
-            SipSecurityMechanism::new("digest").with_quoted_param("d-alg", "md5")
-        ])
+        SipSecurity::new(vec![SipSecurityMechanism::new("digest")
+            .with_quoted_param("d-alg", "md5")
+            .unwrap()])
         .unwrap()
         .to_string(),
         r#"digest;d-alg="md5""#
     );
     assert_eq!(
-        UriInfo::new(vec![
-            UriInfoEntry::new("https://example.com/i").with_param("purpose", Some("icon"))
-        ])
+        UriInfo::new(vec![UriInfoEntry::new("https://example.com/i")
+            .with_param("purpose", Some("icon"))
+            .unwrap()])
         .unwrap()
         .to_string(),
         "<https://example.com/i>;purpose=icon"
@@ -121,7 +122,8 @@ fn list_and_entry_display() {
     assert_eq!(
         SipAuthValue::new("Digest")
             .with_param("realm", "example.com")
-            .with_param("algorithm", "MD5")
+            .and_then(|a| a.with_param("algorithm", "MD5"))
+            .unwrap()
             .to_string(),
         r#"Digest realm="example.com", algorithm=MD5"#
     );
@@ -142,11 +144,12 @@ fn structural_invariants() {
     assert_eq!(UriInfo::new(Vec::new()), None);
     assert_eq!(HistoryInfo::new(Vec::new()), None);
     assert!(SipViaEntry::new("SIP", "2.0", "UDP")
-        .with_param("RPORT", Some("65536"))
-        .is_none());
+        .with_param("RPORT", Some("5060"))
+        .is_err());
     assert_eq!(
         SipAuthValue::from_token68("Bearer", "abc")
             .with_param("realm", "x")
+            .unwrap()
             .token68(),
         None
     );
@@ -204,7 +207,8 @@ mod serde_round_trip {
             "application",
             "sdp",
         )
-        .with_param("q", Some("0.5"))]));
+        .with_param("q", Some("0.5"))
+        .unwrap()]));
         round_trip(SipAcceptEncoding::new(vec![SipAcceptEncodingEntry::new(
             "gzip",
         )]));
@@ -215,16 +219,22 @@ mod serde_round_trip {
         round_trip(
             SipSecurity::new(vec![SipSecurityMechanism::new("digest")
                 .with_param("q", Some("0.1"))
-                .with_quoted_param("d-alg", "md5")])
+                .and_then(|m| m.with_quoted_param("d-alg", "md5"))
+                .unwrap()])
             .unwrap(),
         );
-        round_trip(SipAuthValue::new("Digest").with_quoted_param("realm", "example.com"));
+        round_trip(
+            SipAuthValue::new("Digest")
+                .with_quoted_param("realm", "example.com")
+                .unwrap(),
+        );
         round_trip(SipAuthValue::from_token68("Bearer", "abc.def"));
         round_trip(UriInfo::new(vec![UriInfoEntry::new("https://example.com/i")]).unwrap());
         round_trip(SipGeolocation::new(vec![SipGeolocationEntry::new(
             SipGeolocationRef::Url("https://example.com/l".into()),
         )
-        .with_param("inserted-by", Some("example.com"))]));
+        .with_param("inserted-by", Some("example.com"))
+        .unwrap()]));
         round_trip(HistoryInfo::new(vec![HistoryInfoEntry::new(addr())]).unwrap());
         round_trip(HistoryInfoReason::new("SIP").with_cause(302));
         round_trip(replaces().with_framing(DialogFraming::UriHeader));
@@ -248,7 +258,8 @@ mod serde_round_trip {
                     "headers": [],
                     "fragment": null,
                 }},
-                "params": [["tag", "abc"], ["lr", null]],
+                "tag": "abc",
+                "params": [["lr", null, false]],
             })
         );
         assert_eq!(
@@ -258,7 +269,7 @@ mod serde_round_trip {
                 "to_tag": "t",
                 "from_tag": "f",
                 "early_only": true,
-                "params": [["foo", "bar"]],
+                "params": [["foo", "bar", false]],
                 "framing": "header",
             })
         );
@@ -277,19 +288,22 @@ mod serde_round_trip {
         let entry: SipAcceptEntry = serde_json::from_value(json!({
             "media_type": "APPLICATION",
             "subtype": "SDP",
-            "params": [["Q", "1"]],
+            "params": [["Q", "1", false]],
         }))
         .unwrap();
         assert_eq!(
             entry,
-            SipAcceptEntry::new("application", "sdp").with_param("q", Some("1"))
+            SipAcceptEntry::new("application", "sdp")
+                .with_param("q", Some("1"))
+                .unwrap()
         );
         let via: SipViaEntry = serde_json::from_value(json!({
             "protocol": "SIP",
             "version": "2.0",
             "transport": "UDP",
             "host": "198.51.100.1",
-            "params": [["rport", "5060"]],
+            "rport": 5060,
+            "params": [],
         }))
         .unwrap();
         assert_eq!(via.rport(), Some(Some(5060)));
@@ -308,16 +322,16 @@ mod serde_round_trip {
             "transport": "UDP",
             "host": null,
             "port": null,
-            "params": [["rport", "secret"]],
+            "params": [["rport", "secret", false]],
         }));
         rejects::<SipAuthValue>(json!({
             "scheme": "Bearer",
-            "params": [{"key": "realm", "value": "secret", "quoted": false}],
+            "params": [["realm", "secret", false]],
             "token68": "abc",
         }));
         rejects::<SipSecurityMechanism>(json!({
             "mechanism": "digest",
-            "params": [{"key": "d-alg", "value": null, "quoted": true}],
+            "params": [["d-alg", null, true]],
         }));
     }
 }
