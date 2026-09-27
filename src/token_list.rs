@@ -72,9 +72,10 @@ impl<'a> TokenList<'a> {
     }
 
     /// Whether tokens compare case-sensitively: Allow, whose methods RFC
-    /// 3261 §25.1 spells as `%x` literals, and In-Reply-To, whose Call-IDs
-    /// §8.1.1.4 compares byte by byte. Every other token list follows
-    /// §7.3.1: tokens are case-insensitive.
+    /// 3261 §25.1 spells as `%x` literals, In-Reply-To, whose Call-IDs
+    /// §8.1.1.4 compares byte by byte, and Allow-Events, whose event types
+    /// RFC 6665 §8.2.1 compares byte by byte. Every other token list follows
+    /// RFC 3261 §7.3.1: tokens are case-insensitive.
     pub fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
     }
@@ -91,7 +92,10 @@ impl<'a> TokenList<'a> {
             .collect();
         let mut list = TokenList {
             tokens: Vec::with_capacity(entries.len()),
-            case_sensitive: matches!(header, SipHeader::Allow | SipHeader::InReplyTo),
+            case_sensitive: matches!(
+                header,
+                SipHeader::Allow | SipHeader::InReplyTo | SipHeader::AllowEvents
+            ),
         };
         let mut warnings = Vec::new();
         if entries
