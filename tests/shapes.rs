@@ -327,3 +327,221 @@ fn addr_reason_is_a_sip_reason() -> R {
     );
     Ok(())
 }
+
+mod equality_and_case {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    use sip_header::{
+        ContactList, Fault, HeaderParams, HeaderParse, HistoryInfo, HistoryInfoEntry, ParseError,
+        ParseWarning, Parsed, QValue, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
+        SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
+        SipGeolocationEntry, SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces,
+        SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
+        SipWarningEntry, UriFault, UriInfo, UriInfoEntry,
+    };
+
+    type R = Result<(), ParseError>;
+
+    fn value_type<T: Send + Sync + Clone + Eq + Hash + std::fmt::Debug + std::fmt::Display>() {}
+
+    fn send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn every_value_type_is_send_sync_and_hashable() {
+        value_type::<SipHeaderAddr>();
+        value_type::<ContactList>();
+        value_type::<SipVia>();
+        value_type::<SipViaEntry>();
+        value_type::<SipWarning>();
+        value_type::<SipWarningEntry>();
+        value_type::<SipAuthValue>();
+        value_type::<SipAccept>();
+        value_type::<SipAcceptEntry>();
+        value_type::<SipAcceptEncoding>();
+        value_type::<SipAcceptEncodingEntry>();
+        value_type::<SipAcceptLanguage>();
+        value_type::<SipAcceptLanguageEntry>();
+        value_type::<SipSecurity>();
+        value_type::<SipSecurityMechanism>();
+        value_type::<UriInfo>();
+        value_type::<UriInfoEntry>();
+        value_type::<SipGeolocation>();
+        value_type::<SipGeolocationEntry>();
+        value_type::<HistoryInfo>();
+        value_type::<HistoryInfoEntry>();
+        value_type::<SipReason>();
+        value_type::<SipReasonCause>();
+        value_type::<SipReplaces>();
+        value_type::<SipJoin>();
+        value_type::<SipTargetDialog>();
+        value_type::<HeaderParams>();
+        value_type::<QValue>();
+        send_sync::<ParseError>();
+        send_sync::<ParseWarning>();
+        send_sync::<Fault>();
+        send_sync::<UriFault>();
+        send_sync::<Parsed<SipVia>>();
+    }
+
+    fn hash<T: Hash>(v: &T) -> u64 {
+        let mut h = DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
+
+    fn same<T: HeaderParse + Hash + Eq + std::fmt::Debug>(a: &str, b: &str) {
+        let (a, b) = (T::parse(a).unwrap(), T::parse(b).unwrap());
+        assert_eq!(a, b);
+        assert_eq!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn equal_values_hash_equal() {
+        same::<SipAccept>("Text/Plain;a=1;b=2", "text/plain;b=2;a=1");
+        same::<SipVia>(
+            "SIP/2.0/UDP Example.COM;branch=x",
+            "SIP/2.0/UDP example.com;branch=x",
+        );
+        same::<SipHeaderAddr>(
+            "<sip:a@example.com>;x=1;tag=t",
+            "<sip:a@example.com>;tag=t;x=1",
+        );
+        same::<ContactList>("*", " * ");
+        same::<SipReason>("SIP;text=\"a\";cause=1", "SIP;cause=1;text=\"a\"");
+        same::<SipReplaces>(
+            "a@example.com;from-tag=f;to-tag=t",
+            "a@example.com;to-tag=t;from-tag=f",
+        );
+    }
+
+    #[test]
+    fn case_rules() -> R {
+        let accept = SipAccept::parse("Application/SDP")?;
+        assert_eq!(accept.entries()[0].media_range(), "application/sdp");
+        let coding = SipAcceptEncoding::parse("GZIP")?;
+        assert_eq!(coding.entries()[0].encoding(), "gzip");
+        let language = SipAcceptLanguage::parse("EN-US")?;
+        assert_eq!(language.entries()[0].language(), "en-us");
+        let security = SipSecurity::parse("Digest;D-Alg=MD5")?;
+        assert_eq!(security.entries()[0].mechanism(), "digest");
+        assert_eq!(security.entries()[0].d_alg(), Some("MD5"));
+        let auth = SipAuthValue::parse("DIGEST realm=\"a\"")?;
+        assert_eq!(auth.scheme(), "DIGEST");
+        let replaces = SipReplaces::parse("AbC@Example.com;to-tag=Tt;from-tag=fF")?;
+        assert_eq!(
+            (replaces.call_id(), replaces.to_tag(), replaces.from_tag()),
+            ("AbC@Example.com", "Tt", "fF")
+        );
+        let via = SipVia::parse("sip/2.0/udp 198.51.100.1")?;
+        assert_eq!(
+            (via.entries()[0].protocol(), via.entries()[0].transport()),
+            ("sip", "udp")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn q_is_a_qvalue() -> R {
+        let accept = SipAccept::parse("text/plain;q=0.5, text/html;Q=1.000, a/b;q=high, c/d")?;
+        let q: Vec<_> = accept
+            .entries()
+            .iter()
+            .map(|e| {
+                e.q()
+                    .map(QValue::thousandths)
+            })
+            .collect();
+        assert_eq!(q, vec![Some(500), Some(1000), None, None]);
+        assert_eq!(accept.entries()[2].param("q"), Some(Some("high")));
+        assert_eq!(
+            SipAcceptEncoding::parse("gzip;q=0.050")?.entries()[0].q(),
+            Some(QValue::new(50)?)
+        );
+        assert_eq!(
+            SipAcceptLanguage::parse("fr;q=0")?.entries()[0].q(),
+            Some(QValue::new(0)?)
+        );
+        assert_eq!(
+            SipSecurity::parse("digest;q=0.1")?.entries()[0].q(),
+            Some(QValue::new(100)?)
+        );
+        assert!(SipSecurityMechanism::new("tls")?
+            .with_param("q", Some("2"))
+            .is_err());
+        assert!(SipSecurity::parse_strict("tls;q=2").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn qvalue_reads_and_prints_the_grammar() -> R {
+        for (text, thousandths, canonical) in [
+            ("0", 0, "0"),
+            ("0.", 0, "0"),
+            ("0.5", 500, "0.5"),
+            ("0.050", 50, "0.05"),
+            ("0.123", 123, "0.123"),
+            ("1", 1000, "1"),
+            ("1.000", 1000, "1"),
+        ] {
+            let q: QValue = text.parse()?;
+            assert_eq!(q.thousandths(), thousandths, "{text}");
+            assert_eq!(q.to_string(), canonical, "{text}");
+        }
+        for bad in ["", ".5", "1.5", "2", "0.1234", "01", "0,5", "-0"] {
+            assert!(
+                bad.parse::<QValue>()
+                    .is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(QValue::new(1001).is_err());
+        assert!(QValue::new(1)? < QValue::new(2)?);
+        Ok(())
+    }
+
+    #[test]
+    fn lists_separate_with_comma_space() -> R {
+        let hi = HistoryInfo::parse("<sip:a@example.com>;index=1,<sip:b@example.com>;index=2")?;
+        assert_eq!(
+            hi.to_string(),
+            "<sip:a@example.com>;index=1, <sip:b@example.com>;index=2"
+        );
+        let info = UriInfo::parse("<https://example.com/a>,<https://example.com/b>")?;
+        assert_eq!(
+            info.to_string(),
+            "<https://example.com/a>, <https://example.com/b>"
+        );
+        assert_eq!(
+            SipWarning::parse(r#"399 a.example.com "x",399 b.example.com "y""#)?.to_string(),
+            r#"399 a.example.com "x", 399 b.example.com "y""#
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dialog_framing_serializes_kebab_case() {
+        use sip_header::DialogFraming;
+
+        assert_eq!(
+            serde_json::to_value(DialogFraming::UriHeader).unwrap(),
+            serde_json::json!("uri-header")
+        );
+        assert_eq!(
+            serde_json::from_value::<DialogFraming>(serde_json::json!("uri-header")).unwrap(),
+            DialogFraming::UriHeader
+        );
+        assert_eq!(
+            serde_json::to_value(DialogFraming::Header).unwrap(),
+            serde_json::json!("header")
+        );
+        let target = SipTargetDialog::new("a@example.com", "l", "r")
+            .unwrap()
+            .with_framing(DialogFraming::UriHeader);
+        assert_eq!(
+            serde_json::to_value(&target).unwrap()["framing"],
+            serde_json::json!("uri-header")
+        );
+    }
+}
