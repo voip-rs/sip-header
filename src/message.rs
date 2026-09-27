@@ -343,6 +343,7 @@ impl SipHeaderExtract for SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::{ParseWarning, WarningCode};
     use crate::HeaderParse;
 
     const SAMPLE_INVITE: &str = "\
@@ -703,6 +704,63 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                 Some(25)
             ))
         );
+    }
+
+    fn spacing(at: usize) -> ParseWarning {
+        ParseWarning::new(Field::Value, WarningCode::RequestLineWhitespace).at(at)
+    }
+
+    #[test]
+    fn request_line_spacing_is_warned_and_strictly_refused() {
+        let msg = "INVITE  sip:a@example.com\tSIP/2.0 \r\n\r\n";
+        let parsed = extract_request_uri_with_warnings(msg)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .to_string(),
+            "sip:a@example.com"
+        );
+        assert_eq!(parsed.warnings, [spacing(6), spacing(25), spacing(33)]);
+        assert_eq!(extract_request_uri(msg), Ok(Some(parsed.value)));
+        assert_eq!(
+            extract_request_uri_strict(msg),
+            Err(ParseError::NonConformant(spacing(6)))
+        );
+        let msg = " INVITE sip:a@example.com SIP/2.0\r\n";
+        assert_eq!(
+            extract_request_uri_with_warnings(msg)
+                .unwrap()
+                .unwrap()
+                .warnings,
+            [spacing(0)]
+        );
+        let msg = "INVITE sip:a@example.com SIP/2.0\r\n";
+        assert!(extract_request_uri_strict(msg).is_ok());
+        let status = "SIP/2.0  200 OK\r\n";
+        assert_eq!(extract_request_uri_with_warnings(status), Ok(None));
+        assert_eq!(extract_request_uri_strict(status), Ok(None));
+    }
+
+    #[test]
+    fn request_uri_warnings_pass_through_at_line_positions() {
+        let uri = "sip:a@example.com:";
+        let own = sip_uri::Uri::parse_with_warnings(uri).unwrap();
+        assert!(!own
+            .warnings
+            .is_empty());
+        let msg = format!("OPTIONS {uri} SIP/2.0\r\n");
+        let parsed = extract_request_uri_with_warnings(&msg)
+            .unwrap()
+            .unwrap();
+        let shifted: Vec<_> = own
+            .warnings
+            .into_iter()
+            .map(|w| ParseWarning::from_uri(w, "OPTIONS ".len()))
+            .collect();
+        assert_eq!(parsed.warnings, shifted);
+        assert!(extract_request_uri_strict(&msg).is_err());
     }
 
     // -- extract_all_headers tests --
