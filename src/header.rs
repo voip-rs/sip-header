@@ -1006,6 +1006,44 @@ mod tests {
     }
 
     #[test]
+    fn token_lists_compare_as_their_rfc_says() {
+        let h = rows(&[
+            ("Allow", &["INVITE"]),
+            ("Allow-Events", &["dialog"]),
+            ("In-Reply-To", &["abc@example.com"]),
+            ("Supported", &["timer"]),
+            ("Require", &["timer"]),
+            ("Proxy-Require", &["timer"]),
+            ("Unsupported", &["timer"]),
+            ("Content-Encoding", &["gzip"]),
+            ("Content-Language", &["en"]),
+        ]);
+        let exact = |l: Result<Option<TokenList<'_>>, ParseError>, upper: &str| {
+            let l = l
+                .unwrap()
+                .unwrap();
+            assert!(l.is_case_sensitive());
+            assert!(!l.contains(upper));
+        };
+        exact(h.allow(), "invite");
+        exact(h.allow_events(), "DIALOG");
+        exact(h.in_reply_to(), "ABC@example.com");
+        let folded = |l: Result<Option<TokenList<'_>>, ParseError>, upper: &str| {
+            let l = l
+                .unwrap()
+                .unwrap();
+            assert!(!l.is_case_sensitive());
+            assert!(l.contains(upper));
+        };
+        folded(h.supported(), "TIMER");
+        folded(h.require(), "TIMER");
+        folded(h.proxy_require(), "TIMER");
+        folded(h.unsupported(), "TIMER");
+        folded(h.content_encoding(), "GZIP");
+        folded(h.content_language(), "EN");
+    }
+
+    #[test]
     fn token_list_blank_rows() {
         for blank in ["", "   "] {
             let h = rows(&[("Allow", &[blank])]);
