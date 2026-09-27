@@ -230,6 +230,50 @@ fn closing_quote(s: &str) -> Option<usize> {
     None
 }
 
+/// What frames a list entry: a quoted string, a bracket, the separator.
+const FRAMING: [char; 4] = ['"', '<', '>', ','];
+
+/// `part` without [`FRAMING`] characters, or the whitespace their removal
+/// exposes at either end.
+pub(crate) fn without_framing(part: &str) -> std::borrow::Cow<'_, str> {
+    if part.contains(FRAMING) {
+        std::borrow::Cow::Owned(
+            part.replace(FRAMING, "")
+                .trim()
+                .to_string(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(part)
+    }
+}
+
+/// Raise [`WarningCode::StrayDelimiter`] on `field` at the first
+/// [`FRAMING`] character in `part`, a slice of `input`.
+pub(crate) fn report_framing(
+    input: &str,
+    part: &str,
+    field: Field,
+    warnings: &mut Vec<ParseWarning>,
+) {
+    if let Some(i) = part.find(FRAMING) {
+        warnings.push(
+            ParseWarning::new(field, WarningCode::StrayDelimiter).at(offset_in(input, part) + i),
+        );
+    }
+}
+
+/// `part`, a trimmed `token` field sliced from `input`, as
+/// [`without_framing`] leaves it, reporting what it removed.
+pub(crate) fn token_field<'a>(
+    input: &str,
+    part: &'a str,
+    field: Field,
+    warnings: &mut Vec<ParseWarning>,
+) -> std::borrow::Cow<'a, str> {
+    report_framing(input, part, field, warnings);
+    without_framing(part)
+}
+
 /// One `generic-param` (RFC 3261 §25.1) as it appeared on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RawParam<'a> {
@@ -251,7 +295,18 @@ pub(crate) struct Unquoted {
     pub(crate) trailing_backslash: bool,
 }
 
-impl RawParam<'_> {
+impl<'a> RawParam<'a> {
+    /// The name, a `token`, as [`without_framing`] leaves it.
+    pub(crate) fn name(&self) -> std::borrow::Cow<'a, str> {
+        without_framing(self.key)
+    }
+
+    /// Raise [`WarningCode::StrayDelimiter`] on what [`name`](Self::name)
+    /// removes, at its position in `input`.
+    pub(crate) fn report_name(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
+        report_framing(input, self.key, Field::Param, warnings);
+    }
+
     /// The value without its surrounding quotes and with `quoted-pair` unescaped.
     pub(crate) fn unquoted(&self) -> Option<Unquoted> {
         let v = self.value?;
@@ -351,27 +406,55 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
 /// at bracket depth zero and outside quoted strings.
 ///
 /// Backslash escapes inside quoted strings (RFC 3261 §25.1 `quoted-pair`)
-/// are respected to avoid premature quote-close on `\"`. Quotes are only
-/// significant at bracket depth zero: a stray `"` inside `<...>` (not legal
-/// in any §25.1 URI character set) affects that entry alone.
+/// are respected to avoid premature quote-close on `\"`. A `"` opens a
+/// quoted string only at bracket depth zero, where some list grammar lets
+/// one start (first in an entry, after whitespace or after `=`), and only
+/// when it closes; any other `"` is text, so a stray one affects its entry
+/// alone. The typed lists split by their own grammar, which admits fewer
+/// starts.
 pub fn split_comma_entries(raw: &str) -> Vec<&str> {
+    split_entries(raw, QuoteStart::Anywhere)
+}
+
+/// Where a list grammar lets a `quoted-string` start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuoteStart {
+    /// A value after `=` in the `*(SEMI generic-param)` tail.
+    Param,
+    /// [`Param`](Self::Param), or a `display-name` opening the entry.
+    DisplayName,
+    /// After whitespace, as Warning's `warn-text`.
+    Word,
+    /// After `=`, as in an `auth-param` list.
+    AuthParam,
+    /// Any of these, for a grammar not known.
+    Anywhere,
+}
+
+/// [`split_comma_entries`], a `"` opening a quoted string only where
+/// `rule` lets one start.
+pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Vec<&str> {
     let bytes = raw.as_bytes();
     let mut entries = Vec::new();
     let mut depth = 0u32;
     let mut start = 0;
+    let mut in_params = false;
     let mut i = 0;
 
     while i < bytes.len() {
         match bytes[i] {
-            b'"' if depth == 0 => match closing_quote(&raw[i + 1..]) {
-                Some(close) => i += close + 1,
-                None => break,
-            },
+            b'"' if depth == 0 && opens_quoted_string(&bytes[start..i], in_params, rule) => {
+                if let Some(close) = closing_quote(&raw[i + 1..]) {
+                    i += close + 1;
+                }
+            }
             b'<' => depth += 1,
             b'>' => depth = depth.saturating_sub(1),
+            b';' if depth == 0 => in_params = true,
             b',' if depth == 0 => {
                 entries.push(&raw[start..i]);
                 start = i + 1;
+                in_params = false;
             }
             _ => {}
         }
@@ -382,6 +465,25 @@ pub fn split_comma_entries(raw: &str) -> Vec<&str> {
     }
 
     entries
+}
+
+/// Whether a `"` following `before`, the entry so far, stands where `rule`
+/// lets a quoted string start; `in_params` once `before` holds a `;`.
+fn opens_quoted_string(before: &[u8], in_params: bool, rule: QuoteStart) -> bool {
+    let trimmed = before
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(&before[..0], |last| &before[..=last]);
+    let after_equal = trimmed.last() == Some(&b'=');
+    let entry_start = trimmed.is_empty();
+    let after_space = !entry_start && trimmed.len() < before.len();
+    match rule {
+        QuoteStart::Param => in_params && after_equal,
+        QuoteStart::DisplayName => entry_start || (in_params && after_equal),
+        QuoteStart::Word => after_space,
+        QuoteStart::AuthParam => after_equal,
+        QuoteStart::Anywhere => entry_start || after_space || after_equal,
+    }
 }
 
 #[cfg(test)]
@@ -546,6 +648,27 @@ mod tests {
         let input = r#""a<b" <sip:x@example.com>, <sip:y@example.com>"#;
         let parts = split_comma_entries(input);
         assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn split_opens_quotes_only_where_the_grammar_does() {
+        let raw = r#""a, b" x=", c" "d, e";f="g, h""#;
+        assert_eq!(
+            split_entries(raw, QuoteStart::Param),
+            vec![r#""a"#, r#" b" x=""#, r#" c" "d"#, r#" e";f="g, h""#]
+        );
+        assert_eq!(
+            split_entries(raw, QuoteStart::DisplayName),
+            vec![r#""a, b" x=""#, r#" c" "d"#, r#" e";f="g, h""#]
+        );
+        assert_eq!(
+            split_entries(raw, QuoteStart::AuthParam),
+            vec![r#""a"#, r#" b" x=", c" "d"#, r#" e";f="g, h""#]
+        );
+        assert_eq!(
+            split_entries(raw, QuoteStart::Word),
+            vec![r#""a"#, r#" b" x=""#, r#" c" "d, e";f="g"#, r#" h""#]
+        );
     }
 
     #[test]

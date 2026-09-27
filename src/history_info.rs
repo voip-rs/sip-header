@@ -158,6 +158,7 @@ impl From<HistoryInfoEntry> for HistoryInfoEntryParts {
 
 impl CommaList for HistoryInfo {
     type Entry = HistoryInfoEntry;
+    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
 
     fn parse_entry(
         entry: &str,

@@ -125,12 +125,13 @@ fn parse_entry(
         return Err(missing_entry());
     }
 
-    let (encoding_part, params_part) = match raw.split_once(';') {
+    let (raw_encoding, params_part) = match raw.split_once(';') {
         Some((e, p)) => (e.trim(), Some(p)),
         None => (raw, None),
     };
+    let encoding = crate::token_field(entry, raw_encoding, Field::Coding, warnings);
 
-    if encoding_part.is_empty() {
+    if encoding.is_empty() {
         return Err(ParseError::malformed(
             Field::Coding,
             FaultCode::Missing,
@@ -139,15 +140,15 @@ fn parse_entry(
     }
     flag_invalid_token(
         entry,
-        encoding_part,
-        is_token(encoding_part),
+        raw_encoding,
+        is_token(&encoding),
         Field::Coding,
         warnings,
     );
 
     Ok(SipAcceptEncodingEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptEncodingEntry::unchecked(encoding_part.to_string())
+        ..SipAcceptEncodingEntry::unchecked(encoding.into_owned())
     })
 }
 

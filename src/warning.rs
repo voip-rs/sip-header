@@ -176,33 +176,39 @@ fn parse_warning_entry(
         );
     }
 
-    let rest = s[space_pos..].trim_start();
+    let after_code = &s[space_pos..];
+    let rest = after_code.trim_start();
 
-    // Find the quoted warn-text
-    let quote_pos = rest
-        .find('"')
+    // The list splitter opens warn-text at a quote after whitespace; a quote
+    // glued to the agent is a stray one.
+    let quote_pos = after_code
+        .char_indices()
+        .find(|&(i, c)| c == '"' && after_code[..i].ends_with(|p: char| p.is_ascii_whitespace()))
+        .map(|(i, _)| i)
+        .or_else(|| after_code.find('"'))
         .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
 
-    let agent = rest[..quote_pos].trim_end();
+    let raw_agent = after_code[..quote_pos].trim();
+    let agent = crate::token_field(entry, raw_agent, Field::Agent, warnings);
     if agent.is_empty() {
         return Err(at(Field::Agent, FaultCode::Missing, rest));
     }
-    if !is_hostport(agent)
+    if !is_hostport(&agent)
         && !agent
             .chars()
             .all(is_token_char)
     {
         warnings.push(
             ParseWarning::new(Field::Agent, WarningCode::InvalidToken)
-                .at(crate::offset_in(entry, agent)),
+                .at(crate::offset_in(entry, raw_agent)),
         );
     }
 
-    let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
+    let text = parse_quoted_string(entry, &after_code[quote_pos..], warnings)?;
 
     Ok(SipWarningEntry {
         code,
-        agent: agent.to_string(),
+        agent: agent.into_owned(),
         text,
     })
 }
@@ -258,6 +264,13 @@ fn parse_quoted_string(
         } else if c == '\\' {
             escaped = true;
         } else if c == '"' {
+            let after = &content[i + 1..];
+            if let Some(junk) = Some(after.trim_start()).filter(|j| !j.is_empty()) {
+                warnings.push(
+                    ParseWarning::new(Field::Text, WarningCode::TrailingContent)
+                        .at(crate::offset_in(entry, junk)),
+                );
+            }
             return Ok(crate::unescape_quoted_pair(&content[..i]));
         }
     }
@@ -281,6 +294,7 @@ fn parse_quoted_string(
 
 impl CommaList for SipWarning {
     type Entry = SipWarningEntry;
+    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::Word;
 
     fn parse_entry(
         entry: &str,

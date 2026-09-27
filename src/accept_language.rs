@@ -134,12 +134,13 @@ fn parse_entry(
         return Err(missing_entry());
     }
 
-    let (lang_part, params_part) = match raw.split_once(';') {
+    let (raw_lang, params_part) = match raw.split_once(';') {
         Some((l, p)) => (l.trim(), Some(p)),
         None => (raw, None),
     };
+    let lang = crate::token_field(entry, raw_lang, Field::Language, warnings);
 
-    if lang_part.is_empty() {
+    if lang.is_empty() {
         return Err(ParseError::malformed(
             Field::Language,
             FaultCode::Missing,
@@ -148,15 +149,15 @@ fn parse_entry(
     }
     flag_invalid_token(
         entry,
-        lang_part,
-        is_language_range(lang_part),
+        raw_lang,
+        is_language_range(&lang),
         Field::Language,
         warnings,
     );
 
     Ok(SipAcceptLanguageEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptLanguageEntry::unchecked(lang_part.to_string())
+        ..SipAcceptLanguageEntry::unchecked(lang.into_owned())
     })
 }
 

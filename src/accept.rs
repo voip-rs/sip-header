@@ -180,19 +180,20 @@ fn parse_accept_entry(
         .split_once('/')
         .ok_or_else(bad_range)?;
 
-    let type_str = type_str.trim();
-    let subtype_str = subtype_str.trim();
+    let (raw_type, raw_subtype) = (type_str.trim(), subtype_str.trim());
+    let type_str = crate::token_field(entry, raw_type, Field::MediaRange, warnings);
+    let subtype_str = crate::token_field(entry, raw_subtype, Field::MediaRange, warnings);
 
     if type_str.is_empty() || subtype_str.is_empty() {
         return Err(bad_range());
     }
-    for part in [type_str, subtype_str] {
-        flag_invalid_token(entry, part, is_token(part), Field::MediaRange, warnings);
+    for (raw, part) in [(raw_type, &type_str), (raw_subtype, &subtype_str)] {
+        flag_invalid_token(entry, raw, is_token(part), Field::MediaRange, warnings);
     }
 
     Ok(SipAcceptEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptEntry::unchecked(type_str, subtype_str)
+        ..SipAcceptEntry::unchecked(&type_str, &subtype_str)
     })
 }
 
@@ -336,7 +337,7 @@ pub(crate) fn read_accept_params(
         if let Some(value) = p
             .value
             .filter(|v| {
-                p.key
+                p.name()
                     .eq_ignore_ascii_case("q")
                     && !is_qvalue(v)
             })

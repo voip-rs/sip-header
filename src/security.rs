@@ -137,12 +137,13 @@ fn parse_mechanism(
         ));
     }
 
-    let (mechanism_part, params_part) = match raw.split_once(';') {
+    let (raw_mechanism, params_part) = match raw.split_once(';') {
         Some((m, p)) => (m.trim(), Some(p)),
         None => (raw, None),
     };
+    let mechanism = crate::token_field(entry, raw_mechanism, Field::Mechanism, warnings);
 
-    if mechanism_part.is_empty() {
+    if mechanism.is_empty() {
         return Err(ParseError::malformed(
             Field::Mechanism,
             FaultCode::Missing,
@@ -150,15 +151,15 @@ fn parse_mechanism(
         ));
     }
 
-    if !crate::is_token(mechanism_part) {
+    if !crate::is_token(&mechanism) {
         warnings.push(
             ParseWarning::new(Field::Mechanism, WarningCode::InvalidToken)
-                .at(crate::offset_in(entry, mechanism_part)),
+                .at(crate::offset_in(entry, raw_mechanism)),
         );
     }
     Ok(SipSecurityMechanism {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipSecurityMechanism::unchecked(mechanism_part.to_string())
+        ..SipSecurityMechanism::unchecked(mechanism.into_owned())
     })
 }
 

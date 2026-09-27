@@ -20,6 +20,7 @@ use crate::traits::HeaderParse;
 use crate::uri_info::UriInfo;
 use crate::via::SipVia;
 use crate::warning::SipWarning;
+use crate::QuoteStart;
 
 pub use sip_header_catalog::{ParseSipHeaderError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
 
@@ -276,14 +277,14 @@ pub trait SipHeaderLookup: SipHeaderRows {
     }
 }
 
-fn split_all(rows: Vec<&str>) -> impl Iterator<Item = &str> {
+fn split_all(rows: Vec<&str>, rule: QuoteStart) -> impl Iterator<Item = &str> {
     rows.into_iter()
-        .flat_map(crate::split_comma_entries)
+        .flat_map(move |row| crate::split_entries(row, rule))
 }
 
 /// Every occurrence's entries as one list, entry indexes counted across rows.
 fn parse_rows<L: CommaList>(rows: Vec<&str>) -> Result<L, ParseError> {
-    L::list_from_entries(split_all(rows)).map(|p| p.value)
+    L::list_from_entries(split_all(rows, L::QUOTE_START)).map(|p| p.value)
 }
 
 /// [`parse_rows`], or `None` when the header is absent.
@@ -299,7 +300,7 @@ fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseError> {
 }
 
 fn split_trim(rows: Vec<&str>) -> Vec<&str> {
-    split_all(rows)
+    split_all(rows, QuoteStart::Param)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect()

@@ -291,6 +291,9 @@ pub enum WarningCode {
     /// A `warn-code` below 100, three digits as RFC 3261 §20.43 `warn-code =
     /// 3DIGIT` requires but in no class §27.2 defines by first digit; kept.
     WarnCodeLeadingZero,
+    /// A `"`, `<`, `>` or `,` inside a field RFC 3261 §25.1 makes a `token`,
+    /// where it would reframe the list the value is written into; dropped.
+    StrayDelimiter,
 }
 
 impl WarningCode {
@@ -303,7 +306,8 @@ impl WarningCode {
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
             | WarningCode::EmptyEntry
-            | WarningCode::ControlChar => WarningKind::Lost,
+            | WarningCode::ControlChar
+            | WarningCode::StrayDelimiter => WarningKind::Lost,
             _ => WarningKind::Recovered,
         }
     }
@@ -330,6 +334,7 @@ impl WarningCode {
             WarningCode::AuthParamFlag => "auth-param-flag",
             WarningCode::ControlChar => "control-char",
             WarningCode::WarnCodeLeadingZero => "warn-code-leading-zero",
+            WarningCode::StrayDelimiter => "stray-delimiter",
         }
     }
 }
@@ -421,6 +426,7 @@ mod tests {
             WarningCode::AuthParamFlag,
             WarningCode::ControlChar,
             WarningCode::WarnCodeLeadingZero,
+            WarningCode::StrayDelimiter,
         ];
         for code in &all {
             match code {
@@ -441,7 +447,8 @@ mod tests {
                 | WarningCode::DuplicateParam
                 | WarningCode::AuthParamFlag
                 | WarningCode::ControlChar
-                | WarningCode::WarnCodeLeadingZero => {}
+                | WarningCode::WarnCodeLeadingZero
+                | WarningCode::StrayDelimiter => {}
             }
         }
         all

@@ -343,7 +343,7 @@ fn parse_via_entry(
         if via
             .rport
             .is_none()
-            && p.key
+            && p.name()
                 .eq_ignore_ascii_case("rport")
         {
             via.rport = Some(read_rport(entry, &p)?);
@@ -402,7 +402,7 @@ fn parse_sent_protocol<'a>(
     {
         (transport, sent_by) = (&after_slash[..0], transport);
     }
-    for part in [name, version, transport] {
+    let parts = [name, version, transport].map(|part| {
         let at = crate::offset_in(entry, part);
         if let Some(i) = part.find(|c: char| c == '/' || c.is_whitespace()) {
             return Err(ParseError::malformed(
@@ -411,11 +411,14 @@ fn parse_sent_protocol<'a>(
                 Some(at + i),
             ));
         }
-        if !is_token(part) {
+        let text = crate::token_field(entry, part, Field::SentProtocol, warnings).into_owned();
+        if !is_token(&text) {
             warnings.push(ParseWarning::new(Field::SentProtocol, WarningCode::InvalidToken).at(at));
         }
-    }
-    Ok((name.into(), version.into(), transport.into(), sent_by))
+        Ok(text)
+    });
+    let [name, version, transport] = parts;
+    Ok((name?, version?, transport?, sent_by))
 }
 
 impl CommaList for SipVia {

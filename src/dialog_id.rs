@@ -426,11 +426,12 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
 
     for param in crate::parse_params(rest) {
         let key = param
-            .key
+            .name()
             .to_ascii_lowercase();
         let Some(value) = param.value else {
             let flag = K::EARLY_ONLY && key == "early-only";
             if flag && !early_only {
+                param.report_name(raw, &mut warnings);
                 early_only = true;
             } else {
                 if flag
@@ -455,8 +456,15 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
             params.push_raw(raw, &param, &mut warnings);
             continue;
         };
-        param.report_quoting(raw, &mut warnings);
-        if value.is_empty() {
+        param.report_name(raw, &mut warnings);
+        // A value the reader framed as quoted prints verbatim to frame the same.
+        let tag = if !param.unterminated && value.starts_with('"') {
+            param.report_quoting(raw, &mut warnings);
+            value.to_string()
+        } else {
+            crate::token_field(raw, value, Field::Tag, &mut warnings).into_owned()
+        };
+        if tag.is_empty() {
             return Err(ParseError::malformed(
                 Field::Tag,
                 FaultCode::Missing,
@@ -464,7 +472,7 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
             ));
         }
         if slot
-            .replace(value.to_string())
+            .replace(tag)
             .is_some()
         {
             return Err(ParseError::malformed(

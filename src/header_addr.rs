@@ -495,6 +495,7 @@ pub(crate) struct AddrList(pub(crate) Vec<SipHeaderAddr>);
 
 impl CommaList for AddrList {
     type Entry = SipHeaderAddr;
+    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
 
     fn parse_entry(
         entry: &str,

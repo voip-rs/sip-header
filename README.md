@@ -186,6 +186,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `q() -> Option<&str>` on the Accept family and `SipSecurityMechanism` | `Option<QValue>` (thousandths, canonical `Display`); the text stays in `param("q")`; Security refuses and warns a `q` outside `qvalue` as Accept does |
 | History-Info and URI-info Display joins entries with `,` | every list joins with `, ` |
 | `DialogFraming` serde `"uriheader"` | `"uri-header"` |
+| a `"` that never closes swallows the rest of a list, a `"` inside a token is kept | a `"` opens a quoted string only where the header's grammar lets one start and only when it closes; a `"`, `<`, `>` or `,` inside a token field is dropped with `StrayDelimiter`; text after a Warning's warn-text is dropped with `TrailingContent` |
 | value types without `Hash` | every value type is `Hash`, consistent with its `Eq` (wire-form identity) |
 | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
 | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |

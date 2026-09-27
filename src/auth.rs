@@ -431,16 +431,24 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Err(ParseError::empty(Field::Value));
     }
 
-    let (scheme, rest) = s
+    let (raw_scheme, rest) = s
         .split_once(|c: char| c.is_ascii_whitespace())
         .map_or((s, ""), |(scheme, rest)| (scheme, rest.trim_start()));
-    if !is_token(scheme) {
+    let scheme = crate::token_field(input, raw_scheme, Field::Scheme, warnings);
+    if scheme.is_empty() {
+        return Err(ParseError::malformed(
+            Field::Scheme,
+            FaultCode::Missing,
+            Some(crate::offset_in(input, raw_scheme)),
+        ));
+    }
+    if !is_token(&scheme) {
         warnings.push(
             ParseWarning::new(Field::Scheme, WarningCode::InvalidToken)
-                .at(crate::offset_in(input, scheme)),
+                .at(crate::offset_in(input, raw_scheme)),
         );
     }
-    let mut auth = SipAuthValue::unchecked(scheme.to_string());
+    let mut auth = SipAuthValue::unchecked(scheme.into_owned());
     if rest.is_empty() {
         return Ok(auth);
     }
@@ -449,7 +457,7 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Ok(auth);
     }
 
-    for param_str in crate::split_comma_entries(rest) {
+    for param_str in crate::split_entries(rest, crate::QuoteStart::AuthParam) {
         let param_str = param_str.trim();
         if param_str.is_empty() {
             continue;
@@ -460,19 +468,23 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         };
 
         let Some(eq) = param_str.find('=') else {
-            if !is_token(param_str) {
+            let key = crate::token_field(input, param_str, Field::Credentials, warnings);
+            if key.is_empty() {
+                continue;
+            }
+            if !is_token(&key) {
                 warn(warnings, WarningCode::InvalidToken, key_at);
             }
             warn(warnings, WarningCode::AuthParamFlag, key_at);
             auth.params
-                .push_read(param_str, None, false, Field::Credentials, key_at, warnings);
+                .push_read(&key, None, false, Field::Credentials, key_at, warnings);
             continue;
         };
 
-        let key = param_str[..eq].trim();
+        let key = crate::token_field(input, param_str[..eq].trim(), Field::Credentials, warnings);
         let value = param_str[eq + 1..].trim();
         let at = crate::offset_in(input, value);
-        if !is_token(key) {
+        if !is_token(&key) {
             warn(warnings, WarningCode::InvalidToken, key_at);
         }
 
@@ -487,7 +499,7 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         };
         auth.params
             .push_read(
-                key,
+                &key,
                 Some(value.clone()),
                 quoted.is_some(),
                 Field::Credentials,

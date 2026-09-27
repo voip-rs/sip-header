@@ -3,6 +3,7 @@
 use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::ParseError;
 use crate::scrub::{merge, scrub, Scrubbed};
+use crate::QuoteStart;
 
 /// Constructor, accessors, iteration and Display for a
 /// `struct $Type(Vec<$Entry>)`.
@@ -131,6 +132,10 @@ pub(crate) trait CommaList: Sized {
     /// of the form `[ entry *(COMMA entry) ]`.
     const BLANK_ENTRIES_ARE_EMPTY: bool = false;
 
+    /// Where this grammar lets a `quoted-string` start, which decides the
+    /// commas a quote hides.
+    const QUOTE_START: QuoteStart = QuoteStart::Param;
+
     /// Parse one entry, positions relative to `entry`; `Ok(None)` drops it.
     fn parse_entry(
         entry: &str,
@@ -163,7 +168,7 @@ pub(crate) trait CommaList: Sized {
         {
             return Self::blank().map(|v| Parsed::new(v, whole.warnings));
         }
-        Self::list_from_entries(crate::split_comma_entries(raw))
+        Self::list_from_entries(crate::split_entries(raw, Self::QUOTE_START))
     }
 
     /// Parse entries already split, attributing errors and warnings to

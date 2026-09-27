@@ -388,7 +388,8 @@ impl HeaderParams {
     }
 
     /// Append one `generic-param` read from `input`, unquoting its value
-    /// and reporting its breaches at their position in `input`.
+    /// and reporting its breaches at their position in `input`; a flag
+    /// whose name was only quotes leaves nothing to append.
     pub(crate) fn push_raw(
         &mut self,
         input: &str,
@@ -396,7 +397,15 @@ impl HeaderParams {
         warnings: &mut Vec<ParseWarning>,
     ) {
         let at = offset_in(input, p.key);
-        if !is_token(p.key) {
+        p.report_name(input, warnings);
+        let name = p.name();
+        if name.is_empty()
+            && p.value
+                .is_none()
+        {
+            return;
+        }
+        if !is_token(&name) {
             warnings.push(ParseWarning::new(Field::Param, WarningCode::InvalidToken).at(at));
         }
         let (value, quoted) = match p.unquoted() {
@@ -408,7 +417,7 @@ impl HeaderParams {
             && value
                 .as_deref()
                 .is_some_and(|v| !is_bare_value(v));
-        self.push_read(p.key, value, quoted, Field::Param, at, warnings);
+        self.push_read(&name, value, quoted, Field::Param, at, warnings);
         if let Some(raw) = p
             .value
             .filter(|_| bare_breach)

@@ -247,7 +247,8 @@ pub(crate) fn parse_reason(
     let (protocol, rest) = input
         .split_once(';')
         .unwrap_or((input, ""));
-    let protocol = protocol.trim();
+    let raw_protocol = protocol.trim();
+    let protocol = crate::token_field(input, raw_protocol, Field::Protocol, warnings);
     if protocol.is_empty() {
         return Err(ParseError::malformed(
             Field::Value,
@@ -255,24 +256,26 @@ pub(crate) fn parse_reason(
             Some(0),
         ));
     }
-    if !crate::is_token(protocol) {
+    if !crate::is_token(&protocol) {
         warnings.push(
             ParseWarning::new(Field::Protocol, WarningCode::InvalidToken)
-                .at(crate::offset_in(input, protocol)),
+                .at(crate::offset_in(input, raw_protocol)),
         );
     }
-    let mut reason = SipReason::unchecked(protocol.to_string());
+    let mut reason = SipReason::unchecked(protocol.into_owned());
     for p in crate::parse_params(rest) {
         let at = crate::offset_in(input, p.key);
+        let name = p.name();
         let reserved = RESERVED
             .iter()
-            .position(|r| r.eq_ignore_ascii_case(p.key));
+            .position(|r| r.eq_ignore_ascii_case(&name));
         match reserved {
             Some(0)
                 if reason
                     .cause
                     .is_none() =>
             {
+                p.report_name(input, warnings);
                 reason.cause = parse_cause(&p, input, warnings);
             }
             Some(1)
@@ -282,6 +285,7 @@ pub(crate) fn parse_reason(
                     && p.value
                         .is_some() =>
             {
+                p.report_name(input, warnings);
                 reason.text = parse_text(&p, input, warnings);
             }
             _ => {
@@ -293,7 +297,7 @@ pub(crate) fn parse_reason(
                 } else if reserved.is_some()
                     && reason
                         .params
-                        .get(p.key)
+                        .get(&name)
                         .is_none()
                 {
                     warnings

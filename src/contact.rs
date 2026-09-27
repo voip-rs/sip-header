@@ -91,6 +91,7 @@ impl fmt::Display for ContactList {
 impl CommaList for ContactList {
     /// `None` for a `*` entry.
     type Entry = Option<SipHeaderAddr>;
+    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
 
     fn parse_entry(
         entry: &str,
