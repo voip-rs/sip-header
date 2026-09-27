@@ -11,7 +11,7 @@
 //!
 //! Gated behind the `message` feature (enabled by default).
 
-use crate::header::SipHeader;
+use sip_header_catalog::SipHeader;
 
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
 ///

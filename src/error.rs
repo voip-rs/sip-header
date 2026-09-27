@@ -256,6 +256,9 @@ pub enum FaultCode {
     NotUtf8,
     /// A value whose wire form parses as a different value.
     Unrepresentable,
+    /// A header the requested type does not hold, as
+    /// [`TypedHeader::HEADERS`](crate::TypedHeader::HEADERS) lists them.
+    WrongHeader,
 }
 
 impl FaultCode {
@@ -272,6 +275,7 @@ impl FaultCode {
             FaultCode::Misplaced => "misplaced",
             FaultCode::NotUtf8 => "not-utf8",
             FaultCode::Unrepresentable => "unrepresentable",
+            FaultCode::WrongHeader => "wrong-header",
         }
     }
 }
