@@ -8,7 +8,8 @@
 use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::error::ParseError;
+use crate::error::{FaultCode, ParseError};
+use crate::header_addr::URI_REFUSED;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 
@@ -48,7 +49,10 @@ impl fmt::Display for SipGeolocationRef {
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipGeolocationEntryParts", into = "SipGeolocationEntryParts")
+    serde(
+        try_from = "SipGeolocationEntryParts",
+        into = "SipGeolocationEntryParts"
+    )
 )]
 #[non_exhaustive]
 pub struct SipGeolocationEntry {
@@ -60,11 +64,35 @@ header_params!(SipGeolocationEntry);
 
 impl SipGeolocationEntry {
     /// An entry for `reference`, with no parameters.
-    pub fn new(reference: SipGeolocationRef) -> Self {
-        SipGeolocationEntry {
+    ///
+    /// Errors when the reference holds `<`, `>`, CR, LF or NUL, when a URL
+    /// is empty, and when a URL starts `cid:`, which reads back as a
+    /// [`Cid`](SipGeolocationRef::Cid).
+    pub fn new(reference: SipGeolocationRef) -> Result<Self, ParseError> {
+        let text = match &reference {
+            SipGeolocationRef::Cid(id) => id,
+            SipGeolocationRef::Url(url) => {
+                if url.is_empty() {
+                    return Err(ParseError::empty(Field::Reference));
+                }
+                if url
+                    .get(..4)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("cid:"))
+                {
+                    return Err(ParseError::malformed(
+                        Field::Reference,
+                        FaultCode::Ambiguous,
+                        Some(0),
+                    ));
+                }
+                url
+            }
+        };
+        crate::check::refuse(Field::Reference, text, &URI_REFUSED)?;
+        Ok(SipGeolocationEntry {
             reference,
             params: HeaderParams::default(),
-        }
+        })
     }
 
     /// The location reference inside the angle brackets.
@@ -86,13 +114,14 @@ impl fmt::Display for SipGeolocationEntry {
 /// use sip_header::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
 ///
 /// let geo = SipGeolocation::new(vec![
-///     SipGeolocationEntry::new(SipGeolocationRef::Cid("abc-123".into())),
-///     SipGeolocationEntry::new(SipGeolocationRef::Url("https://lis.example.com/held/abc".into())),
+///     SipGeolocationEntry::new(SipGeolocationRef::Cid("abc-123".into()))?,
+///     SipGeolocationEntry::new(SipGeolocationRef::Url("https://lis.example.com/held/abc".into()))?,
 /// ]);
 /// assert_eq!(geo.len(), 2);
 /// assert!(geo.cid().is_some());
 /// assert!(geo.url().is_some());
 /// assert_eq!(geo.to_string(), "<cid:abc-123>, <https://lis.example.com/held/abc>");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipGeolocation(Vec<SipGeolocationEntry>);
@@ -142,17 +171,20 @@ impl SipGeolocation {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipGeolocationEntryParts {
     reference: SipGeolocationRef,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipGeolocationEntryParts> for SipGeolocationEntry {
-    fn from(p: SipGeolocationEntryParts) -> Self {
-        SipGeolocationEntry {
+impl TryFrom<SipGeolocationEntryParts> for SipGeolocationEntry {
+    type Error = ParseError;
+
+    fn try_from(p: SipGeolocationEntryParts) -> Result<Self, Self::Error> {
+        let entry = SipGeolocationEntry {
             reference: p.reference,
             params: p.params,
-        }
+        };
+        crate::list::entry_reads_back::<SipGeolocation>(entry)
     }
 }
 
@@ -177,7 +209,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
     let Some((inner, tail)) = raw
         .strip_prefix('<')
         .and_then(|s| s.split_once('>'))
-        .filter(|(inner, _)| !inner.is_empty())
+        .filter(|(inner, _)| !inner.is_empty() && !inner.contains('<'))
     else {
         warnings.push(
             ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)

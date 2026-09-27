@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
@@ -16,7 +17,7 @@ use crate::params::HeaderParams;
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipAcceptEntryParts", into = "SipAcceptEntryParts")
+    serde(try_from = "SipAcceptEntryParts", into = "SipAcceptEntryParts")
 )]
 #[non_exhaustive]
 pub struct SipAcceptEntry {
@@ -25,20 +26,45 @@ pub struct SipAcceptEntry {
     params: HeaderParams,
 }
 
-header_params!(SipAcceptEntry);
+header_params!(SipAcceptEntry, check: check_accept_param);
+
+/// Refuses a `q` that is not an unquoted RFC 3261 §25.1 `qvalue`.
+pub(crate) fn check_accept_param(
+    key: &str,
+    value: Option<&str>,
+    quoted: bool,
+) -> Result<(), ParseError> {
+    match value {
+        Some(v) if key.eq_ignore_ascii_case("q") && (quoted || !is_qvalue(v)) => Err(
+            ParseError::malformed(Field::Qvalue, FaultCode::InvalidNumber, None),
+        ),
+        _ => Ok(()),
+    }
+}
 
 impl SipAcceptEntry {
     /// An entry for `media_type/subtype`, both lowercased, with no parameters.
-    pub fn new(media_type: impl Into<String>, subtype: impl AsRef<str>) -> Self {
-        let mut media_range = media_type.into();
-        media_range.make_ascii_lowercase();
+    ///
+    /// Errors unless both are `token`s.
+    pub fn new(
+        media_type: impl Into<String>,
+        subtype: impl AsRef<str>,
+    ) -> Result<Self, ParseError> {
+        let media_type = checked_token(Field::MediaRange, media_type.into())?;
+        let subtype = checked_token(
+            Field::MediaRange,
+            subtype
+                .as_ref()
+                .to_string(),
+        )?;
+        Ok(Self::unchecked(&media_type, &subtype))
+    }
+
+    fn unchecked(media_type: &str, subtype: &str) -> Self {
+        let mut media_range = media_type.to_ascii_lowercase();
         let slash_pos = media_range.len();
         media_range.push('/');
-        media_range.push_str(
-            &subtype
-                .as_ref()
-                .to_ascii_lowercase(),
-        );
+        media_range.push_str(&subtype.to_ascii_lowercase());
         SipAcceptEntry {
             media_range,
             slash_pos,
@@ -86,17 +112,20 @@ list_type!(SipAccept, SipAcceptEntry, sep: ", ", may_be_empty);
 struct SipAcceptEntryParts {
     media_type: String,
     subtype: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipAcceptEntryParts> for SipAcceptEntry {
-    fn from(p: SipAcceptEntryParts) -> Self {
-        SipAcceptEntry {
+impl TryFrom<SipAcceptEntryParts> for SipAcceptEntry {
+    type Error = ParseError;
+
+    fn try_from(p: SipAcceptEntryParts) -> Result<Self, Self::Error> {
+        let entry = SipAcceptEntry {
             params: p.params,
-            ..SipAcceptEntry::new(p.media_type, p.subtype)
-        }
+            ..SipAcceptEntry::unchecked(&p.media_type, &p.subtype)
+        };
+        crate::list::entry_reads_back::<SipAccept>(entry)
     }
 }
 
@@ -152,7 +181,7 @@ fn parse_accept_entry(
 
     Ok(SipAcceptEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptEntry::new(type_str, subtype_str)
+        ..SipAcceptEntry::unchecked(type_str, subtype_str)
     })
 }
 

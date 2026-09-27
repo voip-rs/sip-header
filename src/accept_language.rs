@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use crate::accept::{flag_invalid_token, missing_entry, read_accept_params};
+use crate::accept::{check_accept_param, flag_invalid_token, missing_entry, read_accept_params};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
@@ -17,7 +17,7 @@ use crate::params::HeaderParams;
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
     serde(
-        from = "SipAcceptLanguageEntryParts",
+        try_from = "SipAcceptLanguageEntryParts",
         into = "SipAcceptLanguageEntryParts"
     )
 )]
@@ -27,12 +27,28 @@ pub struct SipAcceptLanguageEntry {
     params: HeaderParams,
 }
 
-header_params!(SipAcceptLanguageEntry);
+header_params!(SipAcceptLanguageEntry, check: check_accept_param);
 
 impl SipAcceptLanguageEntry {
     /// An entry for the given language range, lowercased, with no parameters.
-    pub fn new(language: impl Into<String>) -> Self {
-        let mut language = language.into();
+    ///
+    /// Errors unless it is an RFC 3261 §20.3 `language-range`.
+    pub fn new(language: impl Into<String>) -> Result<Self, ParseError> {
+        let language = language.into();
+        if language.is_empty() {
+            return Err(ParseError::empty(Field::Language));
+        }
+        if !is_language_range(&language) {
+            return Err(ParseError::malformed(
+                Field::Language,
+                FaultCode::InvalidChar,
+                None,
+            ));
+        }
+        Ok(Self::unchecked(language))
+    }
+
+    fn unchecked(mut language: String) -> Self {
         language.make_ascii_lowercase();
         SipAcceptLanguageEntry {
             language,
@@ -69,17 +85,20 @@ list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", may_be_empty);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAcceptLanguageEntryParts {
     language: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipAcceptLanguageEntryParts> for SipAcceptLanguageEntry {
-    fn from(p: SipAcceptLanguageEntryParts) -> Self {
-        SipAcceptLanguageEntry {
+impl TryFrom<SipAcceptLanguageEntryParts> for SipAcceptLanguageEntry {
+    type Error = ParseError;
+
+    fn try_from(p: SipAcceptLanguageEntryParts) -> Result<Self, Self::Error> {
+        let entry = SipAcceptLanguageEntry {
             params: p.params,
-            ..SipAcceptLanguageEntry::new(p.language)
-        }
+            ..SipAcceptLanguageEntry::unchecked(p.language)
+        };
+        crate::list::entry_reads_back::<SipAcceptLanguage>(entry)
     }
 }
 
@@ -124,7 +143,7 @@ fn parse_entry(
 
     Ok(SipAcceptLanguageEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptLanguageEntry::new(lang_part)
+        ..SipAcceptLanguageEntry::unchecked(lang_part.to_string())
     })
 }
 

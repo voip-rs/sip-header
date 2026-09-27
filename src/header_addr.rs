@@ -40,7 +40,7 @@ use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
 /// use sip_header::sip_uri::{Host, SipUri};
 /// use sip_header::SipHeaderAddr;
 ///
-/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("example.com".into())).with_user("alice").into())
+/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("example.com".into())).with_user("alice").into())?
 ///     .with_display_name("Alice")?
 ///     .with_tag("abc123")?;
 /// assert_eq!(addr.tag(), Some("abc123"));
@@ -69,6 +69,14 @@ const RESERVED: &[&str] = &["tag"];
 
 header_params!(SipHeaderAddr, reserved: RESERVED);
 
+/// The `tag` [`SipHeaderAddr::with_tag`] writes.
+#[cfg(feature = "serde")]
+fn tag_form(value: Option<&str>) -> bool {
+    value.is_some_and(crate::is_token)
+}
+
+/// `tag` holds the first `tag` parameter when it is a bare `token`; any
+/// other `tag` stays in `params`.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipHeaderAddrParts {
@@ -77,7 +85,7 @@ struct SipHeaderAddrParts {
     uri: sip_uri::Uri,
     #[serde(default)]
     tag: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
@@ -86,29 +94,30 @@ impl TryFrom<SipHeaderAddrParts> for SipHeaderAddr {
     type Error = ParseError;
 
     fn try_from(parts: SipHeaderAddrParts) -> Result<Self, Self::Error> {
-        parts
-            .params
-            .refuse_reserved(RESERVED)?;
-        let mut addr = SipHeaderAddr {
+        let mut params = parts.params;
+        params.restore_first(
+            "tag",
+            parts
+                .tag
+                .map(Some),
+            tag_form,
+        )?;
+        let addr = SipHeaderAddr {
             display_name: parts.display_name,
             uri: parts.uri,
-            params: parts.params,
+            params,
         };
-        if let Some(tag) = parts.tag {
-            addr = addr.with_tag(tag)?;
-        }
-        Ok(addr)
+        crate::check::reads_back(addr, SipHeaderAddr::parse)
     }
 }
 
 #[cfg(feature = "serde")]
 impl From<SipHeaderAddr> for SipHeaderAddrParts {
     fn from(addr: SipHeaderAddr) -> Self {
-        let tag = addr
-            .tag()
-            .map(str::to_string);
         let mut params = addr.params;
-        params.remove(RESERVED);
+        let tag = params
+            .take_first("tag", tag_form)
+            .flatten();
         SipHeaderAddrParts {
             display_name: addr.display_name,
             uri: addr.uri,
@@ -118,45 +127,46 @@ impl From<SipHeaderAddr> for SipHeaderAddrParts {
     }
 }
 
+/// What a URI inside `<…>` cannot hold: the brackets themselves, and CR,
+/// LF and NUL.
+pub(crate) const URI_REFUSED: [char; 5] = ['<', '>', '\r', '\n', '\0'];
+
 impl SipHeaderAddr {
-    /// Create a new `SipHeaderAddr` with the given URI and no display name or params.
-    pub fn new(uri: sip_uri::Uri) -> Self {
-        SipHeaderAddr {
+    /// An address for `uri`, with no display name or parameters.
+    ///
+    /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL.
+    pub fn new(uri: sip_uri::Uri) -> Result<Self, ParseError> {
+        crate::check::refuse(Field::Addr, &uri.to_string(), &URI_REFUSED)?;
+        Ok(SipHeaderAddr {
             display_name: None,
             uri,
             params: HeaderParams::default(),
-        }
+        })
     }
 
     /// Set the display name, rejecting what an RFC 3261 §25.1
     /// `quoted-string` cannot carry.
     ///
-    /// Any text is accepted except CR and LF: characters outside `qdtext`
-    /// are emitted as `quoted-pair`. [`Display`](fmt::Display) quotes the
-    /// name unless it is a single `token`.
+    /// Any text is accepted except CR, LF and NUL: characters outside
+    /// `qdtext` are emitted as `quoted-pair`. [`Display`](fmt::Display)
+    /// quotes the name unless it is a single `token`.
     ///
     /// ```
     /// use sip_header::SipHeaderAddr;
     /// use sip_uri::{Uri, UriParse};
     ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
     ///     .with_display_name("Alice Smith")?;
     /// assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>"#);
-    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    /// assert!(SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
     ///     .with_display_name("a\r\nb")
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn with_display_name(mut self, name: impl Into<String>) -> Result<Self, ParseError> {
         let name = name.into();
-        if let Some(pos) = name.find(['\r', '\n']) {
-            return Err(ParseError::malformed(
-                Field::DisplayName,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
-        }
-        self.display_name = Some(name);
+        crate::check::refuse_controls(Field::DisplayName, &name)?;
+        self.display_name = (!name.is_empty()).then_some(name);
         Ok(self)
     }
 
@@ -168,7 +178,7 @@ impl SipHeaderAddr {
     /// use sip_header::SipHeaderAddr;
     /// use sip_uri::{Uri, UriParse};
     ///
-    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)
+    /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
     ///     .with_param("lr", None::<&str>)?
     ///     .with_param("note", Some("a;b"))?
     ///     .with_tag("abc")?;
@@ -278,7 +288,7 @@ impl HeaderParse for SipHeaderAddr {
     /// Parse leniently; an addr-spec without angle brackets keeps any `;params`
     /// as URI parameters (RFC 3261 §20.10).
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        parse_addr(input)
+        crate::scrub::parse_scrubbed(input, parse_addr)
     }
 }
 
@@ -308,9 +318,11 @@ impl AddrParts for SipHeaderAddr {
                 .decode_utf8()
                 .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
                 .and_then(|decoded| {
-                    let mut warnings = Vec::new();
-                    let value = parse_reason(&decoded, &mut warnings)?;
-                    Ok(Parsed::new(value, warnings))
+                    crate::scrub::parse_scrubbed(&decoded, |s| {
+                        let mut warnings = Vec::new();
+                        let value = parse_reason(s, &mut warnings)?;
+                        Ok(Parsed::new(value, warnings))
+                    })
                 }),
         )
     }
@@ -426,7 +438,12 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
 
     let Some(open) = open else {
         let uri = parse_uri(s, lead, &mut warnings)?;
-        return Ok(Parsed::new(SipHeaderAddr::new(uri), warnings));
+        let addr = SipHeaderAddr {
+            display_name: None,
+            uri,
+            params: HeaderParams::default(),
+        };
+        return Ok(Parsed::new(addr, warnings));
     };
     let (start, end, after) = angle_uri(s, open, lead)?;
     let uri = parse_uri(&s[start..end], lead + start, &mut warnings)?;
@@ -658,7 +675,7 @@ mod tests {
     #[test]
     fn builder_new() {
         let uri = sip_uri::Uri::parse("sip:alice@example.com").unwrap();
-        let addr = SipHeaderAddr::new(uri);
+        let addr = SipHeaderAddr::new(uri).unwrap();
         assert_eq!(addr.display_name(), None);
         assert!(addr
             .params()
@@ -667,7 +684,7 @@ mod tests {
     }
 
     fn example_addr() -> SipHeaderAddr {
-        SipHeaderAddr::new(sip_uri::Uri::parse("sip:alice@example.com").unwrap())
+        SipHeaderAddr::new(sip_uri::Uri::parse("sip:alice@example.com").unwrap()).unwrap()
     }
 
     #[test]
@@ -799,6 +816,7 @@ mod tests {
     fn builder_with_display_name_and_params() {
         let uri = sip_uri::Uri::parse("sip:alice@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
+            .unwrap()
             .with_display_name("Alice")
             .unwrap()
             .with_tag("abc123")
@@ -812,6 +830,7 @@ mod tests {
     fn builder_flag_param() {
         let uri = sip_uri::Uri::parse("sip:proxy@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
+            .unwrap()
             .with_param("lr", None::<String>)
             .unwrap();
         assert_eq!(addr.param("lr"), Some(None));

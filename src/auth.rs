@@ -1,12 +1,16 @@
 //! SIP authentication value parser (RFC 3261 §20.7, §20.27, §20.28, §20.44).
 
 use std::fmt::{self, Write as _};
+use std::hash::{Hash, Hasher};
 
+use sip_uri::{UriParse, UriRedact};
+
+use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::ParseError;
+use crate::error::{FaultCode, ParseError};
 use crate::is_token;
 use crate::params::HeaderParams;
-use crate::traits::{sealed, HeaderParse};
+use crate::traits::{sealed, HeaderParse, Redact};
 
 /// SIP authentication value.
 ///
@@ -19,14 +23,23 @@ use crate::traits::{sealed, HeaderParse};
 /// ```
 /// use sip_header::SipAuthValue;
 ///
-/// let auth = SipAuthValue::new("Digest")
+/// let auth = SipAuthValue::new("Digest")?
 ///     .with_quoted_param("realm", "example.com")?
 ///     .with_param("algorithm", "MD5")?;
 /// assert_eq!(auth.to_string(), r#"Digest realm="example.com", algorithm=MD5"#);
-/// assert_eq!(SipAuthValue::from_token68("Bearer", "abc.def").to_string(), "Bearer abc.def");
+/// assert_eq!(SipAuthValue::from_token68("Bearer", "abc.def")?.to_string(), "Bearer abc.def");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// The scheme compares case-insensitively (RFC 9110 §11.1) and keeps the
+/// case it was written in; parameters compare as [`HeaderParams`] does and
+/// a `token68` byte for byte. [`Hash`] follows the same rule.
+///
+/// [`Debug`](fmt::Debug) masks the `token68` and the values of `response`,
+/// `nonce`, `cnonce`, `nextnonce`, `rspauth` and `auts`.
+#[derive(Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -39,23 +52,58 @@ pub struct SipAuthValue {
     token68: Option<String>,
 }
 
+/// Parameters whose value Debug and Redact mask: a Digest (RFC 7616)
+/// response, the nonces it is computed over, the server's proof, and the
+/// AKA (RFC 3310) resynchronisation token.
+const CREDENTIAL_PARAMS: &[&str] = &[
+    "response",
+    "nonce",
+    "cnonce",
+    "nextnonce",
+    "rspauth",
+    "auts",
+];
+
 impl SipAuthValue {
-    /// A value with the given scheme and no parameters.
-    pub fn new(scheme: impl Into<String>) -> Self {
+    fn unchecked(scheme: String) -> Self {
         SipAuthValue {
-            scheme: scheme.into(),
+            scheme,
             params: HeaderParams::default(),
             token68: None,
         }
     }
 
-    /// A value carrying a `token68` credential (RFC 7235 §2.1) instead of
+    /// A value with the given scheme and no parameters.
+    ///
+    /// Errors unless the scheme is a `token`.
+    pub fn new(scheme: impl Into<String>) -> Result<Self, ParseError> {
+        checked_token(Field::Scheme, scheme.into()).map(Self::unchecked)
+    }
+
+    /// A value carrying a `token68` credential (RFC 9110 §11.2) instead of
     /// parameters.
-    pub fn from_token68(scheme: impl Into<String>, token68: impl Into<String>) -> Self {
-        SipAuthValue {
-            token68: Some(token68.into()),
-            ..Self::new(scheme)
+    ///
+    /// Errors unless the scheme is a `token` and `token68` matches its
+    /// grammar.
+    pub fn from_token68(
+        scheme: impl Into<String>,
+        token68: impl Into<String>,
+    ) -> Result<Self, ParseError> {
+        let token68 = token68.into();
+        if token68.is_empty() {
+            return Err(ParseError::empty(Field::Credentials));
         }
+        if !is_token68(&token68) {
+            return Err(ParseError::malformed(
+                Field::Credentials,
+                FaultCode::InvalidChar,
+                None,
+            ));
+        }
+        Ok(SipAuthValue {
+            token68: Some(token68),
+            ..Self::new(scheme)?
+        })
     }
 
     fn set(mut self, key: &str, value: String, quoted: bool) -> Result<Self, ParseError> {
@@ -181,38 +229,177 @@ impl fmt::Display for SipAuthValue {
     }
 }
 
+impl PartialEq for SipAuthValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.scheme
+            .eq_ignore_ascii_case(&other.scheme)
+            && self.params == other.params
+            && self.token68 == other.token68
+    }
+}
+
+impl Eq for SipAuthValue {}
+
+impl Hash for SipAuthValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for b in self
+            .scheme
+            .bytes()
+        {
+            state.write_u8(b.to_ascii_lowercase());
+        }
+        state.write_u8(0xff);
+        self.params
+            .hash(state);
+        self.token68
+            .hash(state);
+    }
+}
+
+fn is_credential(name: &str) -> bool {
+    CREDENTIAL_PARAMS
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(name))
+}
+
+const MASK: &str = "***";
+
+impl fmt::Debug for SipAuthValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct Params<'a>(&'a HeaderParams);
+
+        impl fmt::Debug for Params<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list()
+                    .entries(
+                        self.0
+                            .iter()
+                            .map(|(name, value)| {
+                                (
+                                    name,
+                                    value.map(|v| if is_credential(name) { MASK } else { v }),
+                                )
+                            }),
+                    )
+                    .finish()
+            }
+        }
+
+        f.debug_struct("SipAuthValue")
+            .field("scheme", &self.scheme)
+            .field("params", &Params(&self.params))
+            .field(
+                "token68",
+                &self
+                    .token68
+                    .as_ref()
+                    .map(|_| MASK),
+            )
+            .finish()
+    }
+}
+
+impl Redact for SipAuthValue {
+    /// Render for logs: the `token68` and credential values as `***`,
+    /// `username` as `***` unless `how` shows the user part, and `uri`
+    /// through sip-uri's redaction (`***` when it is no URI).
+    ///
+    /// ```
+    /// use sip_header::{HeaderParse, Redact, SipAuthValue};
+    /// use sip_uri::Redaction;
+    ///
+    /// let auth = SipAuthValue::parse(
+    ///     r#"Digest username="alice", uri="sip:+15551234567@example.com", response="6629f""#,
+    /// )?;
+    /// assert_eq!(
+    ///     auth.redacted(Redaction::default()).to_string(),
+    ///     r#"Digest username="***", uri="sip:***@example.com", response="***""#
+    /// );
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a {
+        RedactedAuth { auth: self, how }
+    }
+}
+
+struct RedactedAuth<'a> {
+    auth: &'a SipAuthValue,
+    how: sip_uri::Redaction<'a>,
+}
+
+impl fmt::Display for RedactedAuth<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            &self
+                .auth
+                .scheme,
+        )?;
+        if self
+            .auth
+            .token68
+            .is_some()
+        {
+            return write!(f, " {MASK}");
+        }
+        let shows_user = self
+            .how
+            .user_mask()
+            == sip_uri::UserMask::Visible;
+        for (i, (name, value, quoted)) in self
+            .auth
+            .params
+            .iter_quoted()
+            .enumerate()
+        {
+            f.write_str(if i == 0 { " " } else { ", " })?;
+            f.write_str(name)?;
+            let Some(value) = value else {
+                continue;
+            };
+            f.write_char('=')?;
+            let masked = if is_credential(name) || (name == "username" && !shows_user) {
+                MASK.to_string()
+            } else if name == "uri" {
+                sip_uri::Uri::parse(value).map_or_else(
+                    |_| MASK.to_string(),
+                    |uri| {
+                        uri.redacted(self.how)
+                            .to_string()
+                    },
+                )
+            } else {
+                value.to_string()
+            };
+            if quoted {
+                crate::write_quoted_pair(f, &masked)?;
+            } else {
+                f.write_str(&masked)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAuthValueParts {
     scheme: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
     token68: Option<String>,
 }
 
 #[cfg(feature = "serde")]
 impl TryFrom<SipAuthValueParts> for SipAuthValue {
-    type Error = &'static str;
+    type Error = ParseError;
 
     fn try_from(p: SipAuthValueParts) -> Result<Self, Self::Error> {
-        if p.token68
-            .is_some()
-            && !p
-                .params
-                .is_empty()
-        {
-            return Err("an auth value holds a token68 or parameters, not both");
-        }
-        if p.params
-            .has_flag()
-        {
-            return Err("an auth-param needs a value");
-        }
-        Ok(SipAuthValue {
+        let auth = SipAuthValue {
             scheme: p.scheme,
             params: p.params,
             token68: p.token68,
-        })
+        };
+        crate::check::reads_back(auth, SipAuthValue::parse)
     }
 }
 
@@ -231,8 +418,10 @@ impl sealed::Sealed for SipAuthValue {}
 
 impl HeaderParse for SipAuthValue {
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        let mut warnings = Vec::new();
-        parse_auth(input, &mut warnings).map(|v| Parsed::new(v, warnings))
+        crate::scrub::parse_scrubbed(input, |input| {
+            let mut warnings = Vec::new();
+            parse_auth(input, &mut warnings).map(|v| Parsed::new(v, warnings))
+        })
     }
 }
 
@@ -242,17 +431,24 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Err(ParseError::empty(Field::Value));
     }
 
-    // Find the first whitespace to split scheme from params
-    let (scheme, rest) = match s.split_once(|c: char| c.is_ascii_whitespace()) {
-        Some((scheme, rest)) => (scheme, rest.trim_start()),
-        None => return Ok(SipAuthValue::new(s)),
-    };
-
+    let (scheme, rest) = s
+        .split_once(|c: char| c.is_ascii_whitespace())
+        .map_or((s, ""), |(scheme, rest)| (scheme, rest.trim_start()));
+    if !is_token(scheme) {
+        warnings.push(
+            ParseWarning::new(Field::Scheme, WarningCode::InvalidToken)
+                .at(crate::offset_in(input, scheme)),
+        );
+    }
+    let mut auth = SipAuthValue::unchecked(scheme.to_string());
+    if rest.is_empty() {
+        return Ok(auth);
+    }
     if is_token68(rest) {
-        return Ok(SipAuthValue::from_token68(scheme, rest));
+        auth.token68 = Some(rest.to_string());
+        return Ok(auth);
     }
 
-    let mut auth = SipAuthValue::new(scheme);
     for param_str in crate::split_comma_entries(rest) {
         let param_str = param_str.trim();
         if param_str.is_empty() {

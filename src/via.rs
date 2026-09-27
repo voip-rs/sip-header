@@ -10,16 +10,16 @@ use sip_uri::UriParse;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
-use crate::params::HeaderParams;
-use crate::RawParam;
+use crate::params::{checked_token, HeaderParams};
+use crate::{is_token, RawParam};
 
 /// A single Via entry.
 ///
 /// ```
 /// use sip_header::SipViaEntry;
 ///
-/// let via = SipViaEntry::new("SIP", "2.0", "UDP")
-///     .with_host("2001:db8::1")
+/// let via = SipViaEntry::new("SIP", "2.0", "UDP")?
+///     .with_host("2001:db8::1")?
 ///     .with_port(5060)
 ///     .with_rport(None)
 ///     .with_param("branch", Some("z9hG4bK776"))?;
@@ -53,15 +53,26 @@ header_params!(SipViaEntry, reserved: RESERVED);
 
 impl SipViaEntry {
     /// An entry with the given `sent-protocol` and no host, port or params.
+    ///
+    /// Errors unless each part is a non-empty `token`.
     pub fn new(
         protocol: impl Into<String>,
         version: impl Into<String>,
         transport: impl Into<String>,
-    ) -> Self {
+    ) -> Result<Self, ParseError> {
+        let token = |part: String| checked_token(Field::SentProtocol, part);
+        Ok(SipViaEntry::unchecked(
+            token(protocol.into())?,
+            token(version.into())?,
+            token(transport.into())?,
+        ))
+    }
+
+    fn unchecked(protocol_name: String, protocol_version: String, transport: String) -> Self {
         SipViaEntry {
-            protocol_name: protocol.into(),
-            protocol_version: version.into(),
-            transport: transport.into(),
+            protocol_name,
+            protocol_version,
+            transport,
             host: None,
             port: None,
             params: HeaderParams::default(),
@@ -70,14 +81,34 @@ impl SipViaEntry {
     }
 
     /// Set the `sent-by` host, IPv6 with or without brackets.
-    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+    ///
+    /// Errors unless the host reads under sip-uri's strict host grammar.
+    pub fn with_host(mut self, host: impl Into<String>) -> Result<Self, ParseError> {
         let host = host.into();
         let bare = host
             .strip_prefix('[')
             .and_then(|h| h.strip_suffix(']'))
-            .map(str::to_string);
-        self.host = Some(bare.unwrap_or(host));
-        self
+            .unwrap_or(&host);
+        if bare.is_empty() {
+            return Err(ParseError::empty(Field::SentBy));
+        }
+        crate::check::refuse_controls(Field::SentBy, bare)?;
+        let wire = if bare.contains(':') {
+            format!("[{bare}]")
+        } else {
+            bare.to_string()
+        };
+        let mut warnings = Vec::new();
+        read_host(&wire, 0, &mut warnings)?;
+        if let Some(w) = warnings.first() {
+            return Err(ParseError::malformed(
+                Field::SentBy,
+                FaultCode::InvalidChar,
+                w.position,
+            ));
+        }
+        self.host = Some(bare.to_string());
+        Ok(self)
     }
 
     /// Set the `sent-by` port.
@@ -173,8 +204,9 @@ impl fmt::Display for SipViaEntry {
 /// ```
 /// use sip_header::{SipVia, SipViaEntry};
 ///
-/// let via = SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "UDP").with_host("198.51.100.1")]).unwrap();
+/// let via = SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "UDP")?.with_host("198.51.100.1")?]).unwrap();
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP 198.51.100.1");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -182,6 +214,8 @@ pub struct SipVia(Vec<SipViaEntry>);
 
 list_type!(SipVia, SipViaEntry, sep: ", ", non_empty);
 
+/// `rport` holds the first `rport` parameter when it is the flag or a port
+/// as [`SipViaEntry::with_rport`] writes it; any other stays in `params`.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipViaEntryParts {
@@ -197,8 +231,17 @@ struct SipViaEntryParts {
         deserialize_with = "present"
     )]
     rport: Option<Option<u16>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
+}
+
+/// The `rport` [`SipViaEntry::with_rport`] writes.
+#[cfg(feature = "serde")]
+fn rport_form(value: Option<&str>) -> bool {
+    value.map_or(true, |v| {
+        v.parse::<u16>()
+            .is_ok_and(|p| p.to_string() == v)
+    })
 }
 
 /// A field that is present, null or not, as `Some`.
@@ -212,20 +255,27 @@ impl TryFrom<SipViaEntryParts> for SipViaEntry {
     type Error = ParseError;
 
     fn try_from(p: SipViaEntryParts) -> Result<Self, Self::Error> {
-        p.params
-            .refuse_reserved(RESERVED)?;
-        let mut via = SipViaEntry::new(p.protocol, p.version, p.transport);
-        if let Some(host) = p.host {
-            via = via.with_host(host);
-        }
-        if let Some(port) = p.port {
-            via = via.with_port(port);
-        }
-        via.params = p.params;
-        Ok(match p.rport {
-            Some(rport) => via.with_rport(rport),
-            None => via,
-        })
+        let mut params = p.params;
+        let rport = p
+            .rport
+            .map(|r| r.map(|port| port.to_string()));
+        params.restore_first("rport", rport, rport_form)?;
+        let rport = params
+            .get("rport")
+            .map(|v| {
+                v.map(str::parse::<u16>)
+                    .transpose()
+            })
+            .transpose()
+            .map_err(|_| ParseError::malformed(Field::Param, FaultCode::InvalidNumber, None))?;
+        let via = SipViaEntry {
+            host: p.host,
+            port: p.port,
+            params,
+            rport,
+            ..SipViaEntry::unchecked(p.protocol, p.version, p.transport)
+        };
+        crate::list::entry_reads_back::<SipVia>(via)
     }
 }
 
@@ -233,14 +283,22 @@ impl TryFrom<SipViaEntryParts> for SipViaEntry {
 impl From<SipViaEntry> for SipViaEntryParts {
     fn from(e: SipViaEntry) -> Self {
         let mut params = e.params;
-        params.remove(RESERVED);
+        let rport = params
+            .take_first("rport", rport_form)
+            // rport_form admits only the flag and a u16.
+            .map(|r| {
+                r.and_then(|v| {
+                    v.parse()
+                        .ok()
+                })
+            });
         SipViaEntryParts {
             protocol: e.protocol_name,
             version: e.protocol_version,
             transport: e.transport,
             host: e.host,
             port: e.port,
-            rport: e.rport,
+            rport,
             params,
         }
     }
@@ -268,16 +326,14 @@ fn parse_via_entry(
     };
 
     let (protocol_name, protocol_version, transport, sent_by) =
-        parse_sent_protocol(entry, main_part)?;
+        parse_sent_protocol(entry, main_part, warnings)?;
     let (host, port) = parse_host_port(entry, sent_by, warnings)?;
 
-    let mut via = SipViaEntry::new(protocol_name, protocol_version, transport);
-    if let Some(host) = host {
-        via = via.with_host(host);
-    }
-    if let Some(port) = port {
-        via = via.with_port(port);
-    }
+    let mut via = SipViaEntry {
+        host,
+        port,
+        ..SipViaEntry::unchecked(protocol_name, protocol_version, transport)
+    };
     for p in crate::parse_params(params_part.unwrap_or("")) {
         if via
             .rport
@@ -312,10 +368,12 @@ fn read_rport(entry: &str, p: &RawParam<'_>) -> Result<Option<u16>, ParseError> 
 }
 
 /// Split `sent-protocol LWS sent-by` into its parts, allowing SWS around
-/// each `/` (RFC 3261 §25.1 `SLASH`).
+/// each `/` (RFC 3261 §25.1 `SLASH`), and raise
+/// [`WarningCode::InvalidToken`] on a part that is not a `token`.
 fn parse_sent_protocol<'a>(
     entry: &str,
     main: &'a str,
+    warnings: &mut Vec<ParseWarning>,
 ) -> Result<(String, String, String, &'a str), ParseError> {
     let missing_slash = || ParseError::malformed(Field::SentProtocol, FaultCode::Missing, None);
     let (name_raw, rest) = main
@@ -331,22 +389,25 @@ fn parse_sent_protocol<'a>(
             .unwrap_or(rest.len()),
     );
     sent_by = sent_by.trim();
-    // RFC 3261 §25.1 transport is a non-empty token; an empty one directly
-    // before sent-by (`SIP/2.0/ host`) stays accepted.
+    // An empty transport directly before sent-by (`SIP/2.0/ host`) is kept.
     if sent_by.is_empty()
         && after_slash.starts_with(char::is_whitespace)
         && name == name_raw
         && version == version_raw
     {
-        (transport, sent_by) = ("", transport);
+        (transport, sent_by) = (&after_slash[..0], transport);
     }
     for part in [name, version, transport] {
+        let at = crate::offset_in(entry, part);
         if let Some(i) = part.find(|c: char| c == '/' || c.is_whitespace()) {
             return Err(ParseError::malformed(
                 Field::SentProtocol,
                 FaultCode::InvalidChar,
-                Some(crate::offset_in(entry, part) + i),
+                Some(at + i),
             ));
+        }
+        if !is_token(part) {
+            warnings.push(ParseWarning::new(Field::SentProtocol, WarningCode::InvalidToken).at(at));
         }
     }
     Ok((name.into(), version.into(), transport.into(), sent_by))
@@ -419,7 +480,21 @@ fn parse_host_port(
         );
         return Ok((None, port));
     }
-    let offset = crate::offset_in(entry, host);
+    read_host(host, crate::offset_in(entry, host), warnings)?;
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok((Some(bare.to_string()), port))
+}
+
+/// Read `host`, `offset` bytes into the caller's input, by sip-uri's host
+/// grammar, forwarding its warnings.
+fn read_host(
+    host: &str,
+    offset: usize,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<(), ParseError> {
     let parsed =
         sip_uri::Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset))?;
     warnings.extend(
@@ -428,11 +503,7 @@ fn parse_host_port(
             .into_iter()
             .map(|w| ParseWarning::from_uri(w, offset)),
     );
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-    Ok((Some(bare.to_string()), port))
+    Ok(())
 }
 
 #[cfg(test)]

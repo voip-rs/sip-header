@@ -5,7 +5,8 @@
 
 use std::fmt;
 
-use crate::accept::{flag_invalid_token, missing_entry, read_accept_params};
+use crate::accept::{check_accept_param, flag_invalid_token, missing_entry, read_accept_params};
+use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
@@ -18,7 +19,7 @@ use crate::params::HeaderParams;
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
     serde(
-        from = "SipAcceptEncodingEntryParts",
+        try_from = "SipAcceptEncodingEntryParts",
         into = "SipAcceptEncodingEntryParts"
     )
 )]
@@ -28,12 +29,17 @@ pub struct SipAcceptEncodingEntry {
     params: HeaderParams,
 }
 
-header_params!(SipAcceptEncodingEntry);
+header_params!(SipAcceptEncodingEntry, check: check_accept_param);
 
 impl SipAcceptEncodingEntry {
     /// An entry for the given content-coding, lowercased, with no parameters.
-    pub fn new(encoding: impl Into<String>) -> Self {
-        let mut encoding = encoding.into();
+    ///
+    /// Errors unless the coding is a `token`.
+    pub fn new(encoding: impl Into<String>) -> Result<Self, ParseError> {
+        checked_token(Field::Coding, encoding.into()).map(Self::unchecked)
+    }
+
+    fn unchecked(mut encoding: String) -> Self {
         encoding.make_ascii_lowercase();
         SipAcceptEncodingEntry {
             encoding,
@@ -70,17 +76,20 @@ list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", may_be_empty);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAcceptEncodingEntryParts {
     encoding: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipAcceptEncodingEntryParts> for SipAcceptEncodingEntry {
-    fn from(p: SipAcceptEncodingEntryParts) -> Self {
-        SipAcceptEncodingEntry {
+impl TryFrom<SipAcceptEncodingEntryParts> for SipAcceptEncodingEntry {
+    type Error = ParseError;
+
+    fn try_from(p: SipAcceptEncodingEntryParts) -> Result<Self, Self::Error> {
+        let entry = SipAcceptEncodingEntry {
             params: p.params,
-            ..SipAcceptEncodingEntry::new(p.encoding)
-        }
+            ..SipAcceptEncodingEntry::unchecked(p.encoding)
+        };
+        crate::list::entry_reads_back::<SipAcceptEncoding>(entry)
     }
 }
 
@@ -125,7 +134,7 @@ fn parse_entry(
 
     Ok(SipAcceptEncodingEntry {
         params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
-        ..SipAcceptEncodingEntry::new(encoding_part)
+        ..SipAcceptEncodingEntry::unchecked(encoding_part.to_string())
     })
 }
 

@@ -13,6 +13,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
+use crate::header_addr::URI_REFUSED;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 
@@ -21,7 +22,7 @@ use crate::params::HeaderParams;
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "UriInfoEntryParts", into = "UriInfoEntryParts")
+    serde(try_from = "UriInfoEntryParts", into = "UriInfoEntryParts")
 )]
 #[non_exhaustive]
 pub struct UriInfoEntry {
@@ -33,9 +34,20 @@ header_params!(UriInfoEntry);
 
 impl UriInfoEntry {
     /// An entry for `uri`, written inside angle brackets, with no parameters.
-    pub fn new(uri: impl Into<String>) -> Self {
+    ///
+    /// Errors when `uri` is empty or holds `<`, `>`, CR, LF or NUL.
+    pub fn new(uri: impl Into<String>) -> Result<Self, ParseError> {
+        let uri = uri.into();
+        if uri.is_empty() {
+            return Err(ParseError::empty(Field::Addr));
+        }
+        crate::check::refuse(Field::Addr, &uri, &URI_REFUSED)?;
+        Ok(Self::unchecked(uri))
+    }
+
+    fn unchecked(uri: String) -> Self {
         UriInfoEntry {
-            uri: uri.into(),
+            uri,
             params: HeaderParams::default(),
         }
     }
@@ -66,8 +78,8 @@ impl fmt::Display for UriInfoEntry {
 /// use sip_header::{UriInfo, UriInfoEntry};
 ///
 /// let info = UriInfo::new(vec![
-///     UriInfoEntry::new("urn:example:call:123").with_param("purpose", Some("emergency-CallId"))?,
-///     UriInfoEntry::new("https://example.com/data"),
+///     UriInfoEntry::new("urn:example:call:123")?.with_param("purpose", Some("emergency-CallId"))?,
+///     UriInfoEntry::new("https://example.com/data")?,
 /// ])
 /// .unwrap();
 /// assert_eq!(info.to_string(), "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>");
@@ -83,17 +95,20 @@ list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UriInfoEntryParts {
     uri: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<UriInfoEntryParts> for UriInfoEntry {
-    fn from(p: UriInfoEntryParts) -> Self {
-        UriInfoEntry {
+impl TryFrom<UriInfoEntryParts> for UriInfoEntry {
+    type Error = ParseError;
+
+    fn try_from(p: UriInfoEntryParts) -> Result<Self, Self::Error> {
+        let entry = UriInfoEntry {
             params: p.params,
-            ..UriInfoEntry::new(p.uri)
-        }
+            ..UriInfoEntry::unchecked(p.uri)
+        };
+        crate::list::entry_reads_back::<UriInfo>(entry)
     }
 }
 
@@ -139,7 +154,8 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
             )
         }
     };
-    if data.is_empty() {
+    // A `<` left inside the data would reframe the list when written back.
+    if data.is_empty() || data.contains('<') {
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
         return None;
     }
@@ -149,7 +165,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
 
     Some(UriInfoEntry {
         params: HeaderParams::read(entry, params, warnings),
-        ..UriInfoEntry::new(data)
+        ..UriInfoEntry::unchecked(data.to_string())
     })
 }
 

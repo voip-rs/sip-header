@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn display_addr() {
         let addr = sip_uri::Uri::parse("sip:alice@198.51.100.1").unwrap();
-        let cv = ContactValue::Addr(Box::new(SipHeaderAddr::new(addr)));
+        let cv = ContactValue::Addr(Box::new(SipHeaderAddr::new(addr).unwrap()));
         assert!(cv
             .to_string()
             .contains("alice"));

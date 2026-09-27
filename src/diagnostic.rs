@@ -113,6 +113,14 @@ impl ParseWarning {
         }
     }
 
+    /// Move the position through `f`.
+    pub(crate) fn map_position(mut self, f: impl Fn(usize) -> usize) -> Self {
+        self.position = self
+            .position
+            .map(f);
+        self
+    }
+
     /// Attribute the warning to list entry `entry`.
     pub fn in_entry(mut self, entry: usize) -> Self {
         self.entry = Some(entry);
@@ -172,6 +180,8 @@ pub enum Field {
     Text,
     /// Reason `cause`.
     Cause,
+    /// Reason `protocol`.
+    Protocol,
     /// History-Info `index`.
     Index,
     /// Authentication scheme.
@@ -210,6 +220,7 @@ impl fmt::Display for Field {
             Field::Agent => "warn-agent",
             Field::Text => "text",
             Field::Cause => "cause",
+            Field::Protocol => "protocol",
             Field::Index => "index",
             Field::Scheme => "auth-scheme",
             Field::Credentials => "credentials",
@@ -268,12 +279,20 @@ pub enum WarningCode {
     InvalidQvalue,
     /// A parameter name repeated within one value, kept; lookup returns the
     /// first. RFC 3261 §25.1 `generic-param` defines no meaning for a second
-    /// occurrence, and RFC 7235 §2.1 forbids one among `auth-param`s.
+    /// occurrence, and of `auth-param`s RFC 9110 §11.2 says "each parameter
+    /// name MUST only occur once per challenge".
     DuplicateParam,
     /// An `auth-param` without the value RFC 3261 §25.1
     /// `auth-param = auth-param-name EQUAL ( token / quoted-string )`
     /// requires, kept as a flag.
     AuthParamFlag,
+    /// A CR or LF outside the fold of RFC 3261 §25.1 `LWS = [*WSP CRLF]
+    /// 1*WSP`, which neither `qdtext` nor `quoted-pair` carries, or a NUL,
+    /// which only `quoted-pair` does; dropped, with a `\` escaping it.
+    ControlChar,
+    /// A `warn-code` below 100, three digits as RFC 3261 §20.43 `warn-code =
+    /// 3DIGIT` requires but in no class §27.2 defines by first digit; kept.
+    WarnCodeLeadingZero,
 }
 
 impl WarningCode {
@@ -285,7 +304,8 @@ impl WarningCode {
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
             | WarningCode::EmptyEntry
-            | WarningCode::MissingHost => WarningKind::Lost,
+            | WarningCode::MissingHost
+            | WarningCode::ControlChar => WarningKind::Lost,
             _ => WarningKind::Recovered,
         }
     }
@@ -311,6 +331,8 @@ impl WarningCode {
             WarningCode::InvalidQvalue => "invalid-qvalue",
             WarningCode::DuplicateParam => "duplicate-param",
             WarningCode::AuthParamFlag => "auth-param-flag",
+            WarningCode::ControlChar => "control-char",
+            WarningCode::WarnCodeLeadingZero => "warn-code-leading-zero",
         }
     }
 }
@@ -401,6 +423,8 @@ mod tests {
             WarningCode::InvalidQvalue,
             WarningCode::DuplicateParam,
             WarningCode::AuthParamFlag,
+            WarningCode::ControlChar,
+            WarningCode::WarnCodeLeadingZero,
         ];
         for code in &all {
             match code {
@@ -420,7 +444,9 @@ mod tests {
                 | WarningCode::MissingHost
                 | WarningCode::InvalidQvalue
                 | WarningCode::DuplicateParam
-                | WarningCode::AuthParamFlag => {}
+                | WarningCode::AuthParamFlag
+                | WarningCode::ControlChar
+                | WarningCode::WarnCodeLeadingZero => {}
             }
         }
         all

@@ -6,9 +6,10 @@ use std::fmt::{self, Write as _};
 use percent_encoding::percent_decode_str;
 
 use crate::call_id::SipCallId;
+use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
-use crate::params::{checked_token, HeaderParams};
+use crate::params::HeaderParams;
 
 pub(crate) mod sealed {
     pub trait Sealed {}
@@ -54,15 +55,21 @@ pub(crate) struct DialogId {
 }
 
 impl DialogId {
-    pub(crate) fn new(call_id: String, first_tag: String, second_tag: String) -> Self {
-        DialogId {
+    /// Errors unless `call_id` is a `callid` and both tags are `token`s.
+    pub(crate) fn new(
+        call_id: String,
+        first_tag: String,
+        second_tag: String,
+    ) -> Result<Self, ParseError> {
+        SipCallId::parse(&call_id)?;
+        Ok(DialogId {
             call_id,
-            first_tag,
-            second_tag,
+            first_tag: checked_token(Field::Tag, first_tag)?,
+            second_tag: checked_token(Field::Tag, second_tag)?,
             early_only: false,
             params: HeaderParams::default(),
             framing: DialogFraming::Header,
-        }
+        })
     }
 
     pub(crate) fn from_fields(fields: DialogFields, framing: DialogFraming) -> Self {
@@ -178,16 +185,16 @@ macro_rules! dialog_id_type {
 
         impl $Type {
             #[doc = concat!("A header-framed value from its Call-ID, `", $first_name, "` and `", $second_name, "`.")]
+            ///
+            /// Errors unless the Call-ID is an RFC 3261 §25.1
+            /// `callid = word [ "@" word ]` and both tags are `token`s.
             pub fn new(
                 call_id: impl Into<String>,
                 $first: impl Into<String>,
                 $second: impl Into<String>,
-            ) -> Self {
-                Self($crate::dialog_id::DialogId::new(
-                    call_id.into(),
-                    $first.into(),
-                    $second.into(),
-                ))
+            ) -> Result<Self, $crate::error::ParseError> {
+                $crate::dialog_id::DialogId::new(call_id.into(), $first.into(), $second.into())
+                    .map(Self)
             }
 
             /// Set a generic parameter, replacing one of the same name in
@@ -344,10 +351,14 @@ pub(crate) struct DialogFields {
 /// Building a dialog-identifier type from its parts.
 pub(crate) trait DialogBuild: DialogKind + Sized {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self;
+
+    #[cfg(feature = "serde")]
+    fn dialog(&self) -> &DialogId;
 }
 
 pub(crate) fn parse<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, ParseError> {
-    parse_framed::<T>(raw).map(|p| p.map(|f| T::build(f, DialogFraming::Header)))
+    crate::scrub::parse_scrubbed(raw, parse_framed::<T>)
+        .map(|p| p.map(|f| T::build(f, DialogFraming::Header)))
 }
 
 /// Error positions are dropped; warning positions point into the decoded text.
@@ -355,9 +366,27 @@ pub(crate) fn parse_uri_header<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, P
     let decoded = percent_decode_str(raw)
         .decode_utf8()
         .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))?;
-    parse_framed::<T>(&decoded)
+    crate::scrub::parse_scrubbed(&decoded, parse_framed::<T>)
         .map(|p| p.map(|f| T::build(f, DialogFraming::UriHeader)))
         .map_err(ParseError::without_position)
+}
+
+/// `value` when parsing its wire form in its own framing gives it back.
+#[cfg(feature = "serde")]
+pub(crate) fn reads_back<T>(value: T) -> Result<T, ParseError>
+where
+    T: DialogBuild + std::fmt::Display + PartialEq,
+{
+    let framing = value
+        .dialog()
+        .framing;
+    crate::check::reads_back(value, |wire| {
+        match framing {
+            DialogFraming::Header => parse::<T>(wire),
+            DialogFraming::UriHeader => parse_uri_header::<T>(wire),
+        }
+        .map(|p| p.value)
+    })
 }
 
 fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseError> {
@@ -400,15 +429,20 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
             .key
             .to_ascii_lowercase();
         let Some(value) = param.value else {
-            if K::EARLY_ONLY && key == "early-only" {
-                if early_only {
+            let flag = K::EARLY_ONLY && key == "early-only";
+            if flag && !early_only {
+                early_only = true;
+            } else {
+                if flag
+                    && params
+                        .get(&key)
+                        .is_none()
+                {
                     warnings.push(
                         ParseWarning::new(Field::Param, WarningCode::DuplicateParam)
                             .at(crate::offset_in(raw, param.key)),
                     );
                 }
-                early_only = true;
-            } else {
                 params.push_raw(raw, &param, &mut warnings);
             }
             continue;

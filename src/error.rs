@@ -63,6 +63,26 @@ impl ParseError {
         }
     }
 
+    /// Move the byte position through `f`.
+    pub(crate) fn map_position(self, f: impl Fn(usize) -> usize) -> Self {
+        match self {
+            ParseError::Malformed(fault) => ParseError::Malformed(Fault {
+                position: fault
+                    .position
+                    .map(f),
+                ..fault
+            }),
+            ParseError::Uri(fault) => ParseError::Uri(UriFault {
+                position: fault
+                    .position
+                    .map(f),
+                ..fault
+            }),
+            ParseError::NonConformant(w) => ParseError::NonConformant(w.map_position(f)),
+            ParseError::Row(e) => ParseError::Row(e),
+        }
+    }
+
     /// Attribute this error to list entry `index`.
     pub(crate) fn in_entry(self, index: usize) -> Self {
         match self {
@@ -234,6 +254,8 @@ pub enum FaultCode {
     Misplaced,
     /// Percent-decoded octets that are not UTF-8.
     NotUtf8,
+    /// A value whose wire form parses as a different value.
+    Unrepresentable,
 }
 
 impl FaultCode {
@@ -249,6 +271,7 @@ impl FaultCode {
             FaultCode::Ambiguous => "ambiguous",
             FaultCode::Misplaced => "misplaced",
             FaultCode::NotUtf8 => "not-utf8",
+            FaultCode::Unrepresentable => "unrepresentable",
         }
     }
 }

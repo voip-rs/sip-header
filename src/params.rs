@@ -5,18 +5,27 @@ use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
 use std::net::Ipv6Addr;
 
+pub(crate) use crate::check::checked_token;
+use crate::check::refuse_controls;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 
 /// `with_param`, `with_quoted_param`, `params` and `param` for a type
 /// holding its parameters in a `params: HeaderParams` field; `reserved`
-/// names the keys it sets through typed setters.
+/// names the keys it sets through typed setters, and `check` refuses what
+/// the header's own grammar gives a meaning it would not parse back to.
 macro_rules! header_params {
     ($Type:ident) => {
-        header_params!($Type, reserved: &[]);
+        header_params!($Type, reserved: &[], check: $crate::params::any_value);
     };
     ($Type:ident, reserved: $reserved:expr) => {
+        header_params!($Type, reserved: $reserved, check: $crate::params::any_value);
+    };
+    ($Type:ident, check: $check:path) => {
+        header_params!($Type, reserved: &[], check: $check);
+    };
+    ($Type:ident, reserved: $reserved:expr, check: $check:path) => {
         impl $Type {
             /// Set a parameter, replacing the first of the same name in place
             /// and dropping the rest.
@@ -30,8 +39,10 @@ macro_rules! header_params {
                 key: impl AsRef<str>,
                 value: Option<impl Into<String>>,
             ) -> Result<Self, $crate::error::ParseError> {
+                let value = value.map(Into::into);
+                $check(key.as_ref(), value.as_deref(), false)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), value.map(Into::into), false)?;
+                    .set_unreserved($reserved, key.as_ref(), value, false)?;
                 Ok(self)
             }
 
@@ -42,8 +53,10 @@ macro_rules! header_params {
                 key: impl AsRef<str>,
                 value: impl Into<String>,
             ) -> Result<Self, $crate::error::ParseError> {
+                let value = value.into();
+                $check(key.as_ref(), Some(&value), true)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), Some(value.into()), true)?;
+                    .set_unreserved($reserved, key.as_ref(), Some(value), true)?;
                 Ok(self)
             }
 
@@ -151,19 +164,10 @@ fn checked_name(name: &str) -> Result<String, ParseError> {
     checked_token(Field::Param, name.to_ascii_lowercase())
 }
 
-/// `value` when it is a `token`, the fault on `field` otherwise.
-pub(crate) fn checked_token(field: Field, value: String) -> Result<String, ParseError> {
-    if value.is_empty() {
-        return Err(ParseError::empty(field));
-    }
-    match value.find(|c| !crate::is_token_char(c)) {
-        Some(pos) => Err(ParseError::malformed(
-            field,
-            FaultCode::InvalidChar,
-            Some(pos),
-        )),
-        None => Ok(value),
-    }
+/// The `check` of a header whose grammar gives no parameter a meaning of
+/// its own.
+pub(crate) fn any_value(_key: &str, _value: Option<&str>, _quoted: bool) -> Result<(), ParseError> {
+    Ok(())
 }
 
 impl HeaderParams {
@@ -177,6 +181,21 @@ impl HeaderParams {
                         .as_str(),
                     p.value
                         .as_deref(),
+                )
+            })
+    }
+
+    /// [`iter`](Self::iter), with whether each value is written quoted.
+    pub(crate) fn iter_quoted(&self) -> impl Iterator<Item = (&str, Option<&str>, bool)> + '_ {
+        self.0
+            .iter()
+            .map(|p| {
+                (
+                    p.name
+                        .as_str(),
+                    p.value
+                        .as_deref(),
+                    p.quoted,
                 )
             })
     }
@@ -237,15 +256,8 @@ impl HeaderParams {
         quoted: bool,
     ) -> Result<(), ParseError> {
         let name = checked_name(name)?;
-        if let Some(pos) = value
-            .as_deref()
-            .and_then(|v| v.find(['\r', '\n', '\0']))
-        {
-            return Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::InvalidChar,
-                Some(pos),
-            ));
+        if let Some(v) = &value {
+            refuse_controls(Field::Param, v)?;
         }
         self.replace(&name, value, quoted);
         Ok(())
@@ -284,24 +296,74 @@ impl HeaderParams {
         self.set(name, value, quoted)
     }
 
-    /// Drop every parameter named in `names`, for a serde mirror that
-    /// carries those in fields of their own.
+    /// Remove the first `name` when it is unquoted and `setter_form`
+    /// accepts its value, returning that value, for a serde mirror that
+    /// carries it in a field of its own.
     #[cfg(feature = "serde")]
-    pub(crate) fn remove(&mut self, names: &[&str]) {
-        self.0
-            .retain(|p| {
-                !names
-                    .iter()
-                    .any(|n| n.eq_ignore_ascii_case(&p.name))
-            });
+    pub(crate) fn take_first(
+        &mut self,
+        name: &str,
+        setter_form: impl Fn(Option<&str>) -> bool,
+    ) -> Option<Option<String>> {
+        let i = self
+            .0
+            .iter()
+            .position(|p| p.name == name)?;
+        let p = &self.0[i];
+        if p.quoted
+            || !setter_form(
+                p.value
+                    .as_deref(),
+            )
+        {
+            return None;
+        }
+        Some(
+            self.0
+                .remove(i)
+                .value,
+        )
     }
 
-    /// Errors when a parameter uses a name in `reserved`.
+    /// Undo [`take_first`](Self::take_first): put `value` back before the
+    /// other `name`s, or refuse a first `name` it would have taken.
     #[cfg(feature = "serde")]
-    pub(crate) fn refuse_reserved(&self, reserved: &[&str]) -> Result<(), ParseError> {
-        self.0
+    pub(crate) fn restore_first(
+        &mut self,
+        name: &str,
+        value: Option<Option<String>>,
+        setter_form: impl Fn(Option<&str>) -> bool,
+    ) -> Result<(), ParseError> {
+        let first = self
+            .0
             .iter()
-            .try_for_each(|p| refuse_reserved(reserved, &p.name))
+            .position(|p| p.name == name);
+        match value {
+            Some(value) => {
+                let p = Param::new(name.to_string(), value, false);
+                self.0
+                    .insert(
+                        first.unwrap_or(
+                            self.0
+                                .len(),
+                        ),
+                        p,
+                    );
+            }
+            None => {
+                if let Some(p) = first.map(|i| &self.0[i]) {
+                    if !p.quoted
+                        && setter_form(
+                            p.value
+                                .as_deref(),
+                        )
+                    {
+                        return Err(param_fault(FaultCode::Misplaced));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Append a parameter read off the wire, raising
@@ -385,17 +447,6 @@ impl HeaderParams {
         Ok(())
     }
 
-    /// Whether any parameter is a flag.
-    #[cfg(feature = "serde")]
-    pub(crate) fn has_flag(&self) -> bool {
-        self.0
-            .iter()
-            .any(|p| {
-                p.value
-                    .is_none()
-            })
-    }
-
     /// Stable by name, so one name's values keep their order.
     fn sorted(&self) -> Vec<&Param> {
         let mut sorted: Vec<&Param> = self
@@ -456,30 +507,40 @@ impl serde::Serialize for HeaderParams {
     }
 }
 
+/// `[[name, value, quoted]]` as the parameters of an owner that checks them
+/// in its own grammar; refuses a quoted flag and CR, LF or NUL.
+#[cfg(feature = "serde")]
+pub(crate) fn deserialize_unchecked<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<HeaderParams, D::Error> {
+    use serde::de::Error;
+    use serde::Deserialize;
+
+    let entries = <Vec<(String, Option<String>, bool)>>::deserialize(deserializer)?;
+    let mut params = HeaderParams::default();
+    for (name, value, quoted) in entries {
+        if value.is_none() && quoted {
+            return Err(D::Error::custom("a quoted parameter needs a value"));
+        }
+        refuse_controls(Field::Param, &name).map_err(D::Error::custom)?;
+        if let Some(v) = &value {
+            refuse_controls(Field::Param, v).map_err(D::Error::custom)?;
+        }
+        params.push(name.to_ascii_lowercase(), value, quoted);
+    }
+    Ok(params)
+}
+
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for HeaderParams {
-    /// `[[name, value, quoted]]`, `value` null for a flag; refuses a
-    /// repeated name, a quoted flag and a name that is not a `token`.
+    /// `[[name, value, quoted]]`, `value` null for a flag; refuses a quoted
+    /// flag and parameters no `*(SEMI generic-param)` parses to.
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-
-        let entries = <Vec<(String, Option<String>, bool)>>::deserialize(deserializer)?;
-        let mut params = HeaderParams::default();
-        for (name, value, quoted) in entries {
-            if value.is_none() && quoted {
-                return Err(D::Error::custom("a quoted parameter needs a value"));
-            }
-            if params
-                .find(&name)
-                .is_some()
-            {
-                return Err(D::Error::custom("a parameter name repeats"));
-            }
-            params
-                .set(&name, value, quoted)
-                .map_err(D::Error::custom)?;
-        }
-        Ok(params)
+        let params = deserialize_unchecked(deserializer)?;
+        crate::check::reads_back(params, |wire| {
+            Ok(HeaderParams::read(wire, wire, &mut Vec::new()))
+        })
+        .map_err(<D::Error as serde::de::Error>::custom)
     }
 }
 
@@ -571,14 +632,26 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn reserved_refused_in_a_whole_set() {
-        let (p, _) = read(";x;tag=a");
-        assert!(p
-            .refuse_reserved(&["tag"])
-            .is_err());
-        assert!(p
-            .refuse_reserved(&["rport"])
-            .is_ok());
+    fn take_first_only_the_setter_form() {
+        let token = |v: Option<&str>| v.is_some_and(is_token);
+        let (mut p, _) = read(r#";x;tag="a";tag=b"#);
+        assert_eq!(p.take_first("tag", token), None);
+        assert_eq!(
+            p.restore_first("tag", None, token),
+            Ok(()),
+            "a quoted first tag stays"
+        );
+        let (mut p, _) = read(";x;tag=a;tag=b");
+        assert_eq!(p.take_first("tag", token), Some(Some("a".into())));
+        assert_eq!(p.to_string(), ";x;tag=b");
+        assert_eq!(
+            p.clone()
+                .restore_first("tag", None, token),
+            Err(param_fault(FaultCode::Misplaced))
+        );
+        p.restore_first("tag", Some(Some("a".into())), token)
+            .unwrap();
+        assert_eq!(p.to_string(), ";x;tag=a;tag=b");
     }
 
     #[test]

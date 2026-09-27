@@ -23,7 +23,7 @@ struct SipTargetDialogParts {
     call_id: String,
     local_tag: String,
     remote_tag: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: crate::HeaderParams,
     #[serde(default)]
     framing: DialogFraming,
@@ -34,14 +34,14 @@ impl TryFrom<SipTargetDialogParts> for SipTargetDialog {
     type Error = crate::ParseError;
 
     fn try_from(p: SipTargetDialogParts) -> Result<Self, Self::Error> {
-        use crate::dialog_id::DialogKind;
-
-        p.params
-            .refuse_reserved(Self::RESERVED)?;
-        let mut t =
-            SipTargetDialog::new(p.call_id, p.local_tag, p.remote_tag).with_framing(p.framing);
-        *t.0.params_mut() = p.params;
-        Ok(t)
+        let fields = DialogFields {
+            call_id: p.call_id,
+            first_tag: p.local_tag,
+            second_tag: p.remote_tag,
+            early_only: false,
+            params: p.params,
+        };
+        crate::dialog_id::reads_back(Self::build(fields, p.framing))
     }
 }
 
@@ -69,6 +69,11 @@ impl From<SipTargetDialog> for SipTargetDialogParts {
 impl DialogBuild for SipTargetDialog {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self {
         Self(DialogId::from_fields(fields, framing))
+    }
+
+    #[cfg(feature = "serde")]
+    fn dialog(&self) -> &DialogId {
+        &self.0
     }
 }
 

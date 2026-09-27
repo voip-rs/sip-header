@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
@@ -18,7 +19,7 @@ use crate::RawParam;
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "HistoryInfoReasonParts", into = "HistoryInfoReasonParts")
+    serde(try_from = "HistoryInfoReasonParts", into = "HistoryInfoReasonParts")
 )]
 pub struct HistoryInfoReason {
     protocol: String,
@@ -27,13 +28,19 @@ pub struct HistoryInfoReason {
 }
 
 impl HistoryInfoReason {
-    /// A Reason for `protocol`, with no cause or text.
-    pub fn new(protocol: impl Into<String>) -> Self {
+    fn unchecked(protocol: String) -> Self {
         HistoryInfoReason {
-            protocol: protocol.into(),
+            protocol,
             cause: None,
             text: None,
         }
+    }
+
+    /// A Reason for `protocol`, with no cause or text.
+    ///
+    /// Errors unless `protocol` is a `token`.
+    pub fn new(protocol: impl Into<String>) -> Result<Self, ParseError> {
+        checked_token(Field::Protocol, protocol.into()).map(Self::unchecked)
     }
 
     /// Set the cause code.
@@ -43,11 +50,48 @@ impl HistoryInfoReason {
     }
 
     /// Set the reason text, unquoted.
-    pub fn with_text(mut self, text: impl Into<String>) -> Self {
-        self.text = Some(text.into());
-        self
+    ///
+    /// Errors when `text` holds CR, LF or NUL.
+    pub fn with_text(mut self, text: impl Into<String>) -> Result<Self, ParseError> {
+        let text = text.into();
+        crate::check::refuse_controls(Field::Text, &text)?;
+        self.text = Some(text);
+        Ok(self)
     }
+}
 
+/// A Reason as the `protocol *(SEMI reason-params)` text [`parse_reason`]
+/// reads.
+#[cfg(feature = "serde")]
+#[derive(PartialEq)]
+struct ReasonWire(HistoryInfoReason);
+
+#[cfg(feature = "serde")]
+impl fmt::Display for ReasonWire {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            &self
+                .0
+                .protocol,
+        )?;
+        if let Some(cause) = self
+            .0
+            .cause
+        {
+            write!(f, ";cause={cause}")?;
+        }
+        if let Some(text) = &self
+            .0
+            .text
+        {
+            f.write_str(";text=")?;
+            crate::write_quoted_pair(f, text)?;
+        }
+        Ok(())
+    }
+}
+
+impl HistoryInfoReason {
     /// The protocol token (e.g. `"SIP"`, `"Q.850"`, `"RouteAction"`).
     pub fn protocol(&self) -> &str {
         &self.protocol
@@ -75,7 +119,7 @@ impl HistoryInfoReason {
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "HistoryInfoEntryParts", into = "HistoryInfoEntryParts")
+    serde(try_from = "HistoryInfoEntryParts", into = "HistoryInfoEntryParts")
 )]
 pub struct HistoryInfoEntry {
     addr: SipHeaderAddr,
@@ -167,7 +211,7 @@ impl fmt::Display for HistoryInfoEntry {
 /// use sip_header::sip_uri::{Host, SipUri};
 /// use sip_header::{HistoryInfo, HistoryInfoEntry, SipHeaderAddr};
 ///
-/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into());
+/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into())?;
 /// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr).with_index("1.1")?]).unwrap();
 /// assert_eq!(hi.entries()[0].index(), Some("1.1"));
 /// assert_eq!(hi.to_string(), "<sip:psap.example.com>;index=1.1");
@@ -187,13 +231,19 @@ struct HistoryInfoReasonParts {
 }
 
 #[cfg(feature = "serde")]
-impl From<HistoryInfoReasonParts> for HistoryInfoReason {
-    fn from(p: HistoryInfoReasonParts) -> Self {
-        HistoryInfoReason {
+impl TryFrom<HistoryInfoReasonParts> for HistoryInfoReason {
+    type Error = ParseError;
+
+    fn try_from(p: HistoryInfoReasonParts) -> Result<Self, Self::Error> {
+        let reason = ReasonWire(HistoryInfoReason {
             protocol: p.protocol,
             cause: p.cause,
             text: p.text,
-        }
+        });
+        crate::check::reads_back(reason, |wire| {
+            parse_reason(wire, &mut Vec::new()).map(ReasonWire)
+        })
+        .map(|r| r.0)
     }
 }
 
@@ -215,9 +265,11 @@ struct HistoryInfoEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl From<HistoryInfoEntryParts> for HistoryInfoEntry {
-    fn from(p: HistoryInfoEntryParts) -> Self {
-        HistoryInfoEntry::new(p.addr)
+impl TryFrom<HistoryInfoEntryParts> for HistoryInfoEntry {
+    type Error = ParseError;
+
+    fn try_from(p: HistoryInfoEntryParts) -> Result<Self, Self::Error> {
+        crate::list::entry_reads_back::<HistoryInfo>(HistoryInfoEntry::new(p.addr))
     }
 }
 
@@ -263,17 +315,18 @@ pub(crate) fn parse_reason(
                     .eq_ignore_ascii_case(name)
             })
     };
-    let cause = find("cause").and_then(|p| parse_cause(p, decoded, warnings));
-    let text = find("text").and_then(|p| parse_text(p, decoded, warnings));
-
-    let mut reason = HistoryInfoReason::new(protocol.trim());
-    if let Some(cause) = cause {
-        reason = reason.with_cause(cause);
+    let protocol = protocol.trim();
+    if !crate::is_token(protocol) {
+        warnings.push(
+            ParseWarning::new(Field::Protocol, WarningCode::InvalidToken)
+                .at(crate::offset_in(decoded, protocol)),
+        );
     }
-    if let Some(text) = text {
-        reason = reason.with_text(text);
-    }
-    Ok(reason)
+    Ok(HistoryInfoReason {
+        cause: find("cause").and_then(|p| parse_cause(p, decoded, warnings)),
+        text: find("text").and_then(|p| parse_text(p, decoded, warnings)),
+        ..HistoryInfoReason::unchecked(protocol.to_string())
+    })
 }
 
 /// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.

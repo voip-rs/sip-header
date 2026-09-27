@@ -4,7 +4,8 @@
 
 use std::fmt;
 
-use crate::diagnostic::{Field, ParseWarning};
+use crate::check::checked_token;
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::HeaderParams;
@@ -14,7 +15,10 @@ use crate::params::HeaderParams;
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipSecurityMechanismParts", into = "SipSecurityMechanismParts")
+    serde(
+        try_from = "SipSecurityMechanismParts",
+        into = "SipSecurityMechanismParts"
+    )
 )]
 #[non_exhaustive]
 pub struct SipSecurityMechanism {
@@ -26,8 +30,13 @@ header_params!(SipSecurityMechanism);
 
 impl SipSecurityMechanism {
     /// A mechanism by name, lowercased, with no parameters.
-    pub fn new(mechanism: impl Into<String>) -> Self {
-        let mut mechanism = mechanism.into();
+    ///
+    /// Errors unless the name is a `token`.
+    pub fn new(mechanism: impl Into<String>) -> Result<Self, ParseError> {
+        checked_token(Field::Mechanism, mechanism.into()).map(Self::unchecked)
+    }
+
+    fn unchecked(mut mechanism: String) -> Self {
         mechanism.make_ascii_lowercase();
         SipSecurityMechanism {
             mechanism,
@@ -76,17 +85,20 @@ list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipSecurityMechanismParts {
     mechanism: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipSecurityMechanismParts> for SipSecurityMechanism {
-    fn from(p: SipSecurityMechanismParts) -> Self {
-        SipSecurityMechanism {
+impl TryFrom<SipSecurityMechanismParts> for SipSecurityMechanism {
+    type Error = ParseError;
+
+    fn try_from(p: SipSecurityMechanismParts) -> Result<Self, Self::Error> {
+        let mechanism = SipSecurityMechanism {
             params: p.params,
-            ..SipSecurityMechanism::new(p.mechanism)
-        }
+            ..SipSecurityMechanism::unchecked(p.mechanism)
+        };
+        crate::list::entry_reads_back::<SipSecurity>(mechanism)
     }
 }
 
@@ -126,9 +138,15 @@ fn parse_mechanism(
         ));
     }
 
+    if !crate::is_token(mechanism_part) {
+        warnings.push(
+            ParseWarning::new(Field::Mechanism, WarningCode::InvalidToken)
+                .at(crate::offset_in(entry, mechanism_part)),
+        );
+    }
     Ok(SipSecurityMechanism {
         params: HeaderParams::read(entry, params_part.unwrap_or(""), warnings),
-        ..SipSecurityMechanism::new(mechanism_part)
+        ..SipSecurityMechanism::unchecked(mechanism_part.to_string())
     })
 }
 

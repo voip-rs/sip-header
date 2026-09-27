@@ -22,7 +22,7 @@ use crate::list::CommaList;
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipWarningEntryParts", into = "SipWarningEntryParts")
+    serde(try_from = "SipWarningEntryParts", into = "SipWarningEntryParts")
 )]
 #[non_exhaustive]
 pub struct SipWarningEntry {
@@ -33,15 +33,31 @@ pub struct SipWarningEntry {
 
 impl SipWarningEntry {
     /// An entry from its warn-code, warn-agent and unquoted warn-text.
-    pub fn new(code: u16, agent: impl Into<String>, text: impl Into<String>) -> Self {
-        SipWarningEntry {
-            code,
-            agent: agent.into(),
-            text: text.into(),
+    ///
+    /// Errors unless the code is in `100..=999`, the agent a `hostport`
+    /// or `token`, and the text free of CR, LF and NUL.
+    pub fn new(
+        code: u16,
+        agent: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Result<Self, ParseError> {
+        if !(100..=999).contains(&code) {
+            return Err(ParseError::malformed(
+                Field::Code,
+                FaultCode::InvalidNumber,
+                None,
+            ));
         }
+        let agent = agent.into();
+        if !is_hostport(&agent) {
+            crate::check::checked_token(Field::Agent, agent.clone())?;
+        }
+        let text = text.into();
+        crate::check::refuse_controls(Field::Text, &text)?;
+        Ok(SipWarningEntry { code, agent, text })
     }
 
-    /// The 3-digit warning code.
+    /// The warning code, below 100 only as parsed.
     pub fn code(&self) -> u16 {
         self.code
     }
@@ -85,9 +101,16 @@ struct SipWarningEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl From<SipWarningEntryParts> for SipWarningEntry {
-    fn from(p: SipWarningEntryParts) -> Self {
-        SipWarningEntry::new(p.code, p.agent, p.text)
+impl TryFrom<SipWarningEntryParts> for SipWarningEntry {
+    type Error = ParseError;
+
+    fn try_from(p: SipWarningEntryParts) -> Result<Self, Self::Error> {
+        let entry = SipWarningEntry {
+            code: p.code,
+            agent: p.agent,
+            text: p.text,
+        };
+        crate::list::entry_reads_back::<SipWarning>(entry)
     }
 }
 
@@ -136,6 +159,12 @@ fn parse_warning_entry(
     let code = code_str
         .parse::<u16>()
         .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
+    if code < 100 {
+        warnings.push(
+            ParseWarning::new(Field::Code, WarningCode::WarnCodeLeadingZero)
+                .at(crate::offset_in(entry, code_str)),
+        );
+    }
 
     let rest = s[space_pos..].trim_start();
 
@@ -161,7 +190,11 @@ fn parse_warning_entry(
 
     let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
 
-    Ok(SipWarningEntry::new(code, agent, text))
+    Ok(SipWarningEntry {
+        code,
+        agent: agent.to_string(),
+        text,
+    })
 }
 
 /// RFC 3261 §25.1 `hostport = host [ ":" port ]`, host as sip-uri reads it.

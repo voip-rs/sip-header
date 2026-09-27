@@ -2,6 +2,7 @@
 
 use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::ParseError;
+use crate::scrub::{merge, scrub, Scrubbed};
 
 /// Constructor, accessors, iteration and Display for a
 /// `struct $Type(Vec<$Entry>)`.
@@ -50,6 +51,15 @@ macro_rules! list_type {
         list_type!(@common $Type, $Entry, $sep);
     };
     (@common $Type:ident, $Entry:ty, $sep:literal) => {
+        #[cfg(feature = "serde")]
+        impl $crate::list::Entries for $Type {
+            type Entry = $Entry;
+
+            fn into_entry_vec(self) -> Vec<$Entry> {
+                self.0
+            }
+        }
+
         #[cfg(feature = "serde")]
         impl serde::Serialize for $Type {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -144,11 +154,13 @@ pub(crate) trait CommaList: Sized {
 
     /// Split `raw` at top-level commas and parse every entry.
     fn list_from_str(raw: &str) -> Result<Parsed<Self>, ParseError> {
-        if raw
+        let whole = scrub(raw);
+        if whole
+            .text
             .trim()
             .is_empty()
         {
-            return Self::blank().map(|v| Parsed::new(v, Vec::new()));
+            return Self::blank().map(|v| Parsed::new(v, whole.warnings));
         }
         Self::list_from_entries(crate::split_comma_entries(raw))
     }
@@ -158,29 +170,50 @@ pub(crate) trait CommaList: Sized {
     fn list_from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<&str> = entries
+        let entries: Vec<Scrubbed<'a>> = entries
             .into_iter()
+            .map(scrub)
             .collect();
+        let mut warnings = Vec::new();
         if Self::BLANK_ENTRIES_ARE_EMPTY
             && entries
                 .iter()
                 .all(|e| {
-                    e.trim()
+                    e.text
+                        .trim()
                         .is_empty()
                 })
         {
-            return Self::blank().map(|v| Parsed::new(v, Vec::new()));
+            for (i, entry) in entries
+                .into_iter()
+                .enumerate()
+            {
+                warnings.extend(
+                    entry
+                        .warnings
+                        .into_iter()
+                        .map(|w| w.in_entry(i)),
+                );
+            }
+            return Self::blank().map(|v| Parsed::new(v, warnings));
         }
-        let mut warnings = Vec::new();
         let mut kept = Vec::with_capacity(entries.len());
         for (i, entry) in entries
             .into_iter()
             .enumerate()
         {
+            let map = |p: usize| entry.original(p);
             let mut found = Vec::new();
-            let value = Self::parse_entry(entry, &mut found).map_err(|e| e.in_entry(i))?;
+            let value = Self::parse_entry(&entry.text, &mut found).map_err(|e| {
+                e.map_position(map)
+                    .in_entry(i)
+            })?;
+            let found = found
+                .into_iter()
+                .map(|w| w.map_position(map))
+                .collect();
             warnings.extend(
-                found
+                merge(entry.warnings, found)
                     .into_iter()
                     .map(|w| w.in_entry(i)),
             );
@@ -189,6 +222,38 @@ pub(crate) trait CommaList: Sized {
         let value = Self::from_parsed_reporting(kept, &mut warnings)?;
         Ok(Parsed::new(value, warnings))
     }
+}
+
+/// A list type's entries, for checking one entry through the list's parser.
+#[cfg(feature = "serde")]
+pub(crate) trait Entries {
+    type Entry;
+
+    fn into_entry_vec(self) -> Vec<Self::Entry>;
+}
+
+/// `entry` when parsing its wire form as a list gives back that one entry.
+#[cfg(feature = "serde")]
+pub(crate) fn entry_reads_back<L>(
+    entry: <L as CommaList>::Entry,
+) -> Result<<L as CommaList>::Entry, ParseError>
+where
+    L: CommaList + Entries<Entry = <L as CommaList>::Entry>,
+    <L as CommaList>::Entry: std::fmt::Display + PartialEq,
+{
+    crate::check::reads_back(entry, |wire| {
+        let mut entries = L::list_from_str(wire)?
+            .value
+            .into_entry_vec();
+        match (entries.pop(), entries.is_empty()) {
+            (Some(one), true) => Ok(one),
+            _ => Err(ParseError::malformed(
+                crate::diagnostic::Field::Value,
+                crate::error::FaultCode::Unrepresentable,
+                None,
+            )),
+        }
+    })
 }
 
 /// HeaderParse and ListParse for a type implementing [`CommaList`].
