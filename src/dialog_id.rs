@@ -20,7 +20,7 @@ pub(crate) mod sealed {
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "lowercase")
+    serde(rename_all = "kebab-case")
 )]
 #[non_exhaustive]
 pub enum DialogFraming {
@@ -292,7 +292,7 @@ macro_rules! dialog_id_type {
                     .framing()
             }
 
-            /// The Call-ID of the dialog.
+            /// The Call-ID of the dialog, case as sent.
             pub fn call_id(&self) -> &str {
                 self.0
                     .call_id()
@@ -304,13 +304,13 @@ macro_rules! dialog_id_type {
                     .host()
             }
 
-            #[doc = concat!("The mandatory `", $first_name, "` value.")]
+            #[doc = concat!("The mandatory `", $first_name, "` value, case as sent.")]
             pub fn $first(&self) -> &str {
                 self.0
                     .first_tag()
             }
 
-            #[doc = concat!("The mandatory `", $second_name, "` value.")]
+            #[doc = concat!("The mandatory `", $second_name, "` value, case as sent.")]
             pub fn $second(&self) -> &str {
                 self.0
                     .second_tag()

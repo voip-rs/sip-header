@@ -10,7 +10,7 @@ use crate::scrub::{merge, scrub, Scrubbed};
 /// `non_empty` types refuse an empty list, which their grammar forbids;
 /// `may_be_empty` types build from any entries.
 macro_rules! list_type {
-    ($Type:ident, $Entry:ty, sep: $sep:literal, non_empty) => {
+    ($Type:ident, $Entry:ty, non_empty) => {
         impl $Type {
             /// Build from entries; errors when `entries` is empty, which
             /// this header's grammar forbids.
@@ -32,9 +32,9 @@ macro_rules! list_type {
             }
         }
 
-        list_type!(@common $Type, $Entry, $sep);
+        list_type!(@common $Type, $Entry);
     };
-    ($Type:ident, $Entry:ty, sep: $sep:literal, may_be_empty) => {
+    ($Type:ident, $Entry:ty, may_be_empty) => {
         impl $Type {
             /// Build from entries; this header's grammar admits the empty list.
             pub fn new(entries: Vec<$Entry>) -> Self {
@@ -49,9 +49,9 @@ macro_rules! list_type {
             }
         }
 
-        list_type!(@common $Type, $Entry, $sep);
+        list_type!(@common $Type, $Entry);
     };
-    (@common $Type:ident, $Entry:ty, $sep:literal) => {
+    (@common $Type:ident, $Entry:ty) => {
         #[cfg(feature = "serde")]
         impl $crate::list::Entries for $Type {
             type Entry = $Entry;
@@ -94,7 +94,7 @@ macro_rules! list_type {
 
         impl std::fmt::Display for $Type {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                $crate::fmt_joined(f, &self.0, $sep)
+                $crate::fmt_joined(f, &self.0, ", ")
             }
         }
 

@@ -202,11 +202,16 @@ impl fmt::Display for SipViaEntry {
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP 198.51.100.1");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipViaEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipVia(Vec<SipViaEntry>);
 
-list_type!(SipVia, SipViaEntry, sep: ", ", non_empty);
+list_type!(SipVia, SipViaEntry, non_empty);
 
 /// `rport` holds the first `rport` parameter when it is the flag or a port
 /// as [`SipViaEntry::with_rport`] writes it; any other stays in `params`.

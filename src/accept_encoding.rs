@@ -5,7 +5,9 @@
 
 use std::fmt;
 
-use crate::accept::{check_accept_param, flag_invalid_token, missing_entry, read_accept_params};
+use crate::accept::{
+    check_accept_param, flag_invalid_token, missing_entry, q_of, read_accept_params, QValue,
+};
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
@@ -14,7 +16,13 @@ use crate::list::CommaList;
 use crate::params::HeaderParams;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the coding
+/// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -47,15 +55,15 @@ impl SipAcceptEncodingEntry {
         }
     }
 
-    /// The content-coding value (e.g. `"gzip"`, `"identity"`, `"*"`).
+    /// The content-coding (e.g. `"gzip"`, `"identity"`, `"*"`), lowercase.
     pub fn encoding(&self) -> &str {
         &self.encoding
     }
 
-    /// The `q` quality value, if present.
-    pub fn q(&self) -> Option<&str> {
-        self.param("q")
-            .flatten()
+    /// The first `q`; `None` when absent or not a `qvalue`, whose text
+    /// [`param`](Self::param) returns.
+    pub fn q(&self) -> Option<QValue> {
+        q_of(&self.params)
     }
 }
 
@@ -66,11 +74,16 @@ impl fmt::Display for SipAcceptEncodingEntry {
 }
 
 /// SIP Accept-Encoding header value; its grammar admits the empty list (RFC 3261 §25.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipAcceptEncodingEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipAcceptEncoding(Vec<SipAcceptEncodingEntry>);
 
-list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", may_be_empty);
+list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -179,7 +192,7 @@ mod tests {
     fn multiple_encodings_with_q() {
         let ae = SipAcceptEncoding::parse("gzip;q=1.0, identity;q=0.5").unwrap();
         assert_eq!(ae.len(), 2);
-        assert_eq!(ae.entries()[0].q(), Some("1.0"));
+        assert_eq!(ae.entries()[0].param("q"), Some(Some("1.0")));
         assert_eq!(ae.entries()[1].encoding(), "identity");
     }
 
@@ -219,7 +232,7 @@ mod tests {
         let raw = r#"gzip;x="a;b";q=0.5"#;
         let ae = SipAcceptEncoding::parse(raw).unwrap();
         assert_eq!(ae.entries()[0].param("X"), Some(Some("a;b")));
-        assert_eq!(ae.entries()[0].q(), Some("0.5"));
+        assert_eq!(ae.entries()[0].param("q"), Some(Some("0.5")));
         assert_eq!(ae.to_string(), raw);
     }
 
@@ -333,8 +346,8 @@ mod tests {
             SipAcceptEncoding::parse(raw)
                 .unwrap()
                 .entries()[0]
-                .q(),
-            Some("0.1234")
+                .param("q"),
+            Some(Some("0.1234"))
         );
         assert_eq!(
             seen(raw),

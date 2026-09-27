@@ -89,14 +89,20 @@ impl fmt::Display for UriInfoEntry {
 ///     UriInfoEntry::new(Uri::parse("https://example.com/data")?)?,
 /// ])
 /// .unwrap();
-/// assert_eq!(info.to_string(), "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>");
+/// assert_eq!(info.to_string(), "<urn:example:call:123>;purpose=emergency-CallId, <https://example.com/data>");
 /// assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`UriInfoEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct UriInfo(Vec<UriInfoEntry>);
 
-list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
+list_type!(UriInfo, UriInfoEntry, non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]

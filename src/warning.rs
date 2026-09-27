@@ -18,7 +18,12 @@ use crate::list::CommaList;
 /// warn-agent = hostport / pseudonym
 /// warn-text = quoted-string
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the code, the agent
+/// byte for byte, the text unescaped. [`Hash`] follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -62,7 +67,7 @@ impl SipWarningEntry {
         self.code
     }
 
-    /// The warn-agent (hostport or pseudonym).
+    /// The warn-agent (hostport or pseudonym), case as sent.
     pub fn agent(&self) -> &str {
         &self.agent
     }
@@ -86,11 +91,16 @@ impl fmt::Display for SipWarningEntry {
 /// ```text
 /// Warning = "Warning" HCOLON warning-value *(COMMA warning-value)
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipWarningEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipWarning(Vec<SipWarningEntry>);
 
-list_type!(SipWarning, SipWarningEntry, sep: ", ", non_empty);
+list_type!(SipWarning, SipWarningEntry, non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]

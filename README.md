@@ -183,6 +183,10 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `ContactList` of `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries`, `contact() -> Vec<ContactValue>` | opaque `ContactList`: `wildcard()`, `new(addrs) -> Result` (non-empty), `is_wildcard()`, `addrs()`; `ContactList::parse` / `from_entries`; `contact() -> Option<ContactList>`; an empty Contact is `Err` |
 | list `new` returns `Option` (Via, Warning, Security, URI-info, History-Info) or `Self` | `Result`, `Err(Empty)` for an empty list, where the grammar needs an entry (those and Geolocation); `Self` for the Accept family |
 | `HistoryInfoEntry::new(addr)` | `new(addr, index) -> Result`; `with_index` replaces it |
+| `q() -> Option<&str>` on the Accept family and `SipSecurityMechanism` | `Option<QValue>` (thousandths, canonical `Display`); the text stays in `param("q")`; Security refuses and warns a `q` outside `qvalue` as Accept does |
+| History-Info and URI-info Display joins entries with `,` | every list joins with `, ` |
+| `DialogFraming` serde `"uriheader"` | `"uri-header"` |
+| value types without `Hash` | every value type is `Hash`, consistent with its `Eq` (wire-form identity) |
 | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
 | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
 

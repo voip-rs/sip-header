@@ -79,7 +79,7 @@ pub mod uri_info;
 pub mod via;
 pub mod warning;
 
-pub use accept::{SipAccept, SipAcceptEntry};
+pub use accept::{QValue, SipAccept, SipAcceptEntry};
 pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};
 pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
 pub use auth::SipAuthValue;

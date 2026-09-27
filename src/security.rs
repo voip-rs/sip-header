@@ -4,6 +4,7 @@
 
 use std::fmt;
 
+use crate::accept::{check_accept_param, q_of, read_accept_params, QValue};
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
@@ -11,7 +12,13 @@ use crate::list::CommaList;
 use crate::params::HeaderParams;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the mechanism
+/// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -26,7 +33,7 @@ pub struct SipSecurityMechanism {
     params: HeaderParams,
 }
 
-header_params!(SipSecurityMechanism);
+header_params!(SipSecurityMechanism, check: check_accept_param);
 
 impl SipSecurityMechanism {
     /// A mechanism by name, lowercased, with no parameters.
@@ -44,15 +51,15 @@ impl SipSecurityMechanism {
         }
     }
 
-    /// The mechanism name (e.g. `"digest"`, `"tls"`, `"ipsec-ike"`).
+    /// The mechanism name (e.g. `"digest"`, `"tls"`, `"ipsec-ike"`), lowercase.
     pub fn mechanism(&self) -> &str {
         &self.mechanism
     }
 
-    /// The `q` preference value, if present.
-    pub fn q(&self) -> Option<&str> {
-        self.param("q")
-            .flatten()
+    /// The first `q` preference (RFC 3329 §2.2); `None` when absent or not
+    /// a `qvalue`, whose text [`param`](Self::param) returns.
+    pub fn q(&self) -> Option<QValue> {
+        q_of(&self.params)
     }
 
     /// The `d-alg` parameter, if present.
@@ -75,11 +82,16 @@ impl fmt::Display for SipSecurityMechanism {
 }
 
 /// Security-Client, Security-Server or Security-Verify header value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipSecurityMechanism`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipSecurity(Vec<SipSecurityMechanism>);
 
-list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
+list_type!(SipSecurity, SipSecurityMechanism, non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -145,7 +157,7 @@ fn parse_mechanism(
         );
     }
     Ok(SipSecurityMechanism {
-        params: HeaderParams::read(entry, params_part.unwrap_or(""), warnings),
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
         ..SipSecurityMechanism::unchecked(mechanism_part.to_string())
     })
 }
@@ -178,7 +190,7 @@ mod tests {
         assert_eq!(sec.len(), 1);
         assert_eq!(sec.entries()[0].mechanism(), "digest");
         assert_eq!(sec.entries()[0].d_qop(), Some("auth-int"));
-        assert_eq!(sec.entries()[0].q(), Some("0.1"));
+        assert_eq!(sec.entries()[0].param("q"), Some(Some("0.1")));
     }
 
     #[test]
@@ -288,7 +300,7 @@ mod param_tests {
         let sec = SipSecurity::parse(r#"digest;x="a;b";q=0.5"#).unwrap();
         let mech = &sec.entries()[0];
         assert_eq!(mech.param("x"), Some(Some("a;b")));
-        assert_eq!(mech.q(), Some("0.5"));
+        assert_eq!(mech.param("q"), Some(Some("0.5")));
     }
 
     #[test]
@@ -308,7 +320,7 @@ mod param_tests {
             .value
             .entries()[1];
         assert_eq!(mech.param("x"), Some(Some(r#""a"#)));
-        assert_eq!(mech.q(), Some("0.1"));
+        assert_eq!(mech.param("q"), Some(Some("0.1")));
         let w = parsed.warnings[0];
         assert_eq!(
             (w.field, w.code, w.entry, w.position),

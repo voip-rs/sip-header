@@ -94,10 +94,16 @@ impl fmt::Display for SipGeolocationEntry {
 /// assert_eq!(geo.to_string(), "<cid:abc-123>, <https://lis.example.com/held/abc>");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipGeolocationEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct SipGeolocation(Vec<SipGeolocationEntry>);
 
-list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", non_empty);
+list_type!(SipGeolocation, SipGeolocationEntry, non_empty);
 
 impl SipGeolocation {
     /// Every entry's URI, in order.

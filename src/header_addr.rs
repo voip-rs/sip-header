@@ -51,6 +51,12 @@ use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
 /// [`Display`](std::fmt::Display) always emits angle brackets around the URI,
 /// even for bare addr-spec input. This is the canonical form required by
 /// RFC 3261 when header-level parameters are present.
+///
+/// # Equality
+///
+/// Two addresses are equal when their wire forms are: the display name
+/// byte for byte, the URI as [`sip_uri::Uri`] compares it, the parameters
+/// as [`HeaderParams`] does. [`Hash`] follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
@@ -189,7 +195,7 @@ impl SipHeaderAddr {
         Ok(self)
     }
 
-    /// The display name, if present.
+    /// The display name, if present, unescaped and case as sent.
     pub fn display_name(&self) -> Option<&str> {
         self.display_name
             .as_deref()
@@ -222,7 +228,7 @@ impl SipHeaderAddr {
         &mut self.params
     }
 
-    /// The first `tag` parameter value, if present.
+    /// The first `tag` parameter value, if present, case as sent.
     pub fn tag(&self) -> Option<&str> {
         self.param("tag")
             .flatten()

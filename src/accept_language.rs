@@ -5,14 +5,22 @@
 
 use std::fmt;
 
-use crate::accept::{check_accept_param, flag_invalid_token, missing_entry, read_accept_params};
+use crate::accept::{
+    check_accept_param, flag_invalid_token, missing_entry, q_of, read_accept_params, QValue,
+};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the language range
+/// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -56,15 +64,15 @@ impl SipAcceptLanguageEntry {
         }
     }
 
-    /// The language tag (e.g. `"en"`, `"en-US"`, `"*"`).
+    /// The language range (e.g. `"en"`, `"en-us"`, `"*"`), lowercase.
     pub fn language(&self) -> &str {
         &self.language
     }
 
-    /// The `q` quality value, if present.
-    pub fn q(&self) -> Option<&str> {
-        self.param("q")
-            .flatten()
+    /// The first `q`; `None` when absent or not a `qvalue`, whose text
+    /// [`param`](Self::param) returns.
+    pub fn q(&self) -> Option<QValue> {
+        q_of(&self.params)
     }
 }
 
@@ -75,11 +83,16 @@ impl fmt::Display for SipAcceptLanguageEntry {
 }
 
 /// SIP Accept-Language header value; its grammar admits the empty list (RFC 3261 §25.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipAcceptLanguageEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipAcceptLanguage(Vec<SipAcceptLanguageEntry>);
 
-list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", may_be_empty);
+list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -201,7 +214,7 @@ mod tests {
         let al = SipAcceptLanguage::parse("en;q=0.9, fr;q=0.8, *;q=0.1").unwrap();
         assert_eq!(al.len(), 3);
         assert_eq!(al.entries()[0].language(), "en");
-        assert_eq!(al.entries()[1].q(), Some("0.8"));
+        assert_eq!(al.entries()[1].param("q"), Some(Some("0.8")));
         assert_eq!(al.entries()[2].language(), "*");
     }
 
@@ -241,7 +254,7 @@ mod tests {
         let raw = r#"en;x="a;b";q=0.5"#;
         let al = SipAcceptLanguage::parse(raw).unwrap();
         assert_eq!(al.entries()[0].param("X"), Some(Some("a;b")));
-        assert_eq!(al.entries()[0].q(), Some("0.5"));
+        assert_eq!(al.entries()[0].param("q"), Some(Some("0.5")));
         assert_eq!(al.to_string(), raw);
     }
 
@@ -391,8 +404,8 @@ mod tests {
             SipAcceptLanguage::parse(raw)
                 .unwrap()
                 .entries()[0]
-                .q(),
-            Some("0.5")
+                .param("q"),
+            Some(Some("0.5"))
         );
         assert_eq!(
             seen(raw),

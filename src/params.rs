@@ -77,10 +77,10 @@ macro_rules! header_params {
 
 /// A header value's parameters, in wire order.
 ///
-/// Names are lowercased. Values are stored unescaped, with whether they
-/// are written as a `quoted-string`; a flag (`;lr`) has no value and is
-/// distinct from an empty one (`;x=""`). A repeated name is kept, and
-/// lookup returns its first occurrence. Nothing is percent-decoded: `%` is
+/// Names are lowercased. Values keep their case and are stored unescaped,
+/// with whether they are written as a `quoted-string`; a flag (`;lr`) has
+/// no value and is distinct from an empty one (`;x=""`). A repeated name is
+/// kept, and lookup returns its first occurrence. Nothing is percent-decoded: `%` is
 /// a `token` character here, unlike in the URI parameters sip-uri decodes.
 ///
 /// [`Display`](fmt::Display) writes `;name` or `;name=value`, the value

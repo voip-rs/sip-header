@@ -6,7 +6,14 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 ///
 /// Identifies an existing dialog: Call-ID plus the mandatory `local-tag`
 /// and `remote-tag`, both from the perspective of the request recipient.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two values are equal when their wire forms in the same framing are:
+/// Call-ID and tags byte for byte, the parameters as
+/// [`HeaderParams`](crate::HeaderParams) compares them. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),

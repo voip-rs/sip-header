@@ -13,7 +13,13 @@ use crate::list::CommaList;
 use crate::params::HeaderParams;
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the media range
+/// lowercased, the parameters as [`HeaderParams`] compares them, so
+/// `q=0.5` and `q=0.500` differ. [`Hash`] follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -72,25 +78,25 @@ impl SipAcceptEntry {
         }
     }
 
-    /// The media type (e.g. `"application"`).
+    /// The media type (e.g. `"application"`), lowercase.
     pub fn media_type(&self) -> &str {
         &self.media_range[..self.slash_pos]
     }
 
-    /// The media subtype (e.g. `"sdp"`).
+    /// The media subtype (e.g. `"sdp"`), lowercase.
     pub fn subtype(&self) -> &str {
         &self.media_range[self.slash_pos + 1..]
     }
 
-    /// The full media range as `type/subtype`.
+    /// The full media range as `type/subtype`, lowercase.
     pub fn media_range(&self) -> &str {
         &self.media_range
     }
 
-    /// The `q` quality value, if present.
-    pub fn q(&self) -> Option<&str> {
-        self.param("q")
-            .flatten()
+    /// The first `q`; `None` when absent or not a `qvalue`, whose text
+    /// [`param`](Self::param) returns.
+    pub fn q(&self) -> Option<QValue> {
+        q_of(&self.params)
     }
 }
 
@@ -101,11 +107,16 @@ impl fmt::Display for SipAcceptEntry {
 }
 
 /// SIP Accept header value; its grammar admits the empty list (RFC 3261 §25.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipAcceptEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipAccept(Vec<SipAcceptEntry>);
 
-list_type!(SipAccept, SipAcceptEntry, sep: ", ", may_be_empty);
+list_type!(SipAccept, SipAcceptEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -206,6 +217,92 @@ pub(crate) fn flag_invalid_token(
     }
 }
 
+/// An RFC 3261 §25.1 `qvalue`, held in thousandths.
+///
+/// [`Display`](fmt::Display) writes the shortest form: `0`, `0.05`, `1`.
+///
+/// ```
+/// use sip_header::QValue;
+///
+/// let q: QValue = "0.050".parse()?;
+/// assert_eq!((q.thousandths(), q.to_string()), (50, "0.05".to_string()));
+/// assert!("1.5".parse::<QValue>().is_err());
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+///
+/// # Equality
+///
+/// By value: `0.5` and `0.500` are equal, and the order is numeric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QValue(u16);
+
+impl QValue {
+    /// A qvalue of `thousandths`; errors above 1000.
+    pub fn new(thousandths: u16) -> Result<Self, ParseError> {
+        if thousandths > 1000 {
+            return Err(ParseError::malformed(
+                Field::Qvalue,
+                FaultCode::InvalidNumber,
+                None,
+            ));
+        }
+        Ok(QValue(thousandths))
+    }
+
+    /// The value in thousandths, `0..=1000`.
+    pub fn thousandths(self) -> u16 {
+        self.0
+    }
+}
+
+impl std::str::FromStr for QValue {
+    type Err = ParseError;
+
+    /// Reads `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if !is_qvalue(s) {
+            return Err(ParseError::malformed(
+                Field::Qvalue,
+                FaultCode::InvalidNumber,
+                None,
+            ));
+        }
+        let (int, frac) = s
+            .split_once('.')
+            .unwrap_or((s, ""));
+        let whole = if int == "1" { 1000 } else { 0 };
+        let frac = frac
+            .bytes()
+            .chain(std::iter::repeat(b'0'))
+            .take(3)
+            .fold(0, |n, b| n * 10 + u16::from(b - b'0'));
+        QValue::new(whole + frac)
+    }
+}
+
+impl fmt::Display for QValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => f.write_str("0"),
+            1000 => f.write_str("1"),
+            n => {
+                let digits = format!("{n:03}");
+                write!(f, "0.{}", digits.trim_end_matches('0'))
+            }
+        }
+    }
+}
+
+/// The first `q` of `params` as a [`QValue`]; `None` when absent or not
+/// a `qvalue`, which parsing reported as [`WarningCode::InvalidQvalue`].
+pub(crate) fn q_of(params: &HeaderParams) -> Option<QValue> {
+    params
+        .get("q")
+        .flatten()?
+        .parse()
+        .ok()
+}
+
 /// RFC 3261 §25.1 `qvalue = ( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )`.
 fn is_qvalue(v: &str) -> bool {
     let (int, frac) = match v.split_once('.') {
@@ -296,7 +393,7 @@ mod tests {
         let accept = SipAccept::parse("application/sdp, application/pidf+xml;q=0.5").unwrap();
         assert_eq!(accept.len(), 2);
         assert_eq!(accept.entries()[0].media_range(), "application/sdp");
-        assert_eq!(accept.entries()[1].q(), Some("0.5"));
+        assert_eq!(accept.entries()[1].param("q"), Some(Some("0.5")));
     }
 
     #[test]
@@ -345,7 +442,7 @@ mod tests {
         let raw = r#"application/sdp;x="a;b";q=0.5"#;
         let accept = SipAccept::parse(raw).unwrap();
         assert_eq!(accept.entries()[0].param("x"), Some(Some("a;b")));
-        assert_eq!(accept.entries()[0].q(), Some("0.5"));
+        assert_eq!(accept.entries()[0].param("q"), Some(Some("0.5")));
         assert_eq!(accept.to_string(), raw);
     }
 
@@ -455,7 +552,7 @@ mod tests {
     fn invalid_qvalue_is_warned() {
         let raw = "application/sdp, text/plain;q=1.5";
         let accept = SipAccept::parse(raw).unwrap();
-        assert_eq!(accept.entries()[1].q(), Some("1.5"));
+        assert_eq!(accept.entries()[1].param("q"), Some(Some("1.5")));
         assert_eq!(
             seen(raw),
             vec![(
@@ -513,7 +610,7 @@ mod tests {
         let raw = r#"application/sdp;x="a;q=0.5"#;
         let accept = SipAccept::parse(raw).unwrap();
         assert_eq!(accept.entries()[0].param("x"), Some(Some(r#""a"#)));
-        assert_eq!(accept.entries()[0].q(), Some("0.5"));
+        assert_eq!(accept.entries()[0].param("q"), Some(Some("0.5")));
         assert_eq!(
             seen(raw),
             vec![(

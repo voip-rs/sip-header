@@ -20,7 +20,14 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 /// assert!(SipReplaces::new("abc;to-tag=x", "t1", "f1").is_err());
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two values are equal when their wire forms in the same framing are:
+/// Call-ID and tags byte for byte, `early-only`, and the parameters as
+/// [`HeaderParams`](crate::HeaderParams) compares them. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),

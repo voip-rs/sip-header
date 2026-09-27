@@ -123,11 +123,16 @@ impl fmt::Display for HistoryInfoEntry {
 /// assert_eq!(hi.to_string(), "<sip:psap.example.com>;index=1.1");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`HistoryInfoEntry`] compares. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 
-list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", non_empty);
+list_type!(HistoryInfo, HistoryInfoEntry, non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
