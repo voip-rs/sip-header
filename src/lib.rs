@@ -96,7 +96,8 @@ pub use history_info::{HistoryInfo, HistoryInfoEntry};
 pub use join::SipJoin;
 #[cfg(feature = "message")]
 pub use message::{
-    extract_all_headers, extract_body, extract_header, extract_request_uri, SipHeaderExtract,
+    extract_all_headers, extract_body, extract_header, extract_request_uri, ExtractedHeaders,
+    SipHeaderExtract, SipMessageHeaders,
 };
 pub use params::HeaderParams;
 pub use reason::{SipReason, SipReasonCause, SipReasonList};

@@ -131,20 +131,21 @@ assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
 
 ### Bulk extraction
 
-`extract_all_headers()` returns all headers as name-value tuples in wire
-order, with proper RFC 3261 §7.3.1 folding. Header names are returned
-verbatim (compact forms are not expanded):
+`SipMessageHeaders` reads a raw message's header block into rows in wire order, unfolded per RFC 3261 §7.3.1, and is a `SipHeaderRows` store, so every typed accessor reads it. Names stay as sent (compact forms are not expanded), and the byte offset of every line it could not read is reported. `extract_all_headers()` returns the same rows as owned strings:
 
 ```rust
-use sip_header::extract_all_headers;
+use sip_header::{extract_all_headers, SipHeaderLookup, SipMessageHeaders};
 
 let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\
-           Via: SIP/2.0/UDP host\r\n\
-           f: Alice <sip:alice@example.com>\r\n\
+           Via: SIP/2.0/UDP 198.51.100.1\r\n\
+           f: Alice <sip:alice@example.com>;tag=a\r\n\
            \r\n";
-let headers = extract_all_headers(msg);
-assert_eq!(headers[0].0, "Via");
-assert_eq!(headers[1].0, "f");  // not "From"
+let headers = SipMessageHeaders::new(msg);
+assert_eq!(headers.sip_from()?.unwrap().tag(), Some("a"));
+assert!(headers.skipped().is_empty());
+let all = extract_all_headers(msg);
+assert_eq!(all.headers[1].0, "f");  // not "From"
+# Ok::<(), sip_header::ParseError>(())
 ```
 
 ## Migrating from 0.3

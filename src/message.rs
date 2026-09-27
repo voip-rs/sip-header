@@ -1,17 +1,23 @@
 //! SIP message text extraction utilities.
 //!
-//! Convenience functions for extracting values from raw SIP message text:
-//!
-//! - [`extract_header`] — pull header values with case-insensitive matching,
-//!   header folding (RFC 3261 §7.3.1), and compact forms (RFC 3261 §7.3.3)
-//! - [`extract_request_uri`] — pull the Request-URI from the request line
+//! - [`SipMessageHeaders`]: the header rows of a raw message, a
+//!   [`SipHeaderRows`] store every typed accessor reads
+//! - [`extract_header`], [`extract_all_headers`]: the same rows as owned
+//!   strings
+//! - [`extract_request_uri`]: the Request-URI of the request line
 //!   (RFC 3261 §7.1)
-//! - [`extract_body`] — pull the message body following the header block
+//! - [`extract_body`]: the message body following the header block
 //!   (RFC 3261 §7.4)
 //!
 //! Gated behind the `message` feature (enabled by default).
 
-use sip_header_catalog::SipHeader;
+use std::borrow::Cow;
+
+use sip_header_catalog::{RowError, SipHeader, SipHeaderRows};
+use sip_uri::UriParse;
+
+use crate::diagnostic::Field;
+use crate::error::{FaultCode, ParseError};
 
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
 ///
@@ -38,7 +44,7 @@ fn split_at_blank_line(message: &str) -> (&str, Option<usize>) {
 /// Extract the message body — everything after the blank line that ends
 /// the header block.
 ///
-/// Uses the same boundary rule as [`extract_all_headers`]: the first empty
+/// Uses the same boundary rule as [`SipMessageHeaders`]: the first empty
 /// line after `\r` stripping, so bare-`\n` messages behave the same as CRLF
 /// ones. The body is returned verbatim — no trimming, unfolding, or
 /// decoding — and `Content-Length` is not consulted; the body is the rest
@@ -60,122 +66,256 @@ pub fn extract_body(message: &str) -> Option<&str> {
     (!body.is_empty()).then_some(body)
 }
 
+/// The header rows of a raw SIP message, in wire order.
+///
+/// Reads the lines up to the blank line that ends the header block. A
+/// continuation line (starting with SP or HTAB) unfolds into the row above
+/// it with one SP (RFC 3261 §7.3.1); only such rows are held owned, every
+/// other row borrows the message. Values are trimmed; names are kept as
+/// sent, compact forms included.
+///
+/// As a [`SipHeaderRows`] store it matches names as
+/// [`SipHeader::name_matches`] does, returning every spelling's rows in wire
+/// order, so every [`SipHeaderLookup`](crate::SipHeaderLookup) accessor
+/// reads it.
+///
+/// A line that is neither a header, a continuation of one, nor the start
+/// line is skipped, and its byte offset reported by
+/// [`skipped`](Self::skipped).
+///
+/// ```
+/// use sip_header::{SipHeaderLookup, SipMessageHeaders};
+///
+/// let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\
+///            Via: SIP/2.0/UDP 198.51.100.1\r\n\
+///            v: SIP/2.0/TCP 203.0.113.5\r\n\
+///            \r\n";
+/// let headers = SipMessageHeaders::new(msg);
+/// assert_eq!(headers.via()?.unwrap().len(), 2);
+/// assert!(headers.skipped().is_empty());
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SipMessageHeaders<'a> {
+    rows: Vec<(&'a str, Cow<'a, str>)>,
+    skipped: Vec<usize>,
+}
+
+impl<'a> SipMessageHeaders<'a> {
+    /// Read the header block of `message`.
+    pub fn new(message: &'a str) -> Self {
+        let (block, _) = split_at_blank_line(message);
+        let mut rows: Vec<(&'a str, Cow<'a, str>)> = Vec::new();
+        let mut skipped = Vec::new();
+        // A continuation folds into the line above it only when that line was a header.
+        let mut folding = false;
+        let mut offset = 0;
+        for (i, raw_line) in block
+            .split('\n')
+            .enumerate()
+        {
+            let at = offset;
+            offset += raw_line.len() + 1;
+            let line = raw_line
+                .strip_suffix('\r')
+                .unwrap_or(raw_line);
+            if line.is_empty() {
+                continue;
+            }
+            if line.starts_with([' ', '\t']) {
+                match rows
+                    .last_mut()
+                    .filter(|_| folding)
+                {
+                    Some((_, value)) => append_folded(value, line),
+                    None => skipped.push(at),
+                }
+                continue;
+            }
+            folding = false;
+            match header_line(line) {
+                Some((name, value)) => {
+                    folding = true;
+                    rows.push((name, Cow::Borrowed(value)));
+                }
+                None if i == 0 => {}
+                None => skipped.push(at),
+            }
+        }
+        SipMessageHeaders { rows, skipped }
+    }
+
+    /// Every row as `(name as sent, value)`, in wire order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &str)> + '_ {
+        self.rows
+            .iter()
+            .map(|(name, value)| (*name, value.as_ref()))
+    }
+
+    /// Number of rows.
+    pub fn len(&self) -> usize {
+        self.rows
+            .len()
+    }
+
+    /// Whether the message holds no header row.
+    pub fn is_empty(&self) -> bool {
+        self.rows
+            .is_empty()
+    }
+
+    /// Byte offsets into the message of the lines that were skipped, in
+    /// order: a line without a `:` after a `token` name (RFC 3261 §7.3
+    /// `header-name = token`), or a continuation with no header above it.
+    pub fn skipped(&self) -> &[usize] {
+        &self.skipped
+    }
+}
+
+impl SipHeaderRows for SipMessageHeaders<'_> {
+    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
+        Ok(self
+            .iter()
+            .filter(|(wire, _)| SipHeader::name_matches(name, wire))
+            .map(|(_, value)| value)
+            .collect())
+    }
+}
+
+/// `name: value` with a `token` name, SWS before the colon allowed.
+fn header_line(line: &str) -> Option<(&str, &str)> {
+    let (name, value) = line.split_once(':')?;
+    let name = name.trim_end_matches([' ', '\t']);
+    crate::is_token(name).then(|| (name, value.trim()))
+}
+
 /// Unfold a continuation line into `value`, replacing the folding LWS with
 /// one SP (RFC 3261 §7.3.1).
-fn append_folded(value: &mut String, line: &str) {
+fn append_folded(value: &mut Cow<'_, str>, line: &str) {
     let line = line.trim();
     if line.is_empty() {
         return;
     }
+    let value = value.to_mut();
     if !value.is_empty() {
         value.push(' ');
     }
     value.push_str(line);
 }
 
-/// Extract all occurrences of a header from a raw SIP message.
+/// Extract all occurrences of a header from a raw SIP message, one string
+/// per occurrence, as [`SipMessageHeaders`] reads them.
 ///
-/// Scans all lines up to the blank line separating headers from the message
-/// body. Header name matching is case-insensitive (RFC 3261 §7.3.5) and
+/// Header name matching is case-insensitive (RFC 3261 §7.3.5) and
 /// recognizes compact header forms (RFC 3261 §7.3.3): searching for `"From"`
-/// also matches `f:`, and searching for `"f"` also matches `From:`.
-///
-/// Header folding (continuation lines beginning with SP or HTAB) is unfolded
-/// into a single logical value per occurrence. Each header occurrence is
-/// returned as a separate entry — values are **not** comma-joined, per
-/// RFC 3261 §7.3.1 which forbids joining for Authorization,
-/// Proxy-Authorization, WWW-Authenticate, and Proxy-Authenticate.
+/// also matches `f:`, and searching for `"f"` also matches `From:`. Values
+/// are **not** comma-joined, per RFC 3261 §7.3.1, which forbids joining for
+/// Authorization, Proxy-Authorization, WWW-Authenticate, and
+/// Proxy-Authenticate.
 ///
 /// Returns an empty `Vec` if no header with the given name is found.
 pub fn extract_header(message: &str, name: &str) -> Vec<String> {
-    extract_all_headers(message)
-        .into_iter()
-        .filter(|(hdr_name, _)| SipHeader::name_matches(name, hdr_name))
-        .map(|(_, value)| value)
+    SipMessageHeaders::new(message)
+        .iter()
+        .filter(|(wire, _)| SipHeader::name_matches(name, wire))
+        .map(|(_, value)| value.to_string())
         .collect()
 }
 
-/// Extract all headers from a raw SIP message as name-value pairs.
-///
-/// Returns headers in wire order, preserving multiple occurrences of the
-/// same header name as separate entries. Header folding is unfolded per
-/// RFC 3261 §7.3.1. Header names are returned as-is from the wire (not
-/// canonicalized — compact forms like `f:` remain `f`, not `From`).
-///
-/// Stops at the blank line separating headers from body.
-pub fn extract_all_headers(message: &str) -> Vec<(String, String)> {
-    let mut headers: Vec<(String, String)> = Vec::new();
-    let (header_block, _) = split_at_blank_line(message);
-    // A continuation folds into the line above it only when that line was a header.
-    let mut folding = false;
-
-    for line in header_block.split('\n') {
-        let line = line
-            .strip_suffix('\r')
-            .unwrap_or(line);
-
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if let Some((_, value)) = headers
-                .last_mut()
-                .filter(|_| folding)
-            {
-                append_folded(value, line);
-            }
-            continue;
-        }
-
-        folding = false;
-        if let Some((hdr_name, hdr_value)) = line.split_once(':') {
-            let hdr_name = hdr_name.trim_end();
-            // RFC 3261: header names are tokens — no whitespace allowed.
-            // This rejects request/status lines like "INVITE sip:..." where
-            // the text before the first colon contains spaces.
-            if !hdr_name.contains(' ') {
-                folding = true;
-                headers.push((
-                    hdr_name.to_string(),
-                    hdr_value
-                        .trim()
-                        .to_string(),
-                ));
-            }
-        }
-    }
-
-    headers
+/// Every header row of a message, owned, with the lines that were skipped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExtractedHeaders {
+    /// `(name as sent, value)` in wire order; compact names stay compact.
+    pub headers: Vec<(String, String)>,
+    /// Byte offsets of the skipped lines, as
+    /// [`SipMessageHeaders::skipped`] reports them.
+    pub skipped: Vec<usize>,
 }
 
-/// Extract the Request-URI from a SIP request message.
+/// Extract all headers from a raw SIP message as owned name-value pairs,
+/// as [`SipMessageHeaders`] reads them.
 ///
-/// Parses the first line as `Method SP Request-URI SP SIP-Version`
-/// (RFC 3261 Section 7.1) and returns the Request-URI.
+/// ```
+/// use sip_header::extract_all_headers;
 ///
-/// Returns `None` for status lines (`SIP/2.0 200 OK`) or if the
-/// request line cannot be parsed.
-pub fn extract_request_uri(message: &str) -> Option<String> {
-    let first_line = message
-        .lines()
-        .next()?;
-    let first_line = first_line
-        .strip_suffix('\r')
-        .unwrap_or(first_line);
-    let mut parts = first_line.split_whitespace();
-    let method = parts.next()?;
-    if method.starts_with("SIP/") {
-        return None;
+/// let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\
+///            f: Alice <sip:alice@example.com>\r\n\
+///            not a header\r\n\
+///            \r\n";
+/// let all = extract_all_headers(msg);
+/// assert_eq!(all.headers[0].0, "f");
+/// assert_eq!(all.skipped, [msg.find("not").unwrap()]);
+/// ```
+pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
+    let headers = SipMessageHeaders::new(message);
+    ExtractedHeaders {
+        headers: headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+        skipped: headers.skipped,
     }
-    let uri = parts.next()?;
-    let version = parts.next()?;
-    if parts
+}
+
+/// The Request-URI of a SIP request (RFC 3261 §7.1
+/// `Method SP Request-URI SP SIP-Version`), parsed leniently.
+///
+/// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors when the message
+/// is empty, the first line has not three parts, the method is not a
+/// `token` or the version does not start `SIP/`, and when the URI yields no
+/// value; error positions are byte offsets into the first line.
+///
+/// ```
+/// let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\r\n";
+/// let uri = sip_header::extract_request_uri(msg)?.unwrap();
+/// assert_eq!(uri.to_string(), "sip:bob@example.com");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub fn extract_request_uri(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
+    let first = message
+        .split('\n')
         .next()
-        .is_some()
+        .unwrap_or_default();
+    let first = first
+        .strip_suffix('\r')
+        .unwrap_or(first);
+    if first.is_empty() {
+        return Err(ParseError::empty(Field::Value));
+    }
+    let parts: Vec<&str> = first
+        .split_whitespace()
+        .collect();
+    if parts
+        .first()
+        .is_some_and(|p| p.starts_with("SIP/"))
     {
-        return None;
+        return Ok(None);
+    }
+    let [method, uri, version] = parts.as_slice() else {
+        return Err(ParseError::malformed(
+            Field::Value,
+            FaultCode::Missing,
+            None,
+        ));
+    };
+    if !crate::is_token(method) {
+        return Err(ParseError::malformed(
+            Field::Value,
+            FaultCode::InvalidChar,
+            Some(0),
+        ));
     }
     if !version.starts_with("SIP/") {
-        return None;
+        return Err(ParseError::malformed(
+            Field::Value,
+            FaultCode::Missing,
+            Some(crate::offset_in(first, version)),
+        ));
     }
-    Some(uri.to_string())
+    sip_uri::Uri::parse(uri)
+        .map(Some)
+        .map_err(|e| ParseError::uri(e, crate::offset_in(first, uri)))
 }
 
 mod sealed {
@@ -515,30 +655,54 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
     // -- extract_request_uri tests (RFC 3261 §7.1) --
 
+    fn request_uri(msg: &str) -> Option<String> {
+        extract_request_uri(msg)
+            .unwrap()
+            .map(|u| u.to_string())
+    }
+
     #[test]
     fn extract_request_uri_invite() {
         let msg = "INVITE urn:service:sos SIP/2.0\r\nTo: <urn:service:sos>\r\n\r\n";
-        assert_eq!(extract_request_uri(msg), Some("urn:service:sos".into()));
+        assert_eq!(request_uri(msg), Some("urn:service:sos".into()));
     }
 
     #[test]
     fn extract_request_uri_sip() {
         let msg = "INVITE sip:+15550001234@198.51.100.1:5060 SIP/2.0\r\n\r\n";
         assert_eq!(
-            extract_request_uri(msg),
+            request_uri(msg),
             Some("sip:+15550001234@198.51.100.1:5060".into()),
         );
     }
 
     #[test]
     fn extract_request_uri_status_line() {
-        let msg = "SIP/2.0 200 OK\r\n\r\n";
-        assert_eq!(extract_request_uri(msg), None);
+        assert_eq!(request_uri("SIP/2.0 200 OK\r\n\r\n"), None);
     }
 
     #[test]
-    fn extract_request_uri_empty() {
-        assert_eq!(extract_request_uri(""), None);
+    fn extract_request_uri_malformed_line() {
+        assert_eq!(
+            extract_request_uri(""),
+            Err(ParseError::empty(Field::Value))
+        );
+        assert_eq!(
+            extract_request_uri("INVITE sip:a@example.com SIP/2.0 x\r\n"),
+            Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::Missing,
+                None
+            ))
+        );
+        assert_eq!(
+            extract_request_uri("INVITE sip:a@example.com HTTP/1.1\r\n"),
+            Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::Missing,
+                Some(25)
+            ))
+        );
     }
 
     // -- extract_all_headers tests --
@@ -552,7 +716,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "To: Bob <sip:bob@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 3);
         assert_eq!(headers[0], ("Via".into(), "SIP/2.0/UDP host".into()));
         assert_eq!(
@@ -575,7 +739,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 2);
         assert_eq!(
             headers[0].1,
@@ -592,7 +756,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "i: call-1@host\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 3);
         assert_eq!(headers[0].0, "f");
         assert_eq!(headers[1].0, "t");
@@ -608,7 +772,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "v=0\r\n",
             "o=alice 123 456 IN IP4 198.51.100.1\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -621,7 +785,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "Via: SIP/2.0/UDP second.example.com\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 2);
         assert_eq!(
             headers[0],
@@ -635,7 +799,9 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
     #[test]
     fn extract_all_headers_empty_message() {
-        assert!(extract_all_headers("").is_empty());
+        assert!(extract_all_headers("")
+            .headers
+            .is_empty());
     }
 
     #[test]
@@ -645,7 +811,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -657,7 +823,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -670,7 +836,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "\tworld\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].1, "hello world");
     }
@@ -683,7 +849,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0], ("Subject".into(), "".into()));
     }
@@ -692,7 +858,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     fn value_trailing_whitespace_trimmed() {
         let msg = "SIP/2.0 200 OK\r\nSubject: hi   \r\nFrom: <sip:a@example.com>\t\r\n\r\n";
         assert_eq!(extract_header(msg, "Subject"), vec!["hi"]);
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers[0].1, "hi");
         assert_eq!(headers[1].1, "<sip:a@example.com>");
     }
@@ -706,7 +872,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "\r\n",
         );
         assert_eq!(extract_header(msg, "Subject"), vec!["hello world"]);
-        assert_eq!(extract_all_headers(msg)[0].1, "hello world");
+        assert_eq!(extract_all_headers(msg).headers[0].1, "hello world");
     }
 
     // -- extract_body tests --
@@ -803,7 +969,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                    From: Alice <sip:alice@example.com>\n\
                    \n\
                    body\n";
-        let headers = extract_all_headers(msg);
+        let headers = extract_all_headers(msg).headers;
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers[0],
@@ -818,11 +984,38 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                    not a header\r\n\
                    \x20continued\r\n\
                    \r\n";
+        let all = extract_all_headers(msg);
         assert_eq!(
-            extract_all_headers(msg),
+            all.headers,
             vec![("From".into(), "<sip:alice@example.com>".into())]
         );
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
+        assert_eq!(all.skipped, [at("not a header"), at(" continued")]);
         assert_eq!(extract_header(msg, "f"), vec!["<sip:alice@example.com>"]);
+    }
+
+    #[test]
+    fn folded_rows_alone_are_owned() {
+        let msg = "SIP/2.0 200 OK\r\nSubject: a\r\n b\r\nFrom: <sip:a@example.com>\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert!(matches!(headers.rows[0].1, Cow::Owned(_)));
+        assert!(matches!(headers.rows[1].1, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_token_is_skipped() {
+        let msg = "SIP/2.0 200 OK\r\nX Bad: a\r\nVia : SIP/2.0/UDP h\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(headers.skipped(), [16]);
+        assert_eq!(
+            headers
+                .iter()
+                .collect::<Vec<_>>(),
+            [("Via", "SIP/2.0/UDP h")]
+        );
     }
 
     #[test]
