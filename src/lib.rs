@@ -8,6 +8,7 @@
 //! # Modules
 //!
 //! - [`header_addr`] — RFC 3261 `name-addr` with header-level parameters
+//! - [`params`] — [`HeaderParams`], the parameters every value type holds
 //! - [`header`] — SIP header name catalog and [`SipHeaderLookup`] trait
 //! - [`call_id`] — RFC 3261 Call-ID value
 //! - [`message`] — Extract headers, Request-URI and body from raw SIP message text (feature: `message`)
@@ -28,6 +29,8 @@
 //! - [`target_dialog`] — RFC 4538 Target-Dialog header parser
 //! - `conference_info` — RFC 4575 conference event package (feature: `conference-info`)
 
+#[macro_use]
+pub mod params;
 #[macro_use]
 mod list;
 #[macro_use]
@@ -87,6 +90,7 @@ pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
 pub use message::{
     extract_all_headers, extract_body, extract_header, extract_request_uri, SipHeaderExtract,
 };
+pub use params::HeaderParams;
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;
@@ -94,21 +98,6 @@ pub use traits::{AddrParts, DialogIdEdit, HeaderParse, ListParse, Redact};
 pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};
-
-/// Parameters already read, in stored form.
-pub(crate) fn stored_params(params: Vec<RawParam<'_>>) -> Vec<(String, Option<String>)> {
-    params
-        .into_iter()
-        .map(|p| {
-            (
-                p.key
-                    .to_ascii_lowercase(),
-                p.value
-                    .map(str::to_string),
-            )
-        })
-        .collect()
-}
 
 /// Byte offset of `inner`, a subslice of `outer`, within `outer`.
 pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
@@ -202,43 +191,6 @@ pub(crate) fn fmt_joined<T: std::fmt::Display>(
     Ok(())
 }
 
-/// Append a parameter, its key lowercased.
-pub(crate) fn push_lowercased<V>(params: &mut Vec<(String, V)>, mut key: String, value: V) {
-    key.make_ascii_lowercase();
-    params.push((key, value));
-}
-
-/// Write stored parameters as `;key` or `;key=value`, values as stored.
-pub(crate) fn write_params<W: std::fmt::Write + ?Sized>(
-    w: &mut W,
-    params: &[(String, Option<String>)],
-) -> std::fmt::Result {
-    for (key, value) in params {
-        write_param(w, key, value.as_deref(), false)?;
-    }
-    Ok(())
-}
-
-/// Look up a stored parameter by key, case-insensitively: `Some(None)` for a flag.
-pub(crate) fn find_param<'a>(
-    params: &'a [(String, Option<String>)],
-    key: &str,
-) -> Option<Option<&'a str>> {
-    params
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(key))
-        .map(|(_, v)| v.as_deref())
-}
-
-/// Stored parameters as borrowed `(key, value)` pairs.
-pub(crate) fn iter_params(
-    params: &[(String, Option<String>)],
-) -> impl Iterator<Item = (&str, Option<&str>)> {
-    params
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_deref()))
-}
-
 /// Write a `quoted-string`: surrounds with `"` and emits `"`, `\` and
 /// [`is_quoted_pair_only`] characters as `quoted-pair` (RFC 3261 §25.1).
 pub(crate) fn write_quoted_pair<W: std::fmt::Write + ?Sized>(
@@ -253,28 +205,6 @@ pub(crate) fn write_quoted_pair<W: std::fmt::Write + ?Sized>(
         f.write_char(ch)?;
     }
     f.write_char('"')
-}
-
-/// Write `;key`, `;key=value`, or `;key="value"` when `quote` is set.
-pub(crate) fn write_param<W: std::fmt::Write + ?Sized>(
-    w: &mut W,
-    key: &str,
-    value: Option<&str>,
-    quote: bool,
-) -> std::fmt::Result {
-    w.write_char(';')?;
-    w.write_str(key)?;
-    match value {
-        None => Ok(()),
-        Some(v) => {
-            w.write_char('=')?;
-            if quote {
-                write_quoted_pair(w, v)
-            } else {
-                w.write_str(v)
-            }
-        }
-    }
 }
 
 /// Byte index of the first `"` not escaped by `quoted-pair`, scanning text
@@ -333,20 +263,9 @@ impl RawParam<'_> {
         })
     }
 
-    /// [`unquoted`](Self::unquoted), raising [`WarningCode::UnterminatedQuote`]
-    /// and [`WarningCode::TrailingBackslash`] at their position in `input`, the
+    /// Raise [`WarningCode::UnterminatedQuote`] and
+    /// [`WarningCode::TrailingBackslash`] at their position in `input`, the
     /// string the parameter was read from.
-    pub(crate) fn unquoted_reporting(
-        &self,
-        input: &str,
-        warnings: &mut Vec<ParseWarning>,
-    ) -> Option<Unquoted> {
-        self.report_quoting(input, warnings);
-        self.unquoted()
-    }
-
-    /// Raise the quote breaches [`unquoted_reporting`](Self::unquoted_reporting)
-    /// would, for a type that stores the value as sent.
     pub(crate) fn report_quoting(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
         let Some(v) = self.value else {
             return;
@@ -362,29 +281,6 @@ impl RawParam<'_> {
                     .at(at + v.len() - 2),
             );
         }
-    }
-}
-
-/// Read `*(SEMI generic-param)` from `params`, a slice of `input`, values as
-/// sent, reporting quote breaches at their position in `input`.
-pub(crate) fn read_params_reporting(
-    input: &str,
-    params: &str,
-    warnings: &mut Vec<ParseWarning>,
-) -> Vec<(String, Option<String>)> {
-    let raw = parse_params(params);
-    report_params_quoting(input, &raw, warnings);
-    stored_params(raw)
-}
-
-/// Raise the quote breaches in `params`, read from `input`.
-pub(crate) fn report_params_quoting(
-    input: &str,
-    params: &[RawParam<'_>],
-    warnings: &mut Vec<ParseWarning>,
-) {
-    for p in params {
-        p.report_quoting(input, warnings);
     }
 }
 
@@ -649,14 +545,5 @@ mod tests {
         let mut s = String::new();
         write_quoted_pair(&mut s, "a\u{1}b\tc\u{7f}").unwrap();
         assert_eq!(s, "\"a\\\u{1}b\tc\\\u{7f}\"");
-    }
-
-    #[test]
-    fn write_param_forms() {
-        let mut s = String::new();
-        write_param(&mut s, "lr", None, false).unwrap();
-        write_param(&mut s, "tag", Some("x"), false).unwrap();
-        write_param(&mut s, "d-ver", Some(r#"a"b"#), true).unwrap();
-        assert_eq!(s, r#";lr;tag=x;d-ver="a\"b""#);
     }
 }

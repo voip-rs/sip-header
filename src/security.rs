@@ -7,23 +7,22 @@ use std::fmt;
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(
-        try_from = "SipSecurityMechanismParts",
-        into = "SipSecurityMechanismParts"
-    )
+    serde(from = "SipSecurityMechanismParts", into = "SipSecurityMechanismParts")
 )]
 #[non_exhaustive]
 pub struct SipSecurityMechanism {
     mechanism: String,
-    params: Vec<(String, Option<String>)>,
-    quoted: Vec<bool>,
+    params: HeaderParams,
 }
+
+header_params!(SipSecurityMechanism);
 
 impl SipSecurityMechanism {
     /// A mechanism by name, lowercased, with no parameters.
@@ -32,42 +31,13 @@ impl SipSecurityMechanism {
         mechanism.make_ascii_lowercase();
         SipSecurityMechanism {
             mechanism,
-            params: Vec::new(),
-            quoted: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    fn push(mut self, key: String, value: Option<String>, quoted: bool) -> Self {
-        crate::push_lowercased(&mut self.params, key, value);
-        self.quoted
-            .push(quoted);
-        self
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        self.push(key.into(), value.map(Into::into), false)
-    }
-
-    /// Add a parameter whose value [`Display`](fmt::Display) emits as a
-    /// `quoted-string`.
-    pub fn with_quoted_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.push(key.into(), Some(value.into()), true)
     }
 
     /// The mechanism name (e.g. `"digest"`, `"tls"`, `"ipsec-ike"`).
     pub fn mechanism(&self) -> &str {
         &self.mechanism
-    }
-
-    /// All parameters as `(key, optional_value)` pairs.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Look up a parameter by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
     }
 
     /// The `q` preference value, if present.
@@ -91,15 +61,7 @@ impl SipSecurityMechanism {
 
 impl fmt::Display for SipSecurityMechanism {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.mechanism)?;
-        for ((key, value), quoted) in self
-            .params
-            .iter()
-            .zip(&self.quoted)
-        {
-            crate::write_param(f, key, value.as_deref(), *quoted)?;
-        }
-        Ok(())
+        write!(f, "{}{}", self.mechanism, self.params)
     }
 }
 
@@ -112,35 +74,19 @@ list_type!(SipSecurity, SipSecurityMechanism, sep: ", ", non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
-struct MechParamParts {
-    key: String,
-    value: Option<String>,
-    #[serde(default)]
-    quoted: bool,
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Serialize, serde::Deserialize)]
 struct SipSecurityMechanismParts {
     mechanism: String,
     #[serde(default)]
-    params: Vec<MechParamParts>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipSecurityMechanismParts> for SipSecurityMechanism {
-    type Error = &'static str;
-
-    fn try_from(p: SipSecurityMechanismParts) -> Result<Self, Self::Error> {
-        p.params
-            .into_iter()
-            .try_fold(SipSecurityMechanism::new(p.mechanism), |m, param| {
-                match (param.value, param.quoted) {
-                    (Some(value), true) => Ok(m.with_quoted_param(param.key, value)),
-                    (None, true) => Err("a quoted mechanism parameter needs a value"),
-                    (value, false) => Ok(m.with_param(param.key, value)),
-                }
-            })
+impl From<SipSecurityMechanismParts> for SipSecurityMechanism {
+    fn from(p: SipSecurityMechanismParts) -> Self {
+        SipSecurityMechanism {
+            params: p.params,
+            ..SipSecurityMechanism::new(p.mechanism)
+        }
     }
 }
 
@@ -149,12 +95,7 @@ impl From<SipSecurityMechanism> for SipSecurityMechanismParts {
     fn from(m: SipSecurityMechanism) -> Self {
         SipSecurityMechanismParts {
             mechanism: m.mechanism,
-            params: m
-                .params
-                .into_iter()
-                .zip(m.quoted)
-                .map(|((key, value), quoted)| MechParamParts { key, value, quoted })
-                .collect(),
+            params: m.params,
         }
     }
 }
@@ -185,15 +126,10 @@ fn parse_mechanism(
         ));
     }
 
-    Ok(crate::parse_params(params_part.unwrap_or(""))
-        .into_iter()
-        .fold(SipSecurityMechanism::new(mechanism_part), |m, p| {
-            match p.unquoted_reporting(entry, warnings) {
-                None => m.with_param(p.key, None::<String>),
-                Some(u) if u.quoted => m.with_quoted_param(p.key, u.value),
-                Some(u) => m.with_param(p.key, Some(u.value)),
-            }
-        }))
+    Ok(SipSecurityMechanism {
+        params: HeaderParams::read(entry, params_part.unwrap_or(""), warnings),
+        ..SipSecurityMechanism::new(mechanism_part)
+    })
 }
 
 impl CommaList for SipSecurity {

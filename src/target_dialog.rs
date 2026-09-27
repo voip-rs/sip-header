@@ -10,12 +10,12 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipTargetDialogParts", into = "SipTargetDialogParts")
+    serde(try_from = "SipTargetDialogParts", into = "SipTargetDialogParts")
 )]
 #[non_exhaustive]
 pub struct SipTargetDialog(DialogId);
 
-dialog_id_type!(SipTargetDialog, local_tag => "local-tag", remote_tag => "remote-tag", early_only: false);
+dialog_id_type!(SipTargetDialog, local_tag, with_local_tag => "local-tag", remote_tag, with_remote_tag => "remote-tag", early_only: false);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -24,20 +24,24 @@ struct SipTargetDialogParts {
     local_tag: String,
     remote_tag: String,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: crate::HeaderParams,
     #[serde(default)]
     framing: DialogFraming,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipTargetDialogParts> for SipTargetDialog {
-    fn from(p: SipTargetDialogParts) -> Self {
+impl TryFrom<SipTargetDialogParts> for SipTargetDialog {
+    type Error = crate::ParseError;
+
+    fn try_from(p: SipTargetDialogParts) -> Result<Self, Self::Error> {
+        use crate::dialog_id::DialogKind;
+
         p.params
-            .into_iter()
-            .fold(
-                SipTargetDialog::new(p.call_id, p.local_tag, p.remote_tag).with_framing(p.framing),
-                |t, (k, v)| t.with_param(k, v),
-            )
+            .refuse_reserved(Self::RESERVED)?;
+        let mut t =
+            SipTargetDialog::new(p.call_id, p.local_tag, p.remote_tag).with_framing(p.framing);
+        *t.0.params_mut() = p.params;
+        Ok(t)
     }
 }
 
@@ -56,7 +60,7 @@ impl From<SipTargetDialog> for SipTargetDialogParts {
                 .to_string(),
             params: t
                 .params()
-                .to_vec(),
+                .clone(),
             framing: t.framing(),
         }
     }
@@ -64,14 +68,7 @@ impl From<SipTargetDialog> for SipTargetDialogParts {
 
 impl DialogBuild for SipTargetDialog {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self {
-        fields
-            .params
-            .into_iter()
-            .fold(
-                SipTargetDialog::new(fields.call_id, fields.first_tag, fields.second_tag)
-                    .with_framing(framing),
-                |t, (key, value)| t.with_param(key, value),
-            )
+        Self(DialogId::from_fields(fields, framing))
     }
 }
 

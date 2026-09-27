@@ -9,6 +9,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,8 +22,10 @@ use crate::list::CommaList;
 pub struct SipAcceptEntry {
     media_range: String,
     slash_pos: usize,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
+
+header_params!(SipAcceptEntry);
 
 impl SipAcceptEntry {
     /// An entry for `media_type/subtype`, both lowercased, with no parameters.
@@ -39,14 +42,8 @@ impl SipAcceptEntry {
         SipAcceptEntry {
             media_range,
             slash_pos,
-            params: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
     }
 
     /// The media type (e.g. `"application"`).
@@ -64,16 +61,6 @@ impl SipAcceptEntry {
         &self.media_range
     }
 
-    /// All parameters as `(key, value)` pairs; keys lowercased, `None` for a flag.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
-    }
-
     /// The `q` quality value, if present.
     pub fn q(&self) -> Option<&str> {
         self.param("q")
@@ -83,8 +70,7 @@ impl SipAcceptEntry {
 
 impl fmt::Display for SipAcceptEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.media_range)?;
-        crate::write_params(f, &self.params)
+        write!(f, "{}{}", self.media_range, self.params)
     }
 }
 
@@ -101,17 +87,16 @@ struct SipAcceptEntryParts {
     media_type: String,
     subtype: String,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
 impl From<SipAcceptEntryParts> for SipAcceptEntry {
     fn from(p: SipAcceptEntryParts) -> Self {
-        p.params
-            .into_iter()
-            .fold(SipAcceptEntry::new(p.media_type, p.subtype), |e, (k, v)| {
-                e.with_param(k, v)
-            })
+        SipAcceptEntry {
+            params: p.params,
+            ..SipAcceptEntry::new(p.media_type, p.subtype)
+        }
     }
 }
 
@@ -165,13 +150,10 @@ fn parse_accept_entry(
         flag_invalid_token(entry, part, is_token(part), Field::MediaRange, warnings);
     }
 
-    Ok(
-        read_accept_params(entry, params_part.unwrap_or(""), warnings)
-            .into_iter()
-            .fold(SipAcceptEntry::new(type_str, subtype_str), |e, (k, v)| {
-                e.with_param(k, v)
-            }),
-    )
+    Ok(SipAcceptEntry {
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        ..SipAcceptEntry::new(type_str, subtype_str)
+    })
 }
 
 /// A blank entry beside a real one, shared by the Accept-* headers.
@@ -215,29 +197,31 @@ fn is_qvalue(v: &str) -> bool {
     }
 }
 
-/// Read `*(SEMI accept-param)` into stored form, raising
-/// [`WarningCode::UnterminatedQuote`] and [`WarningCode::InvalidQvalue`] at
-/// their position in `entry`.
+/// Read `*(SEMI accept-param)`, raising the parameter breaches and
+/// [`WarningCode::InvalidQvalue`] at their position in `entry`.
 pub(crate) fn read_accept_params(
     entry: &str,
     params: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Vec<(String, Option<String>)> {
-    let raw = crate::parse_params(params);
-    for p in &raw {
-        let Some(value) = p.value else { continue };
-        let at = crate::offset_in(entry, value);
-        if p.unterminated {
-            warnings.push(ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote).at(at));
-        }
-        if p.key
-            .eq_ignore_ascii_case("q")
-            && !is_qvalue(value)
+) -> HeaderParams {
+    let mut out = HeaderParams::default();
+    for p in crate::parse_params(params) {
+        out.push_raw(entry, &p, warnings);
+        if let Some(value) = p
+            .value
+            .filter(|v| {
+                p.key
+                    .eq_ignore_ascii_case("q")
+                    && !is_qvalue(v)
+            })
         {
-            warnings.push(ParseWarning::new(Field::Qvalue, WarningCode::InvalidQvalue).at(at));
+            warnings.push(
+                ParseWarning::new(Field::Qvalue, WarningCode::InvalidQvalue)
+                    .at(crate::offset_in(entry, value)),
+            );
         }
     }
-    crate::stored_params(raw)
+    out
 }
 
 impl CommaList for SipAccept {
@@ -318,11 +302,11 @@ mod tests {
         assert_eq!(entry.param("FOO"), Some(None));
         assert_eq!(entry.param("absent"), None);
         assert_eq!(
-            entry.params(),
-            &[
-                ("foo".to_string(), None),
-                ("q".to_string(), Some("0.5".to_string()))
-            ]
+            entry
+                .params()
+                .iter()
+                .collect::<Vec<_>>(),
+            [("foo", None), ("q", Some("0.5"))]
         );
         assert_eq!(accept.to_string(), "application/sdp;foo;q=0.5");
     }
@@ -331,7 +315,7 @@ mod tests {
     fn quoted_param_keeps_semicolon() {
         let raw = r#"application/sdp;x="a;b";q=0.5"#;
         let accept = SipAccept::parse(raw).unwrap();
-        assert_eq!(accept.entries()[0].param("x"), Some(Some(r#""a;b""#)));
+        assert_eq!(accept.entries()[0].param("x"), Some(Some("a;b")));
         assert_eq!(accept.entries()[0].q(), Some("0.5"));
         assert_eq!(accept.to_string(), raw);
     }

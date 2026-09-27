@@ -266,6 +266,14 @@ pub enum WarningCode {
     MissingHost,
     /// An accept-param `q` outside RFC 3261 §25.1 `qvalue`, kept as sent.
     InvalidQvalue,
+    /// A parameter name repeated within one value, kept; lookup returns the
+    /// first. RFC 3261 §25.1 `generic-param` defines no meaning for a second
+    /// occurrence, and RFC 7235 §2.1 forbids one among `auth-param`s.
+    DuplicateParam,
+    /// An `auth-param` without the value RFC 3261 §25.1
+    /// `auth-param = auth-param-name EQUAL ( token / quoted-string )`
+    /// requires, kept as a flag.
+    AuthParamFlag,
 }
 
 impl WarningCode {
@@ -301,6 +309,8 @@ impl WarningCode {
             WarningCode::EmptyEntry => "empty-entry",
             WarningCode::MissingHost => "missing-host",
             WarningCode::InvalidQvalue => "invalid-qvalue",
+            WarningCode::DuplicateParam => "duplicate-param",
+            WarningCode::AuthParamFlag => "auth-param-flag",
         }
     }
 }
@@ -389,6 +399,8 @@ mod tests {
             WarningCode::EmptyEntry,
             WarningCode::MissingHost,
             WarningCode::InvalidQvalue,
+            WarningCode::DuplicateParam,
+            WarningCode::AuthParamFlag,
         ];
         for code in &all {
             match code {
@@ -406,7 +418,9 @@ mod tests {
                 | WarningCode::SkippedEntry
                 | WarningCode::EmptyEntry
                 | WarningCode::MissingHost
-                | WarningCode::InvalidQvalue => {}
+                | WarningCode::InvalidQvalue
+                | WarningCode::DuplicateParam
+                | WarningCode::AuthParamFlag => {}
             }
         }
         all

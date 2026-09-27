@@ -1,13 +1,14 @@
 //! `callid *(SEMI param)` with two mandatory tags: the core Replaces, Join
 //! (RFC 3891, RFC 3911) and Target-Dialog (RFC 4538) share.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use percent_encoding::percent_decode_str;
 
 use crate::call_id::SipCallId;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::params::{checked_token, HeaderParams};
 
 pub(crate) mod sealed {
     pub trait Sealed {}
@@ -38,6 +39,8 @@ pub trait DialogKind: sealed::Sealed {
     const SECOND_TAG: &'static str;
     /// Whether the header defines the `early-only` flag.
     const EARLY_ONLY: bool;
+    /// Parameter names set through typed setters, which `with_param` refuses.
+    const RESERVED: &'static [&'static str];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +49,7 @@ pub(crate) struct DialogId {
     first_tag: String,
     second_tag: String,
     early_only: bool,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
     framing: DialogFraming,
 }
 
@@ -57,8 +60,19 @@ impl DialogId {
             first_tag,
             second_tag,
             early_only: false,
-            params: Vec::new(),
+            params: HeaderParams::default(),
             framing: DialogFraming::Header,
+        }
+    }
+
+    pub(crate) fn from_fields(fields: DialogFields, framing: DialogFraming) -> Self {
+        DialogId {
+            call_id: fields.call_id,
+            first_tag: fields.first_tag,
+            second_tag: fields.second_tag,
+            early_only: fields.early_only,
+            params: fields.params,
+            framing,
         }
     }
 
@@ -95,16 +109,22 @@ impl DialogId {
         self.early_only = early_only;
     }
 
-    pub(crate) fn params(&self) -> &[(String, Option<String>)] {
+    pub(crate) fn params(&self) -> &HeaderParams {
         &self.params
     }
 
-    pub(crate) fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
+    pub(crate) fn params_mut(&mut self) -> &mut HeaderParams {
+        &mut self.params
     }
 
-    pub(crate) fn push_param(&mut self, key: String, value: Option<String>) {
-        crate::push_lowercased(&mut self.params, key, value);
+    pub(crate) fn set_first_tag(&mut self, tag: String) -> Result<(), ParseError> {
+        self.first_tag = checked_token(Field::Tag, tag)?;
+        Ok(())
+    }
+
+    pub(crate) fn set_second_tag(&mut self, tag: String) -> Result<(), ParseError> {
+        self.second_tag = checked_token(Field::Tag, tag)?;
+        Ok(())
     }
 
     pub(crate) fn framing(&self) -> DialogFraming {
@@ -127,7 +147,7 @@ impl DialogId {
         if self.early_only {
             s.push_str(";early-only");
         }
-        crate::write_params(&mut s, &self.params)?;
+        write!(s, "{}", self.params)?;
         Ok(s)
     }
 
@@ -142,13 +162,18 @@ impl DialogId {
 
 /// Constructor, builders, accessors and Display for a `struct $Type(DialogId)`.
 macro_rules! dialog_id_type {
-    ($Type:ident, $first:ident => $first_name:literal, $second:ident => $second_name:literal, early_only: $early:literal) => {
+    ($Type:ident, $first:ident, $set_first:ident => $first_name:literal, $second:ident, $set_second:ident => $second_name:literal, early_only: $early:literal) => {
         impl $crate::dialog_id::sealed::Sealed for $Type {}
 
         impl $crate::dialog_id::DialogKind for $Type {
             const FIRST_TAG: &'static str = $first_name;
             const SECOND_TAG: &'static str = $second_name;
             const EARLY_ONLY: bool = $early;
+            const RESERVED: &'static [&'static str] = if $early {
+                &[$first_name, $second_name, "early-only"]
+            } else {
+                &[$first_name, $second_name]
+            };
         }
 
         impl $Type {
@@ -165,16 +190,61 @@ macro_rules! dialog_id_type {
                 ))
             }
 
-            /// Add a generic parameter, lowercasing the key; the value is
-            /// emitted as given.
+            /// Set a generic parameter, replacing one of the same name in
+            /// place; the key must be a `token` other than the names this
+            /// header sets through its typed setters.
             pub fn with_param(
                 mut self,
-                key: impl Into<String>,
+                key: impl AsRef<str>,
                 value: Option<impl Into<String>>,
-            ) -> Self {
+            ) -> Result<Self, $crate::error::ParseError> {
                 self.0
-                    .push_param(key.into(), value.map(Into::into));
-                self
+                    .params_mut()
+                    .set_unreserved(
+                        <Self as $crate::dialog_id::DialogKind>::RESERVED,
+                        key.as_ref(),
+                        value.map(Into::into),
+                        false,
+                    )?;
+                Ok(self)
+            }
+
+            /// [`with_param`](Self::with_param), the value written as a
+            /// `quoted-string` even where it could be bare.
+            pub fn with_quoted_param(
+                mut self,
+                key: impl AsRef<str>,
+                value: impl Into<String>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.0
+                    .params_mut()
+                    .set_unreserved(
+                        <Self as $crate::dialog_id::DialogKind>::RESERVED,
+                        key.as_ref(),
+                        Some(value.into()),
+                        true,
+                    )?;
+                Ok(self)
+            }
+
+            #[doc = concat!("Returns this value with a different `", $first_name, "`, a `token`.")]
+            pub fn $set_first(
+                mut self,
+                tag: impl Into<String>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.0
+                    .set_first_tag(tag.into())?;
+                Ok(self)
+            }
+
+            #[doc = concat!("Returns this value with a different `", $second_name, "`, a `token`.")]
+            pub fn $set_second(
+                mut self,
+                tag: impl Into<String>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.0
+                    .set_second_tag(tag.into())?;
+                Ok(self)
             }
 
             /// Returns this value with a different Call-ID.
@@ -239,16 +309,17 @@ macro_rules! dialog_id_type {
                     .second_tag()
             }
 
-            /// Returns all generic parameters (tags and flags this header defines excluded).
-            pub fn params(&self) -> &[(String, Option<String>)] {
+            /// The generic parameters, the tags and flags this header defines excluded.
+            pub fn params(&self) -> &$crate::params::HeaderParams {
                 self.0
                     .params()
             }
 
-            /// Returns a specific generic parameter by key (case-insensitive).
+            /// [`HeaderParams::get`](crate::HeaderParams::get) on [`params`](Self::params).
             pub fn param(&self, key: &str) -> Option<Option<&str>> {
                 self.0
-                    .param(key)
+                    .params()
+                    .get(key)
             }
         }
 
@@ -267,7 +338,7 @@ pub(crate) struct DialogFields {
     pub(crate) first_tag: String,
     pub(crate) second_tag: String,
     pub(crate) early_only: bool,
-    pub(crate) params: Vec<(String, Option<String>)>,
+    pub(crate) params: HeaderParams,
 }
 
 /// Building a dialog-identifier type from its parts.
@@ -322,24 +393,23 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
     let mut first_tag: Option<String> = None;
     let mut second_tag: Option<String> = None;
     let mut early_only = false;
-    let mut params = Vec::new();
+    let mut params = HeaderParams::default();
 
     for param in crate::parse_params(rest) {
-        if param
-            .value
-            .is_some_and(|v| v.starts_with('"'))
-        {
-            // Reported only: values stay raw.
-            param.report_quoting(raw, &mut warnings);
-        }
         let key = param
             .key
             .to_ascii_lowercase();
         let Some(value) = param.value else {
             if K::EARLY_ONLY && key == "early-only" {
+                if early_only {
+                    warnings.push(
+                        ParseWarning::new(Field::Param, WarningCode::DuplicateParam)
+                            .at(crate::offset_in(raw, param.key)),
+                    );
+                }
                 early_only = true;
             } else {
-                params.push((key, None));
+                params.push_raw(raw, &param, &mut warnings);
             }
             continue;
         };
@@ -348,9 +418,10 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
         } else if key == K::SECOND_TAG {
             &mut second_tag
         } else {
-            params.push((key, Some(value.to_string())));
+            params.push_raw(raw, &param, &mut warnings);
             continue;
         };
+        param.report_quoting(raw, &mut warnings);
         if value.is_empty() {
             return Err(ParseError::malformed(
                 Field::Tag,

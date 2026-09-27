@@ -9,6 +9,7 @@ use crate::accept::{flag_invalid_token, missing_entry, read_accept_params};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,8 +24,10 @@ use crate::list::CommaList;
 #[non_exhaustive]
 pub struct SipAcceptLanguageEntry {
     language: String,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
+
+header_params!(SipAcceptLanguageEntry);
 
 impl SipAcceptLanguageEntry {
     /// An entry for the given language range, lowercased, with no parameters.
@@ -33,29 +36,13 @@ impl SipAcceptLanguageEntry {
         language.make_ascii_lowercase();
         SipAcceptLanguageEntry {
             language,
-            params: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
     }
 
     /// The language tag (e.g. `"en"`, `"en-US"`, `"*"`).
     pub fn language(&self) -> &str {
         &self.language
-    }
-
-    /// All parameters as `(key, value)` pairs; keys lowercased, `None` for a flag.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
     }
 
     /// The `q` quality value, if present.
@@ -67,8 +54,7 @@ impl SipAcceptLanguageEntry {
 
 impl fmt::Display for SipAcceptLanguageEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.language)?;
-        crate::write_params(f, &self.params)
+        write!(f, "{}{}", self.language, self.params)
     }
 }
 
@@ -84,17 +70,16 @@ list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, sep: ", ", may_be_empty);
 struct SipAcceptLanguageEntryParts {
     language: String,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
 impl From<SipAcceptLanguageEntryParts> for SipAcceptLanguageEntry {
     fn from(p: SipAcceptLanguageEntryParts) -> Self {
-        p.params
-            .into_iter()
-            .fold(SipAcceptLanguageEntry::new(p.language), |e, (k, v)| {
-                e.with_param(k, v)
-            })
+        SipAcceptLanguageEntry {
+            params: p.params,
+            ..SipAcceptLanguageEntry::new(p.language)
+        }
     }
 }
 
@@ -137,13 +122,10 @@ fn parse_entry(
         warnings,
     );
 
-    Ok(
-        read_accept_params(entry, params_part.unwrap_or(""), warnings)
-            .into_iter()
-            .fold(SipAcceptLanguageEntry::new(lang_part), |e, (k, v)| {
-                e.with_param(k, v)
-            }),
-    )
+    Ok(SipAcceptLanguageEntry {
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        ..SipAcceptLanguageEntry::new(lang_part)
+    })
 }
 
 /// RFC 3261 §20.3 `language-range = ( 1*8ALPHA *( "-" 1*8ALPHA ) ) / "*"`.
@@ -225,7 +207,13 @@ mod tests {
         let raw = "en;foo";
         let al = SipAcceptLanguage::parse(raw).unwrap();
         assert_eq!(al.entries()[0].param("foo"), Some(None));
-        assert_eq!(al.entries()[0].params(), &[("foo".to_string(), None)]);
+        assert_eq!(
+            al.entries()[0]
+                .params()
+                .iter()
+                .collect::<Vec<_>>(),
+            [("foo", None)]
+        );
         assert_eq!(al.to_string(), raw);
     }
 
@@ -233,7 +221,7 @@ mod tests {
     fn quoted_param_keeps_semicolon() {
         let raw = r#"en;x="a;b";q=0.5"#;
         let al = SipAcceptLanguage::parse(raw).unwrap();
-        assert_eq!(al.entries()[0].param("X"), Some(Some(r#""a;b""#)));
+        assert_eq!(al.entries()[0].param("X"), Some(Some("a;b")));
         assert_eq!(al.entries()[0].q(), Some("0.5"));
         assert_eq!(al.to_string(), raw);
     }

@@ -10,6 +10,7 @@ use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,8 +25,10 @@ use crate::list::CommaList;
 #[non_exhaustive]
 pub struct SipAcceptEncodingEntry {
     encoding: String,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
+
+header_params!(SipAcceptEncodingEntry);
 
 impl SipAcceptEncodingEntry {
     /// An entry for the given content-coding, lowercased, with no parameters.
@@ -34,29 +37,13 @@ impl SipAcceptEncodingEntry {
         encoding.make_ascii_lowercase();
         SipAcceptEncodingEntry {
             encoding,
-            params: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
     }
 
     /// The content-coding value (e.g. `"gzip"`, `"identity"`, `"*"`).
     pub fn encoding(&self) -> &str {
         &self.encoding
-    }
-
-    /// All parameters as `(key, value)` pairs; keys lowercased, `None` for a flag.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
     }
 
     /// The `q` quality value, if present.
@@ -68,8 +55,7 @@ impl SipAcceptEncodingEntry {
 
 impl fmt::Display for SipAcceptEncodingEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.encoding)?;
-        crate::write_params(f, &self.params)
+        write!(f, "{}{}", self.encoding, self.params)
     }
 }
 
@@ -85,17 +71,16 @@ list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, sep: ", ", may_be_empty);
 struct SipAcceptEncodingEntryParts {
     encoding: String,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
 impl From<SipAcceptEncodingEntryParts> for SipAcceptEncodingEntry {
     fn from(p: SipAcceptEncodingEntryParts) -> Self {
-        p.params
-            .into_iter()
-            .fold(SipAcceptEncodingEntry::new(p.encoding), |e, (k, v)| {
-                e.with_param(k, v)
-            })
+        SipAcceptEncodingEntry {
+            params: p.params,
+            ..SipAcceptEncodingEntry::new(p.encoding)
+        }
     }
 }
 
@@ -138,13 +123,10 @@ fn parse_entry(
         warnings,
     );
 
-    Ok(
-        read_accept_params(entry, params_part.unwrap_or(""), warnings)
-            .into_iter()
-            .fold(SipAcceptEncodingEntry::new(encoding_part), |e, (k, v)| {
-                e.with_param(k, v)
-            }),
-    )
+    Ok(SipAcceptEncodingEntry {
+        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        ..SipAcceptEncodingEntry::new(encoding_part)
+    })
 }
 
 impl CommaList for SipAcceptEncoding {
@@ -213,7 +195,13 @@ mod tests {
         let raw = "gzip;foo";
         let ae = SipAcceptEncoding::parse(raw).unwrap();
         assert_eq!(ae.entries()[0].param("foo"), Some(None));
-        assert_eq!(ae.entries()[0].params(), &[("foo".to_string(), None)]);
+        assert_eq!(
+            ae.entries()[0]
+                .params()
+                .iter()
+                .collect::<Vec<_>>(),
+            [("foo", None)]
+        );
         assert_eq!(ae.to_string(), raw);
     }
 
@@ -221,7 +209,7 @@ mod tests {
     fn quoted_param_keeps_semicolon() {
         let raw = r#"gzip;x="a;b";q=0.5"#;
         let ae = SipAcceptEncoding::parse(raw).unwrap();
-        assert_eq!(ae.entries()[0].param("X"), Some(Some(r#""a;b""#)));
+        assert_eq!(ae.entries()[0].param("X"), Some(Some("a;b")));
         assert_eq!(ae.entries()[0].q(), Some("0.5"));
         assert_eq!(ae.to_string(), raw);
     }

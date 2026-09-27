@@ -14,6 +14,7 @@ use std::fmt;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,38 +26,23 @@ use crate::list::CommaList;
 #[non_exhaustive]
 pub struct UriInfoEntry {
     uri: String,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
+
+header_params!(UriInfoEntry);
 
 impl UriInfoEntry {
     /// An entry for `uri`, written inside angle brackets, with no parameters.
     pub fn new(uri: impl Into<String>) -> Self {
         UriInfoEntry {
             uri: uri.into(),
-            params: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
     }
 
     /// The URI or data inside the angle brackets, with brackets stripped.
     pub fn uri(&self) -> &str {
         &self.uri
-    }
-
-    /// All parameters as `(key, value)` pairs; keys lowercased, values as
-    /// sent, `None` for a flag.
-    pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        crate::iter_params(&self.params)
-    }
-
-    /// Look up a parameter by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
     }
 
     /// The `purpose` parameter value, if present with a value.
@@ -68,8 +54,7 @@ impl UriInfoEntry {
 
 impl fmt::Display for UriInfoEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<{}>", self.uri)?;
-        crate::write_params(f, &self.params)
+        write!(f, "<{}>{}", self.uri, self.params)
     }
 }
 
@@ -81,12 +66,13 @@ impl fmt::Display for UriInfoEntry {
 /// use sip_header::{UriInfo, UriInfoEntry};
 ///
 /// let info = UriInfo::new(vec![
-///     UriInfoEntry::new("urn:example:call:123").with_param("purpose", Some("emergency-CallId")),
+///     UriInfoEntry::new("urn:example:call:123").with_param("purpose", Some("emergency-CallId"))?,
 ///     UriInfoEntry::new("https://example.com/data"),
 /// ])
 /// .unwrap();
 /// assert_eq!(info.to_string(), "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>");
 /// assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UriInfo(Vec<UriInfoEntry>);
@@ -98,15 +84,16 @@ list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
 struct UriInfoEntryParts {
     uri: String,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
 impl From<UriInfoEntryParts> for UriInfoEntry {
     fn from(p: UriInfoEntryParts) -> Self {
-        p.params
-            .into_iter()
-            .fold(UriInfoEntry::new(p.uri), |e, (k, v)| e.with_param(k, v))
+        UriInfoEntry {
+            params: p.params,
+            ..UriInfoEntry::new(p.uri)
+        }
     }
 }
 
@@ -160,11 +147,10 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::MissingBrackets).at(at));
     }
 
-    Some(
-        crate::read_params_reporting(entry, params, warnings)
-            .into_iter()
-            .fold(UriInfoEntry::new(data), |e, (k, v)| e.with_param(k, v)),
-    )
+    Some(UriInfoEntry {
+        params: HeaderParams::read(entry, params, warnings),
+        ..UriInfoEntry::new(data)
+    })
 }
 
 impl CommaList for UriInfo {
@@ -228,7 +214,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
-                .count(),
+                .len(),
             0
         );
     }
@@ -240,7 +226,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
-                .count(),
+                .len(),
             0
         );
     }
@@ -251,6 +237,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
+                .iter()
                 .collect::<Vec<_>>(),
             vec![("meta1", None)]
         );
@@ -263,10 +250,11 @@ mod tests {
         assert_eq!(
             entry
                 .params()
+                .iter()
                 .collect::<Vec<_>>(),
             vec![("meta1", Some(""))]
         );
-        assert_eq!(entry.to_string(), "<data>;meta1=");
+        assert_eq!(entry.to_string(), r#"<data>;meta1="""#);
     }
 
     #[test]
@@ -276,7 +264,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
-                .count(),
+                .len(),
             2
         );
         assert_eq!(entry.param("meta1"), Some(Some("one")));
@@ -295,6 +283,7 @@ mod tests {
         let entry = parse_entry("<data>;Meta-1=one").unwrap();
         assert!(entry
             .params()
+            .iter()
             .all(|(k, _)| k == k.to_ascii_lowercase()));
         assert_eq!(entry.param("meta-1"), Some(Some("one")));
     }
@@ -549,8 +538,9 @@ mod tests {
         assert_eq!(
             entry
                 .params()
+                .iter()
                 .collect::<Vec<_>>(),
-            vec![("note", Some(r#""x;y""#)), ("purpose", Some("info"))]
+            vec![("note", Some("x;y")), ("purpose", Some("info"))]
         );
         assert_eq!(
             entry.to_string(),
@@ -564,6 +554,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
+                .iter()
                 .collect::<Vec<_>>(),
             vec![("purpose", Some("icon")), ("flag", None)]
         );

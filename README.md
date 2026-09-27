@@ -164,7 +164,13 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `from_entries` only | also `from_entries_with_warnings` on every list type |
 | `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
 | Contact `*` beside addresses is `Err` | kept, with a `WildcardNotAlone` warning |
-| `param()` returns `Option<&str>` on Accept*, `UriInfoEntry` | `Option<Option<&str>>`; `Some(None)` is a flag |
+| `param()` returns `Option<&str>` on Accept*, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>`; `Some(None)` is a flag |
+| `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |
+| `params()` returns pairs with values as sent, quotes included | `params() -> &HeaderParams`: `iter()`, `get()`, `is_quoted()`; values unescaped |
+| `with_param` appends; a quoted value is passed with its quotes | `with_param` replaces the same name in place and takes the text, `with_quoted_param` forces quotes |
+| `with_param("tag" / "rport" / "to-tag" / "early-only" …)` | refused; `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `HistoryInfoEntry::with_index` |
+| an auth-param without `=` is `Err` | kept as a flag with an `AuthParamFlag` warning |
+| parameter serde as `[[name, value]]` or `{key, value, quoted}` | `[[name, value, quoted]]`; `tag` and `rport` as fields of their own |
 | `UriInfoEntry { data, metadata }` pub fields | `uri()`, `param()`, `params()` |
 | `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; entries are `SipGeolocationEntry` with geoloc-params, `refs()` iterates |
 | `SipViaEntry::host() -> &str` | `Option<&str>`, `None` with a `MissingHost` warning |
@@ -179,6 +185,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | Module | Description |
 |---|---|
 | `header_addr` | RFC 3261 `name-addr` with header-level parameters |
+| `params` | `HeaderParams`, the parameters every value type holds |
 | `header` | `SipHeaderLookup` trait |
 | `serde_str` | Serde adapters through the wire text (feature: `serde`) |
 | `error` | `ParseError`, returned by every header-value parser |

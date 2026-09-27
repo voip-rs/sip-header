@@ -7,6 +7,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 use crate::RawParam;
 
 /// RFC 3326 Reason header value, as a History-Info URI carries it.
@@ -103,11 +104,41 @@ impl HistoryInfoEntry {
             .sip_uri()
     }
 
-    /// The `index` parameter value (e.g. `"1"`, `"1.1"`, `"1.2"`).
+    /// The header-level parameters, `index` included.
+    pub fn params(&self) -> &HeaderParams {
+        self.addr
+            .params()
+    }
+
+    /// The first `index` parameter value (e.g. `"1"`, `"1.1"`, `"1.2"`).
     pub fn index(&self) -> Option<&str> {
         self.addr
-            .param_raw("index")
+            .param("index")
             .flatten()
+    }
+
+    /// Set `index` (RFC 7044 §9.1), dot-separated digit runs such as
+    /// `1.2`, replacing every `index` the entry held.
+    pub fn with_index(mut self, index: impl Into<String>) -> Result<Self, ParseError> {
+        let index = index.into();
+        let valid = index
+            .split('.')
+            .all(|n| {
+                !n.is_empty()
+                    && n.bytes()
+                        .all(|b| b.is_ascii_digit())
+            });
+        if !valid {
+            return Err(ParseError::malformed(
+                Field::Index,
+                FaultCode::InvalidChar,
+                None,
+            ));
+        }
+        self.addr
+            .params_mut()
+            .replace("index", Some(index), false);
+        Ok(self)
     }
 
     /// Raw percent-encoded Reason value from the URI `?Reason=...` header.
@@ -136,9 +167,8 @@ impl fmt::Display for HistoryInfoEntry {
 /// use sip_header::sip_uri::{Host, SipUri};
 /// use sip_header::{HistoryInfo, HistoryInfoEntry, SipHeaderAddr};
 ///
-/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into())
-///     .with_param("index", Some("1.1"))?;
-/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr)]).unwrap();
+/// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into());
+/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr).with_index("1.1")?]).unwrap();
 /// assert_eq!(hi.entries()[0].index(), Some("1.1"));
 /// assert_eq!(hi.to_string(), "<sip:psap.example.com>;index=1.1");
 /// # Ok::<(), sip_header::ParseError>(())
@@ -302,7 +332,7 @@ impl CommaList for HistoryInfo {
             );
         }
         if addr
-            .param_raw("index")
+            .param("index")
             .flatten()
             .is_none()
         {

@@ -10,6 +10,7 @@ use std::fmt;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
+use crate::params::HeaderParams;
 
 /// A reference extracted from a SIP Geolocation header (RFC 6442).
 ///
@@ -52,45 +53,29 @@ impl fmt::Display for SipGeolocationRef {
 #[non_exhaustive]
 pub struct SipGeolocationEntry {
     reference: SipGeolocationRef,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
+
+header_params!(SipGeolocationEntry);
 
 impl SipGeolocationEntry {
     /// An entry for `reference`, with no parameters.
     pub fn new(reference: SipGeolocationRef) -> Self {
         SipGeolocationEntry {
             reference,
-            params: Vec::new(),
+            params: HeaderParams::default(),
         }
-    }
-
-    /// Add a geoloc-param, lowercasing the key; the value is emitted as given.
-    pub fn with_param(mut self, key: impl Into<String>, value: Option<impl Into<String>>) -> Self {
-        crate::push_lowercased(&mut self.params, key.into(), value.map(Into::into));
-        self
     }
 
     /// The location reference inside the angle brackets.
     pub fn reference(&self) -> &SipGeolocationRef {
         &self.reference
     }
-
-    /// All geoloc-params as `(key, value)` pairs; keys lowercased, values as
-    /// sent, `None` for a flag.
-    pub fn params(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        crate::iter_params(&self.params)
-    }
-
-    /// Look up a geoloc-param by key (case-insensitive); `Some(None)` for a flag.
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
-    }
 }
 
 impl fmt::Display for SipGeolocationEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.reference)?;
-        crate::write_params(f, &self.params)
+        write!(f, "{}{}", self.reference, self.params)
     }
 }
 
@@ -158,17 +143,16 @@ impl SipGeolocation {
 struct SipGeolocationEntryParts {
     reference: SipGeolocationRef,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
 }
 
 #[cfg(feature = "serde")]
 impl From<SipGeolocationEntryParts> for SipGeolocationEntry {
     fn from(p: SipGeolocationEntryParts) -> Self {
-        p.params
-            .into_iter()
-            .fold(SipGeolocationEntry::new(p.reference), |e, (k, v)| {
-                e.with_param(k, v)
-            })
+        SipGeolocationEntry {
+            reference: p.reference,
+            params: p.params,
+        }
     }
 }
 
@@ -220,13 +204,10 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
         Some(_) => SipGeolocationRef::Cid(inner[4..].to_string()),
         None => SipGeolocationRef::Url(inner.to_string()),
     };
-    Some(
-        crate::read_params_reporting(entry, params, warnings)
-            .into_iter()
-            .fold(SipGeolocationEntry::new(reference), |e, (k, v)| {
-                e.with_param(k, v)
-            }),
-    )
+    Some(SipGeolocationEntry {
+        reference,
+        params: HeaderParams::read(entry, params, warnings),
+    })
 }
 
 impl CommaList for SipGeolocation {
@@ -379,6 +360,7 @@ mod tests {
         assert_eq!(
             entry
                 .params()
+                .iter()
                 .collect::<Vec<_>>(),
             vec![("inserted-by", Some("y")), ("flag", None)]
         );

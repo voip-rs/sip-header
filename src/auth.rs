@@ -1,9 +1,11 @@
 //! SIP authentication value parser (RFC 3261 §20.7, §20.27, §20.28, §20.44).
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::{FaultCode, ParseError};
+use crate::error::ParseError;
+use crate::is_token;
+use crate::params::HeaderParams;
 use crate::traits::{sealed, HeaderParse};
 
 /// SIP authentication value.
@@ -18,10 +20,11 @@ use crate::traits::{sealed, HeaderParse};
 /// use sip_header::SipAuthValue;
 ///
 /// let auth = SipAuthValue::new("Digest")
-///     .with_quoted_param("realm", "example.com")
-///     .with_param("algorithm", "MD5");
+///     .with_quoted_param("realm", "example.com")?
+///     .with_param("algorithm", "MD5")?;
 /// assert_eq!(auth.to_string(), r#"Digest realm="example.com", algorithm=MD5"#);
 /// assert_eq!(SipAuthValue::from_token68("Bearer", "abc.def").to_string(), "Bearer abc.def");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -32,8 +35,7 @@ use crate::traits::{sealed, HeaderParse};
 #[non_exhaustive]
 pub struct SipAuthValue {
     scheme: String,
-    params: Vec<(String, String)>,
-    quoted: Vec<bool>,
+    params: HeaderParams,
     token68: Option<String>,
 }
 
@@ -42,8 +44,7 @@ impl SipAuthValue {
     pub fn new(scheme: impl Into<String>) -> Self {
         SipAuthValue {
             scheme: scheme.into(),
-            params: Vec::new(),
-            quoted: Vec::new(),
+            params: HeaderParams::default(),
             token68: None,
         }
     }
@@ -57,27 +58,39 @@ impl SipAuthValue {
         }
     }
 
-    fn push(mut self, key: String, value: String, quoted: bool) -> Self {
+    fn set(mut self, key: &str, value: String, quoted: bool) -> Result<Self, ParseError> {
+        let quoted = quoted
+            || !is_token(&value)
+            || MUST_QUOTE_PARAMS
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(key));
+        self.params
+            .set(key, Some(value), quoted)?;
         self.token68 = None;
-        crate::push_lowercased(&mut self.params, key, value);
-        self.quoted
-            .push(quoted);
-        self
+        Ok(self)
     }
 
-    /// Add a parameter, lowercasing the key. [`Display`](fmt::Display)
-    /// quotes the value where RFC 2617 requires it or it cannot be a token.
+    /// Set a parameter, replacing one of the same name in place; the key
+    /// must be a `token`. [`Display`](fmt::Display) quotes the value where
+    /// RFC 2617 requires it or it is not a `token`.
     ///
     /// Parameters and a `token68` exclude each other, so this drops a
     /// `token68` the value held.
-    pub fn with_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.push(key.into(), value.into(), false)
+    pub fn with_param(
+        self,
+        key: impl AsRef<str>,
+        value: impl Into<String>,
+    ) -> Result<Self, ParseError> {
+        self.set(key.as_ref(), value.into(), false)
     }
 
-    /// Add a parameter that [`Display`](fmt::Display) always quotes,
-    /// dropping a `token68` as [`with_param`](Self::with_param) does.
-    pub fn with_quoted_param(self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.push(key.into(), value.into(), true)
+    /// [`with_param`](Self::with_param), the value always quoted.
+    pub fn with_quoted_param(
+        self,
+        key: impl AsRef<str>,
+        value: impl Into<String>,
+    ) -> Result<Self, ParseError> {
+        self.set(key.as_ref(), value.into(), true)
     }
 
     /// Returns the authentication scheme (e.g., "Digest", "Bearer").
@@ -92,51 +105,50 @@ impl SipAuthValue {
             .as_deref()
     }
 
-    /// Returns all authentication parameters as key-value pairs.
-    ///
-    /// Keys are lowercased. Values have quotes stripped.
-    pub fn params(&self) -> &[(String, String)] {
+    /// The `auth-param`s, in wire order.
+    pub fn params(&self) -> &HeaderParams {
         &self.params
     }
 
-    /// Returns the value of a named parameter.
-    ///
-    /// Key lookup is case-insensitive.
-    pub fn param(&self, key: &str) -> Option<&str> {
+    /// [`HeaderParams::get`] on [`params`](Self::params).
+    pub fn param(&self, key: &str) -> Option<Option<&str>> {
         self.params
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.as_str())
+            .get(key)
+    }
+
+    fn valued(&self, key: &str) -> Option<&str> {
+        self.param(key)
+            .flatten()
     }
 
     /// Returns the `realm` parameter value.
     pub fn realm(&self) -> Option<&str> {
-        self.param("realm")
+        self.valued("realm")
     }
 
     /// Returns the `nonce` parameter value.
     pub fn nonce(&self) -> Option<&str> {
-        self.param("nonce")
+        self.valued("nonce")
     }
 
     /// Returns the `algorithm` parameter value.
     pub fn algorithm(&self) -> Option<&str> {
-        self.param("algorithm")
+        self.valued("algorithm")
     }
 
     /// Returns the `username` parameter value.
     pub fn username(&self) -> Option<&str> {
-        self.param("username")
+        self.valued("username")
     }
 
     /// Returns the `opaque` parameter value.
     pub fn opaque(&self) -> Option<&str> {
-        self.param("opaque")
+        self.valued("opaque")
     }
 
     /// Returns the `qop` parameter value.
     pub fn qop(&self) -> Option<&str> {
-        self.param("qop")
+        self.valued("qop")
     }
 }
 
@@ -160,28 +172,9 @@ impl fmt::Display for SipAuthValue {
             .params
             .is_empty()
         {
-            write!(f, " ")?;
-            for (i, ((key, value), &was_quoted)) in self
-                .params
-                .iter()
-                .zip(&self.quoted)
-                .enumerate()
-            {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-
-                if was_quoted
-                    || MUST_QUOTE_PARAMS.contains(&key.as_str())
-                    || value.contains(|c: char| c.is_ascii_whitespace() || c == ',' || c == '"')
-                    || value.is_empty()
-                {
-                    write!(f, "{key}=")?;
-                    crate::write_quoted_pair(f, value)?;
-                } else {
-                    write!(f, "{key}={value}")?;
-                }
-            }
+            f.write_char(' ')?;
+            self.params
+                .write_joined(f, ", ")?;
         }
 
         Ok(())
@@ -190,19 +183,10 @@ impl fmt::Display for SipAuthValue {
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
-struct AuthParamParts {
-    key: String,
-    value: String,
-    #[serde(default)]
-    quoted: bool,
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Serialize, serde::Deserialize)]
 struct SipAuthValueParts {
     scheme: String,
     #[serde(default)]
-    params: Vec<AuthParamParts>,
+    params: HeaderParams,
     token68: Option<String>,
 }
 
@@ -211,26 +195,24 @@ impl TryFrom<SipAuthValueParts> for SipAuthValue {
     type Error = &'static str;
 
     fn try_from(p: SipAuthValueParts) -> Result<Self, Self::Error> {
-        match p.token68 {
-            Some(_)
-                if !p
-                    .params
-                    .is_empty() =>
-            {
-                Err("an auth value holds a token68 or parameters, not both")
-            }
-            Some(token68) => Ok(SipAuthValue::from_token68(p.scheme, token68)),
-            None => Ok(p
+        if p.token68
+            .is_some()
+            && !p
                 .params
-                .into_iter()
-                .fold(SipAuthValue::new(p.scheme), |a, param| {
-                    if param.quoted {
-                        a.with_quoted_param(param.key, param.value)
-                    } else {
-                        a.with_param(param.key, param.value)
-                    }
-                })),
+                .is_empty()
+        {
+            return Err("an auth value holds a token68 or parameters, not both");
         }
+        if p.params
+            .has_flag()
+        {
+            return Err("an auth-param needs a value");
+        }
+        Ok(SipAuthValue {
+            scheme: p.scheme,
+            params: p.params,
+            token68: p.token68,
+        })
     }
 }
 
@@ -239,12 +221,7 @@ impl From<SipAuthValue> for SipAuthValueParts {
     fn from(a: SipAuthValue) -> Self {
         SipAuthValueParts {
             scheme: a.scheme,
-            params: a
-                .params
-                .into_iter()
-                .zip(a.quoted)
-                .map(|((key, value), quoted)| AuthParamParts { key, value, quoted })
-                .collect(),
+            params: a.params,
             token68: a.token68,
         }
     }
@@ -281,39 +258,55 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         if param_str.is_empty() {
             continue;
         }
+        let key_at = crate::offset_in(input, param_str);
+        let warn = |warnings: &mut Vec<ParseWarning>, code, at| {
+            warnings.push(ParseWarning::new(Field::Credentials, code).at(at));
+        };
 
-        let eq = param_str
-            .find('=')
-            .ok_or_else(|| {
-                ParseError::malformed(
-                    Field::Credentials,
-                    FaultCode::Missing,
-                    Some(crate::offset_in(input, param_str)),
-                )
-            })?;
+        let Some(eq) = param_str.find('=') else {
+            if !is_token(param_str) {
+                warn(warnings, WarningCode::InvalidToken, key_at);
+            }
+            warn(warnings, WarningCode::AuthParamFlag, key_at);
+            auth.params
+                .push_read(param_str, None, false, Field::Credentials, key_at, warnings);
+            continue;
+        };
 
         let key = param_str[..eq].trim();
         let value = param_str[eq + 1..].trim();
         let at = crate::offset_in(input, value);
-
-        if crate::opens_unterminated_quote(value) {
-            warnings
-                .push(ParseWarning::new(Field::Credentials, WarningCode::UnterminatedQuote).at(at));
+        if !is_token(key) {
+            warn(warnings, WarningCode::InvalidToken, key_at);
         }
 
-        auth = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+        let unterminated = crate::opens_unterminated_quote(value);
+        let (value, quoted) = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2
+        {
             let (unescaped, trailing_backslash) =
                 crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
-            if trailing_backslash {
-                warnings.push(
-                    ParseWarning::new(Field::Credentials, WarningCode::TrailingBackslash)
-                        .at(at + value.len() - 2),
-                );
-            }
-            auth.with_quoted_param(key, unescaped)
+            (unescaped, Some(trailing_backslash))
         } else {
-            auth.with_param(key, value)
+            (value.to_string(), None)
         };
+        auth.params
+            .push_read(
+                key,
+                Some(value.clone()),
+                quoted.is_some(),
+                Field::Credentials,
+                key_at,
+                warnings,
+            );
+        if unterminated {
+            warn(warnings, WarningCode::UnterminatedQuote, at);
+        } else if quoted.is_none() && !is_token(&value) {
+            warn(warnings, WarningCode::InvalidToken, at);
+        }
+        if quoted == Some(true) {
+            let raw = param_str[eq + 1..].trim();
+            warn(warnings, WarningCode::TrailingBackslash, at + raw.len() - 2);
+        }
     }
     Ok(auth)
 }
@@ -344,8 +337,8 @@ mod tests {
         assert_eq!(auth.username(), Some("alice"));
         assert_eq!(auth.realm(), Some("example.com"));
         assert_eq!(auth.nonce(), Some("dcd98b"));
-        assert_eq!(auth.param("uri"), Some("sip:example.com"));
-        assert_eq!(auth.param("response"), Some("6629f"));
+        assert_eq!(auth.param("uri"), Some(Some("sip:example.com")));
+        assert_eq!(auth.param("response"), Some(Some("6629f")));
     }
 
     #[test]
@@ -379,7 +372,7 @@ mod tests {
         let auth = SipAuthValue::parse(input).unwrap();
 
         assert_eq!(auth.scheme(), "Bearer");
-        assert_eq!(auth.param("token"), Some("abc123"));
+        assert_eq!(auth.param("token"), Some(Some("abc123")));
     }
 
     #[test]
@@ -392,16 +385,50 @@ mod tests {
     }
 
     #[test]
-    fn parse_invalid_param() {
-        let input = "Digest username=alice, invalid";
-        let result = SipAuthValue::parse(input);
+    fn duplicate_auth_param_is_warned() {
+        let input = r#"Digest realm="a", Realm="b""#;
+        let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
         assert_eq!(
-            result,
-            Err(ParseError::malformed(
+            parsed
+                .value
+                .realm(),
+            Some("a")
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.position),
+            (
                 Field::Credentials,
-                FaultCode::Missing,
-                input.find("invalid")
-            ))
+                WarningCode::DuplicateParam,
+                input.find("Realm")
+            )
+        );
+        assert_eq!(
+            parsed
+                .value
+                .to_string(),
+            r#"Digest realm="a", realm="b""#
+        );
+    }
+
+    #[test]
+    fn bare_non_token_value_is_warned() {
+        let input = "Digest uri=sip:example.com";
+        let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.field, w.code, w.position),
+            (
+                Field::Credentials,
+                WarningCode::InvalidToken,
+                input.find("sip:")
+            )
+        );
+        assert_eq!(
+            parsed
+                .value
+                .to_string(),
+            r#"Digest uri="sip:example.com""#
         );
     }
 
@@ -449,11 +476,11 @@ mod tests {
         let input = r#"Digest Realm="example.com", NONCE="abc123""#;
         let auth = SipAuthValue::parse(input).unwrap();
 
-        assert_eq!(auth.param("realm"), Some("example.com"));
-        assert_eq!(auth.param("REALM"), Some("example.com"));
-        assert_eq!(auth.param("Realm"), Some("example.com"));
-        assert_eq!(auth.param("nonce"), Some("abc123"));
-        assert_eq!(auth.param("NONCE"), Some("abc123"));
+        assert_eq!(auth.param("realm"), Some(Some("example.com")));
+        assert_eq!(auth.param("REALM"), Some(Some("example.com")));
+        assert_eq!(auth.param("Realm"), Some(Some("example.com")));
+        assert_eq!(auth.param("nonce"), Some(Some("abc123")));
+        assert_eq!(auth.param("NONCE"), Some(Some("abc123")));
     }
 
     #[test]
@@ -466,9 +493,12 @@ mod tests {
                 .len(),
             3
         );
-        assert_eq!(auth.params()[0].0, "username");
-        assert_eq!(auth.params()[1].0, "realm");
-        assert_eq!(auth.params()[2].0, "nonce");
+        let names: Vec<_> = auth
+            .params()
+            .iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["username", "realm", "nonce"]);
     }
 
     #[test]
@@ -492,7 +522,10 @@ mod tests {
     fn parse_digest_uri_with_comma() {
         let input = r#"Digest uri="sip:example.com,transport=tcp", realm="test""#;
         let auth = SipAuthValue::parse(input).unwrap();
-        assert_eq!(auth.param("uri"), Some("sip:example.com,transport=tcp"));
+        assert_eq!(
+            auth.param("uri"),
+            Some(Some("sip:example.com,transport=tcp"))
+        );
         assert_eq!(auth.realm(), Some("test"));
     }
 
@@ -605,7 +638,7 @@ mod tests {
 
         let auth = SipAuthValue::parse("Bearer token=abc123").unwrap();
         assert_eq!(auth.token68(), None);
-        assert_eq!(auth.param("token"), Some("abc123"));
+        assert_eq!(auth.param("token"), Some(Some("abc123")));
     }
 
     #[test]
@@ -701,7 +734,7 @@ mod tests {
 
     #[test]
     fn error_display_omits_param_bytes() {
-        let err = SipAuthValue::parse("Digest username=alice, secretvalue").unwrap_err();
+        let err = SipAuthValue::parse_strict("Digest username=alice, secretvalue").unwrap_err();
         assert!(!err
             .to_string()
             .contains("secretvalue"));

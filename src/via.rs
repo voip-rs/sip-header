@@ -10,6 +10,8 @@ use sip_uri::UriParse;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::params::HeaderParams;
+use crate::RawParam;
 
 /// A single Via entry.
 ///
@@ -19,11 +21,11 @@ use crate::list::CommaList;
 /// let via = SipViaEntry::new("SIP", "2.0", "UDP")
 ///     .with_host("2001:db8::1")
 ///     .with_port(5060)
-///     .with_param("rport", None::<&str>)
-///     .and_then(|v| v.with_param("branch", Some("z9hG4bK776")))
-///     .unwrap();
+///     .with_rport(None)
+///     .with_param("branch", Some("z9hG4bK776"))?;
 /// assert_eq!(via.rport(), Some(None));
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP [2001:db8::1]:5060;rport;branch=z9hG4bK776");
+/// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
@@ -38,9 +40,16 @@ pub struct SipViaEntry {
     transport: String,
     host: Option<String>,
     port: Option<u16>,
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
+    /// The first `rport` in `params`, read as a port; only the parser and
+    /// [`with_rport`](Self::with_rport) write either.
     rport: Option<Option<u16>>,
 }
+
+/// Parameters [`SipViaEntry::with_param`] refuses, set through a typed setter.
+const RESERVED: &[&str] = &["rport"];
+
+header_params!(SipViaEntry, reserved: RESERVED);
 
 impl SipViaEntry {
     /// An entry with the given `sent-protocol` and no host, port or params.
@@ -55,7 +64,7 @@ impl SipViaEntry {
             transport: transport.into(),
             host: None,
             port: None,
-            params: Vec::new(),
+            params: HeaderParams::default(),
             rport: None,
         }
     }
@@ -77,34 +86,13 @@ impl SipViaEntry {
         self
     }
 
-    /// Add a parameter, lowercasing the key; the value is emitted as given.
-    ///
-    /// `None` when the key is `rport` and the value is not a port number,
-    /// since [`rport`](Self::rport) reads it as one.
-    pub fn with_param(
-        mut self,
-        key: impl Into<String>,
-        value: Option<impl Into<String>>,
-    ) -> Option<Self> {
-        let mut key = key.into();
-        key.make_ascii_lowercase();
-        let value = value.map(Into::into);
-        if key == "rport"
-            && self
-                .rport
-                .is_none()
-        {
-            self.rport = Some(match &value {
-                None => None,
-                Some(v) => Some(
-                    v.parse::<u16>()
-                        .ok()?,
-                ),
-            });
-        }
+    /// Set `rport` (RFC 3581), a flag or a port, replacing every `rport`
+    /// the entry held; [`with_param`](Self::with_param) refuses `rport`.
+    pub fn with_rport(mut self, rport: Option<u16>) -> Self {
         self.params
-            .push((key, value));
-        Some(self)
+            .replace("rport", rport.map(|p| p.to_string()), false);
+        self.rport = Some(rport);
+        self
     }
 
     /// Returns the protocol name (e.g., "SIP").
@@ -131,16 +119,6 @@ impl SipViaEntry {
     /// Returns the port, if present.
     pub fn port(&self) -> Option<u16> {
         self.port
-    }
-
-    /// Returns all parameters.
-    pub fn params(&self) -> &[(String, Option<String>)] {
-        &self.params
-    }
-
-    /// Returns a specific parameter value by key (case-insensitive).
-    pub fn param(&self, key: &str) -> Option<Option<&str>> {
-        crate::find_param(&self.params, key)
     }
 
     /// Returns the `branch` parameter value, if present.
@@ -186,7 +164,7 @@ impl fmt::Display for SipViaEntry {
             write!(f, ":{}", port)?;
         }
 
-        crate::write_params(f, &self.params)
+        write!(f, "{}", self.params)
     }
 }
 
@@ -212,15 +190,30 @@ struct SipViaEntryParts {
     transport: String,
     host: Option<String>,
     port: Option<u16>,
+    /// Absent without `rport`, null for the flag.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    rport: Option<Option<u16>>,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: HeaderParams,
+}
+
+/// A field that is present, null or not, as `Some`.
+#[cfg(feature = "serde")]
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u16>>, D::Error> {
+    <Option<u16> as serde::Deserialize>::deserialize(d).map(Some)
 }
 
 #[cfg(feature = "serde")]
 impl TryFrom<SipViaEntryParts> for SipViaEntry {
-    type Error = &'static str;
+    type Error = ParseError;
 
     fn try_from(p: SipViaEntryParts) -> Result<Self, Self::Error> {
+        p.params
+            .refuse_reserved(RESERVED)?;
         let mut via = SipViaEntry::new(p.protocol, p.version, p.transport);
         if let Some(host) = p.host {
             via = via.with_host(host);
@@ -228,25 +221,27 @@ impl TryFrom<SipViaEntryParts> for SipViaEntry {
         if let Some(port) = p.port {
             via = via.with_port(port);
         }
-        p.params
-            .into_iter()
-            .try_fold(via, |via, (k, v)| {
-                via.with_param(k, v)
-                    .ok_or("a Via rport value must be a port number")
-            })
+        via.params = p.params;
+        Ok(match p.rport {
+            Some(rport) => via.with_rport(rport),
+            None => via,
+        })
     }
 }
 
 #[cfg(feature = "serde")]
 impl From<SipViaEntry> for SipViaEntryParts {
     fn from(e: SipViaEntry) -> Self {
+        let mut params = e.params;
+        params.remove(RESERVED);
         SipViaEntryParts {
             protocol: e.protocol_name,
             version: e.protocol_version,
             transport: e.transport,
             host: e.host,
             port: e.port,
-            params: e.params,
+            rport: e.rport,
+            params,
         }
     }
 }
@@ -276,8 +271,6 @@ fn parse_via_entry(
         parse_sent_protocol(entry, main_part)?;
     let (host, port) = parse_host_port(entry, sent_by, warnings)?;
 
-    let raw_params = crate::parse_params(params_part.unwrap_or(""));
-    crate::report_params_quoting(entry, &raw_params, warnings);
     let mut via = SipViaEntry::new(protocol_name, protocol_version, transport);
     if let Some(host) = host {
         via = via.with_host(host);
@@ -285,18 +278,36 @@ fn parse_via_entry(
     if let Some(port) = port {
         via = via.with_port(port);
     }
-    raw_params
-        .into_iter()
-        .try_fold(via, |via, p| {
-            via.with_param(p.key, p.value)
-                .ok_or_else(|| {
-                    ParseError::malformed(
-                        Field::Param,
-                        FaultCode::InvalidNumber,
-                        p.value
-                            .map(|v| crate::offset_in(entry, v)),
-                    )
-                })
+    for p in crate::parse_params(params_part.unwrap_or("")) {
+        if via
+            .rport
+            .is_none()
+            && p.key
+                .eq_ignore_ascii_case("rport")
+        {
+            via.rport = Some(read_rport(entry, &p)?);
+        }
+        via.params
+            .push_raw(entry, &p, warnings);
+    }
+    Ok(via)
+}
+
+/// The first `rport`, a flag or a port number (RFC 3581).
+fn read_rport(entry: &str, p: &RawParam<'_>) -> Result<Option<u16>, ParseError> {
+    let Some(u) = p.unquoted() else {
+        return Ok(None);
+    };
+    u.value
+        .parse::<u16>()
+        .map(Some)
+        .map_err(|_| {
+            ParseError::malformed(
+                Field::Param,
+                FaultCode::InvalidNumber,
+                p.value
+                    .map(|v| crate::offset_in(entry, v)),
+            )
         })
 }
 
@@ -808,16 +819,19 @@ mod tests {
     }
 
     #[test]
-    fn params_keep_trimmed_raw_values() {
+    fn params_keep_trimmed_unquoted_values() {
         let via = SipVia::parse("SIP/2.0/UDP example.com ; Branch = z9hG4bK1 ; rport ; x=\"a;b\"")
             .unwrap();
         let entry = &via.entries()[0];
         assert_eq!(
-            entry.params(),
-            &[
-                ("branch".to_string(), Some("z9hG4bK1".to_string())),
-                ("rport".to_string(), None),
-                ("x".to_string(), Some("\"a;b\"".to_string())),
+            entry
+                .params()
+                .iter()
+                .collect::<Vec<_>>(),
+            [
+                ("branch", Some("z9hG4bK1")),
+                ("rport", None),
+                ("x", Some("a;b")),
             ]
         );
         assert_eq!(entry.rport(), Some(None));

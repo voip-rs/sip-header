@@ -26,12 +26,12 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
-    serde(from = "SipReplacesParts", into = "SipReplacesParts")
+    serde(try_from = "SipReplacesParts", into = "SipReplacesParts")
 )]
 #[non_exhaustive]
 pub struct SipReplaces(DialogId);
 
-dialog_id_type!(SipReplaces, to_tag => "to-tag", from_tag => "from-tag", early_only: true);
+dialog_id_type!(SipReplaces, to_tag, with_to_tag => "to-tag", from_tag, with_from_tag => "from-tag", early_only: true);
 
 impl SipReplaces {
     /// Whether the `early-only` flag is present (RFC 3891 §3).
@@ -57,22 +57,25 @@ struct SipReplacesParts {
     #[serde(default)]
     early_only: bool,
     #[serde(default)]
-    params: Vec<(String, Option<String>)>,
+    params: crate::HeaderParams,
     #[serde(default)]
     framing: DialogFraming,
 }
 
 #[cfg(feature = "serde")]
-impl From<SipReplacesParts> for SipReplaces {
-    fn from(p: SipReplacesParts) -> Self {
+impl TryFrom<SipReplacesParts> for SipReplaces {
+    type Error = crate::ParseError;
+
+    fn try_from(p: SipReplacesParts) -> Result<Self, Self::Error> {
+        use crate::dialog_id::DialogKind;
+
         p.params
-            .into_iter()
-            .fold(
-                SipReplaces::new(p.call_id, p.to_tag, p.from_tag)
-                    .with_early_only(p.early_only)
-                    .with_framing(p.framing),
-                |r, (k, v)| r.with_param(k, v),
-            )
+            .refuse_reserved(Self::RESERVED)?;
+        let mut r = SipReplaces::new(p.call_id, p.to_tag, p.from_tag)
+            .with_early_only(p.early_only)
+            .with_framing(p.framing);
+        *r.0.params_mut() = p.params;
+        Ok(r)
     }
 }
 
@@ -92,7 +95,7 @@ impl From<SipReplaces> for SipReplacesParts {
             early_only: r.early_only(),
             params: r
                 .params()
-                .to_vec(),
+                .clone(),
             framing: r.framing(),
         }
     }
@@ -100,15 +103,7 @@ impl From<SipReplaces> for SipReplacesParts {
 
 impl DialogBuild for SipReplaces {
     fn build(fields: DialogFields, framing: DialogFraming) -> Self {
-        fields
-            .params
-            .into_iter()
-            .fold(
-                SipReplaces::new(fields.call_id, fields.first_tag, fields.second_tag)
-                    .with_early_only(fields.early_only)
-                    .with_framing(framing),
-                |r, (key, value)| r.with_param(key, value),
-            )
+        Self(DialogId::from_fields(fields, framing))
     }
 }
 
@@ -353,7 +348,7 @@ mod tests {
         assert_eq!(r.call_id(), "a@example.com");
         assert_eq!(r.to_tag(), "t");
         assert_eq!(r.from_tag(), "f");
-        assert_eq!(r.param("x"), Some(Some(r#""p;to-tag=evil""#)));
+        assert_eq!(r.param("x"), Some(Some("p;to-tag=evil")));
         assert_eq!(
             r.to_string(),
             r#"a@example.com;to-tag=t;from-tag=f;x="p;to-tag=evil""#
