@@ -262,7 +262,7 @@ impl HeaderParse for SipAuthValue {
 fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthValue, ParseError> {
     let s = input.trim();
     if s.is_empty() {
-        return Err(ParseError::Empty);
+        return Err(ParseError::empty(Field::Value));
     }
 
     // Find the first whitespace to split scheme from params
@@ -297,22 +297,18 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         let at = crate::offset_in(input, value);
 
         if crate::opens_unterminated_quote(value) {
-            warnings.push(ParseWarning::new(
-                Field::Credentials,
-                WarningCode::UnterminatedQuote,
-                Some(at),
-            ));
+            warnings
+                .push(ParseWarning::new(Field::Credentials, WarningCode::UnterminatedQuote).at(at));
         }
 
         auth = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
             let (unescaped, trailing_backslash) =
                 crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
             if trailing_backslash {
-                warnings.push(ParseWarning::new(
-                    Field::Credentials,
-                    WarningCode::TrailingBackslash,
-                    Some(at + value.len() - 2),
-                ));
+                warnings.push(
+                    ParseWarning::new(Field::Credentials, WarningCode::TrailingBackslash)
+                        .at(at + value.len() - 2),
+                );
             }
             auth.with_quoted_param(key, unescaped)
         } else {

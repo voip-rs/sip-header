@@ -78,7 +78,7 @@ pub use call_id::SipCallId;
 pub use contact::{ContactList, ContactValue};
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
-pub use error::{Fault, FaultCode, ParseError};
+pub use error::{Fault, FaultCode, ParseError, UriFault};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
 pub use header::SipHeaderLookup;
 pub use header_addr::SipHeaderAddr;
@@ -353,19 +353,14 @@ impl RawParam<'_> {
         };
         let at = offset_in(input, v);
         if self.unterminated {
-            warnings.push(ParseWarning::new(
-                Field::Param,
-                WarningCode::UnterminatedQuote,
-                Some(at),
-            ));
+            warnings.push(ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote).at(at));
         }
         let closed = v.len() >= 2 && v.starts_with('"') && v.ends_with('"');
         if closed && ends_in_lone_backslash(&v[1..v.len() - 1]) {
-            warnings.push(ParseWarning::new(
-                Field::Param,
-                WarningCode::TrailingBackslash,
-                Some(at + v.len() - 2),
-            ));
+            warnings.push(
+                ParseWarning::new(Field::Param, WarningCode::TrailingBackslash)
+                    .at(at + v.len() - 2),
+            );
         }
     }
 }

@@ -189,11 +189,9 @@ pub(crate) fn flag_invalid_token(
     warnings: &mut Vec<ParseWarning>,
 ) {
     if !conforms {
-        warnings.push(ParseWarning::new(
-            field,
-            WarningCode::InvalidToken,
-            Some(crate::offset_in(entry, part)),
-        ));
+        warnings.push(
+            ParseWarning::new(field, WarningCode::InvalidToken).at(crate::offset_in(entry, part)),
+        );
     }
 }
 
@@ -228,23 +226,15 @@ pub(crate) fn read_accept_params(
     let raw = crate::parse_params(params);
     for p in &raw {
         let Some(value) = p.value else { continue };
-        let at = Some(crate::offset_in(entry, value));
+        let at = crate::offset_in(entry, value);
         if p.unterminated {
-            warnings.push(ParseWarning::new(
-                Field::Param,
-                WarningCode::UnterminatedQuote,
-                at,
-            ));
+            warnings.push(ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote).at(at));
         }
         if p.key
             .eq_ignore_ascii_case("q")
             && !is_qvalue(value)
         {
-            warnings.push(ParseWarning::new(
-                Field::Qvalue,
-                WarningCode::InvalidQvalue,
-                at,
-            ));
+            warnings.push(ParseWarning::new(Field::Qvalue, WarningCode::InvalidQvalue).at(at));
         }
     }
     crate::stored_params(raw)

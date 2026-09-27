@@ -352,7 +352,7 @@ impl CommaList for SipVia {
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::Empty)
+        Self::new(entries).ok_or(ParseError::empty(Field::Value))
     }
 }
 
@@ -402,11 +402,10 @@ fn parse_host_port(
         })
         .transpose()?;
     if host.is_empty() {
-        warnings.push(ParseWarning::new(
-            Field::SentBy,
-            WarningCode::MissingHost,
-            Some(crate::offset_in(entry, sent_by)),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::SentBy, WarningCode::MissingHost)
+                .at(crate::offset_in(entry, sent_by)),
+        );
         return Ok((None, port));
     }
     let offset = crate::offset_in(entry, host);

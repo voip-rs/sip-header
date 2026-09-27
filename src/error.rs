@@ -9,28 +9,20 @@ use sip_header_catalog::RowError;
 ///
 /// Lenient parsing fails only when the input yields no usable value;
 /// strict parsing also returns the first grammar breach as
-/// [`NonConformant`](ParseError::NonConformant). Display never quotes the
-/// input.
+/// [`NonConformant`](ParseError::NonConformant). Display names the layer
+/// that failed and never quotes the input; a lower layer's error comes
+/// through [`source`](std::error::Error::source).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// The input is empty where the grammar requires content.
-    Empty,
     /// The input's structure leaves no value to return.
     Malformed(Fault),
     /// A URI the header carries could not be parsed at all.
-    Uri {
-        /// Byte offset of the URI in the string handed to the parser.
-        position: Option<usize>,
-        /// Index of the list entry holding the URI, for list-valued headers.
-        entry: Option<usize>,
-        /// sip-uri's error.
-        source: sip_uri::ParseError,
-    },
-    /// A strict parse met a grammar breach.
-    NonConformant(ParseWarning),
+    Uri(UriFault),
     /// The lookup store could not frame the header's rows.
     Row(RowError),
+    /// A strict parse met a grammar breach.
+    NonConformant(ParseWarning),
 }
 
 impl ParseError {
@@ -43,12 +35,13 @@ impl ParseError {
         })
     }
 
+    /// `field` is empty where the grammar requires content.
+    pub(crate) fn empty(field: Field) -> Self {
+        ParseError::malformed(field, FaultCode::Empty, None)
+    }
+
     pub(crate) fn uri(source: sip_uri::ParseError, position: usize) -> Self {
-        ParseError::Uri {
-            position: Some(position),
-            entry: None,
-            source,
-        }
+        ParseError::Uri(UriFault::new(source, position))
     }
 
     /// Drop the byte position, for input that was decoded before parsing.
@@ -58,36 +51,24 @@ impl ParseError {
                 position: None,
                 ..fault
             }),
-            ParseError::Uri { entry, source, .. } => ParseError::Uri {
+            ParseError::Uri(fault) => ParseError::Uri(UriFault {
                 position: None,
-                entry,
-                source,
-            },
+                ..fault
+            }),
             ParseError::NonConformant(w) => ParseError::NonConformant(ParseWarning {
                 position: None,
                 ..w
             }),
             ParseError::Row(e) => ParseError::Row(e),
-            ParseError::Empty => ParseError::Empty,
         }
     }
 
     /// Attribute this error to list entry `index`.
     pub(crate) fn in_entry(self, index: usize) -> Self {
         match self {
-            ParseError::Malformed(fault) => ParseError::Malformed(Fault {
-                entry: Some(index),
-                ..fault
-            }),
-            ParseError::Uri {
-                position, source, ..
-            } => ParseError::Uri {
-                position,
-                entry: Some(index),
-                source,
-            },
+            ParseError::Malformed(fault) => ParseError::Malformed(fault.in_entry(index)),
+            ParseError::Uri(fault) => ParseError::Uri(fault.in_entry(index)),
             ParseError::NonConformant(w) => ParseError::NonConformant(w.in_entry(index)),
-            ParseError::Empty => ParseError::Empty,
             ParseError::Row(e) => ParseError::Row(e),
         }
     }
@@ -96,18 +77,10 @@ impl ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::Empty => f.write_str("empty header value"),
             ParseError::Malformed(fault) => write!(f, "malformed header value: {fault}"),
-            ParseError::Uri {
-                position,
-                entry,
-                source,
-            } => {
-                write!(f, "invalid URI: {source}")?;
-                write_location(f, *position, *entry)
-            }
+            ParseError::Uri(fault) => fault.fmt(f),
+            ParseError::Row(_) => f.write_str("row error"),
             ParseError::NonConformant(w) => write!(f, "non-conformant header value: {w}"),
-            ParseError::Row(e) => write!(f, "header rows: {e}"),
         }
     }
 }
@@ -121,10 +94,62 @@ impl From<RowError> for ParseError {
 impl std::error::Error for ParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ParseError::Uri { source, .. } => Some(source),
+            // Skips the fault, whose Display this error already printed.
+            ParseError::Uri(fault) => std::error::Error::source(fault),
             ParseError::Row(e) => Some(e),
-            _ => None,
+            ParseError::Malformed(_) | ParseError::NonConformant(_) => None,
         }
+    }
+}
+
+/// A URI the header carries that sip-uri could not parse.
+///
+/// sip-uri's error is the [`source`](std::error::Error::source).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UriFault {
+    position: Option<usize>,
+    entry: Option<usize>,
+    source: sip_uri::ParseError,
+}
+
+impl UriFault {
+    pub(crate) fn new(source: sip_uri::ParseError, position: usize) -> Self {
+        UriFault {
+            position: Some(position),
+            entry: None,
+            source,
+        }
+    }
+
+    pub(crate) fn in_entry(self, index: usize) -> Self {
+        UriFault {
+            entry: Some(index),
+            ..self
+        }
+    }
+
+    /// Byte offset of the URI in the string handed to the parser.
+    pub fn position(&self) -> Option<usize> {
+        self.position
+    }
+
+    /// Index of the list entry holding the URI, for list-valued headers.
+    pub fn entry(&self) -> Option<usize> {
+        self.entry
+    }
+}
+
+impl fmt::Display for UriFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid URI")?;
+        write_location(f, self.position, self.entry)
+    }
+}
+
+impl std::error::Error for UriFault {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 
@@ -154,9 +179,9 @@ impl Fault {
     /// use sip_header::{Fault, FaultCode, Field, ParseError};
     ///
     /// let e = ParseError::Malformed(
-    ///     Fault::new(Field::Value, FaultCode::TooManyEntries).in_entry(4000),
+    ///     Fault::new(Field::Value, FaultCode::NotUtf8).at(12).in_entry(2),
     /// );
-    /// assert!(e.to_string().contains("too-many-entries"));
+    /// assert_eq!(e.to_string(), "malformed header value: value: not-utf8 at byte 12 in entry 2");
     /// ```
     pub fn new(field: Field, code: FaultCode) -> Self {
         Fault {
@@ -191,6 +216,8 @@ impl fmt::Display for Fault {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum FaultCode {
+    /// A part that is empty where the grammar requires content.
+    Empty,
     /// A part the grammar requires is absent.
     Missing,
     /// A part that may appear once appears again.
@@ -207,14 +234,13 @@ pub enum FaultCode {
     Misplaced,
     /// Percent-decoded octets that are not UTF-8.
     NotUtf8,
-    /// More list entries than the layer that decoded them allows.
-    TooManyEntries,
 }
 
 impl FaultCode {
     /// Stable kebab-case name, for logs and machine consumers.
     pub fn as_str(self) -> &'static str {
         match self {
+            FaultCode::Empty => "empty",
             FaultCode::Missing => "missing",
             FaultCode::Duplicate => "duplicate",
             FaultCode::Unterminated => "unterminated",
@@ -223,7 +249,6 @@ impl FaultCode {
             FaultCode::Ambiguous => "ambiguous",
             FaultCode::Misplaced => "misplaced",
             FaultCode::NotUtf8 => "not-utf8",
-            FaultCode::TooManyEntries => "too-many-entries",
         }
     }
 }

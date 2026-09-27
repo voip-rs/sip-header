@@ -187,11 +187,7 @@ impl From<SipGeolocationEntry> for SipGeolocationEntryParts {
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeolocationEntry> {
     let raw = entry.trim();
     if raw.is_empty() {
-        warnings.push(ParseWarning::new(
-            Field::Entry,
-            WarningCode::EmptyEntry,
-            None,
-        ));
+        warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
         return None;
     }
     let Some((inner, tail)) = raw
@@ -199,22 +195,20 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
         .and_then(|s| s.split_once('>'))
         .filter(|(inner, _)| !inner.is_empty())
     else {
-        warnings.push(ParseWarning::new(
-            Field::Entry,
-            WarningCode::SkippedEntry,
-            Some(crate::offset_in(entry, raw)),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
+                .at(crate::offset_in(entry, raw)),
+        );
         return None;
     };
     let junk = tail.trim_start();
     let params = if junk.is_empty() || junk.starts_with(';') {
         tail
     } else {
-        warnings.push(ParseWarning::new(
-            Field::Param,
-            WarningCode::TrailingContent,
-            Some(crate::offset_in(entry, junk)),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::Param, WarningCode::TrailingContent)
+                .at(crate::offset_in(entry, junk)),
+        );
         &junk[junk
             .find(';')
             .unwrap_or(junk.len())..]

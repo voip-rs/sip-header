@@ -73,7 +73,7 @@ impl CommaList for ContactList {
                 .enumerate()
                 .filter(|(_, v)| matches!(v, ContactValue::Wildcard))
                 .map(|(i, _)| {
-                    ParseWarning::new(Field::Entry, WarningCode::WildcardNotAlone, None).in_entry(i)
+                    ParseWarning::new(Field::Entry, WarningCode::WildcardNotAlone).in_entry(i)
                 });
             warnings.extend(wildcards);
             warnings.sort_by_key(|w| w.entry);

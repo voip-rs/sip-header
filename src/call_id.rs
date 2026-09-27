@@ -71,7 +71,7 @@ impl<'a> SipCallId<'a> {
     /// a parameter or a second header line.
     pub fn parse(raw: &'a str) -> Result<Self, ParseError> {
         if raw.is_empty() {
-            return Err(ParseError::Empty);
+            return Err(ParseError::empty(Field::CallId));
         }
         let (local, host) = match raw.split_once('@') {
             Some((local, host)) => (local, Some(host)),

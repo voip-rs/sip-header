@@ -292,7 +292,7 @@ pub(crate) fn parse_uri_header<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, P
 fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(ParseError::Empty);
+        return Err(ParseError::empty(Field::Value));
     }
 
     // A call-id `word` may contain `"`, so it ends at the first raw `;`.
@@ -313,11 +313,10 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
             ParseError::Malformed(fault) => fault.position,
             _ => None,
         };
-        warnings.push(ParseWarning::new(
-            Field::CallId,
-            WarningCode::InvalidToken,
-            Some(crate::offset_in(raw, call_id) + within.unwrap_or(0)),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::CallId, WarningCode::InvalidToken)
+                .at(crate::offset_in(raw, call_id) + within.unwrap_or(0)),
+        );
     }
 
     let mut first_tag: Option<String> = None;

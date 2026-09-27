@@ -207,7 +207,7 @@ impl CommaList for SipSecurity {
     }
 
     fn from_parsed(entries: Vec<SipSecurityMechanism>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::Empty)
+        Self::new(entries).ok_or(ParseError::empty(Field::Value))
     }
 }
 

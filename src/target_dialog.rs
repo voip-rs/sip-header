@@ -80,6 +80,7 @@ dialog_id_parse!(SipTargetDialog);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::Field;
     use crate::error::ParseError;
     use crate::{DialogIdEdit, HeaderParse};
 

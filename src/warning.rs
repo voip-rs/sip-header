@@ -153,11 +153,10 @@ fn parse_warning_entry(
             .chars()
             .all(is_token_char)
     {
-        warnings.push(ParseWarning::new(
-            Field::Agent,
-            WarningCode::InvalidToken,
-            Some(crate::offset_in(entry, agent)),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::Agent, WarningCode::InvalidToken)
+                .at(crate::offset_in(entry, agent)),
+        );
     }
 
     let text = parse_quoted_string(entry, &rest[quote_pos..], warnings)?;
@@ -222,11 +221,10 @@ fn parse_quoted_string(
     if let Some(inner) = content.strip_suffix('"') {
         let (text, trailing_backslash) = crate::unescape_quoted_pair_checked(inner);
         if trailing_backslash {
-            warnings.push(ParseWarning::new(
-                Field::Text,
-                WarningCode::TrailingBackslash,
-                Some(crate::offset_in(entry, inner) + inner.len() - 1),
-            ));
+            warnings.push(
+                ParseWarning::new(Field::Text, WarningCode::TrailingBackslash)
+                    .at(crate::offset_in(entry, inner) + inner.len() - 1),
+            );
             return Ok(text);
         }
     }
@@ -249,7 +247,7 @@ impl CommaList for SipWarning {
     }
 
     fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::Empty)
+        Self::new(entries).ok_or(ParseError::empty(Field::Value))
     }
 }
 

@@ -20,7 +20,8 @@ pub struct Parsed<T> {
 }
 
 impl<T> Parsed<T> {
-    pub(crate) fn new(value: T, warnings: Vec<ParseWarning>) -> Self {
+    /// `value` with the breaches found parsing it, in input order.
+    pub fn new(value: T, warnings: Vec<ParseWarning>) -> Self {
         Parsed { value, warnings }
     }
 
@@ -71,14 +72,32 @@ pub struct ParseWarning {
 }
 
 impl ParseWarning {
-    pub(crate) fn new(field: Field, code: WarningCode, position: Option<usize>) -> Self {
+    /// A breach in `field`, with no position or entry; `kind` follows `code`,
+    /// and is [`WarningKind::Recovered`] for every [`WarningCode::Uri`].
+    ///
+    /// For a layer outside this crate that decodes header values:
+    ///
+    /// ```
+    /// use sip_header::{Field, ParseWarning, Parsed, WarningCode};
+    ///
+    /// let w = ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(9).in_entry(1);
+    /// let parsed = Parsed::new(vec!["kept"], vec![w]);
+    /// assert_eq!(parsed.warnings[0].to_string(), "entry: skipped-entry at byte 9 in entry 1");
+    /// ```
+    pub fn new(field: Field, code: WarningCode) -> Self {
         ParseWarning {
             field,
             code,
-            position,
+            position: None,
             entry: None,
             kind: code.own_kind(),
         }
+    }
+
+    /// Point the warning at byte `position`.
+    pub fn at(mut self, position: usize) -> Self {
+        self.position = Some(position);
+        self
     }
 
     /// Lift a sip-uri warning whose input began `offset` bytes into ours.
@@ -94,7 +113,8 @@ impl ParseWarning {
         }
     }
 
-    pub(crate) fn in_entry(mut self, entry: usize) -> Self {
+    /// Attribute the warning to list entry `entry`.
+    pub fn in_entry(mut self, entry: usize) -> Self {
         self.entry = Some(entry);
         self
     }
@@ -232,8 +252,7 @@ pub enum WarningCode {
     /// A History-Info entry as a bare `addr-spec` where RFC 7044 §9.1
     /// requires `name-addr`.
     NotNameAddr,
-    /// A Reason `cause` that is not the RFC 3326 `1*DIGIT` a `u16` holds,
-    /// dropped.
+    /// A Reason `cause` that is not the RFC 3326 `1*DIGIT`, dropped.
     InvalidCause,
     /// A Reason `text` without the quotes RFC 3326 requires, kept.
     UnquotedText,
@@ -263,10 +282,11 @@ impl WarningCode {
         }
     }
 
-    /// Stable kebab-case name, for logs and machine consumers.
+    /// Stable kebab-case name, for logs and machine consumers; a sip-uri
+    /// code is its own name prefixed `uri-`, so no two codes share one.
     pub fn as_str(self) -> &'static str {
         match self {
-            WarningCode::Uri(c) => c.as_str(),
+            WarningCode::Uri(c) => uri_code_name(c),
             WarningCode::TrailingContent => "trailing-content",
             WarningCode::InvalidToken => "invalid-token",
             WarningCode::UnterminatedQuote => "unterminated-quote",
@@ -282,6 +302,44 @@ impl WarningCode {
             WarningCode::MissingHost => "missing-host",
             WarningCode::InvalidQvalue => "invalid-qvalue",
         }
+    }
+}
+
+fn uri_code_name(code: sip_uri::WarningCode) -> &'static str {
+    use sip_uri::WarningCode as U;
+    match code {
+        U::InvalidChar => "uri-invalid-char",
+        U::MalformedEscape => "uri-malformed-escape",
+        U::EmptyName => "uri-empty-name",
+        U::EmptySegment => "uri-empty-segment",
+        U::PasswordWithoutUser => "uri-password-without-user",
+        U::SignedPort => "uri-signed-port",
+        U::EmptyPort => "uri-empty-port",
+        U::InvalidHostLabel => "uri-invalid-host-label",
+        U::NumericToplabel => "uri-numeric-toplabel",
+        U::EscapedHost => "uri-escaped-host",
+        U::UnexpectedFragment => "uri-unexpected-fragment",
+        U::EmptyFragment => "uri-empty-fragment",
+        U::HeaderShapedUser => "uri-header-shaped-user",
+        U::MissingPhoneContext => "uri-missing-phone-context",
+        U::EmptyComponent => "uri-empty-component",
+        U::InvalidScheme => "uri-invalid-scheme",
+        U::MissingScheme => "uri-missing-scheme",
+        U::Wildcard => "uri-wildcard",
+        U::MissingHost => "uri-missing-host",
+        U::InvalidIpv6 => "uri-invalid-ipv6",
+        U::InvalidPort => "uri-invalid-port",
+        U::TrailingContent => "uri-trailing-content",
+        U::MissingValue => "uri-missing-value",
+        U::EmptyUser => "uri-empty-user",
+        U::EmptyUserinfo => "uri-empty-userinfo",
+        U::MissingNumber => "uri-missing-number",
+        U::NoDigits => "uri-no-digits",
+        U::MissingNid => "uri-missing-nid",
+        U::MissingNss => "uri-missing-nss",
+        U::InvalidNid => "uri-invalid-nid",
+        // A code newer than this table; sip-uri names none of its codes `uri`.
+        _ => "uri",
     }
 }
 

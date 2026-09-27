@@ -123,13 +123,9 @@ impl From<UriInfoEntry> for UriInfoEntryParts {
 /// Read one entry, positions relative to `entry`; `None` when it yields no URI.
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEntry> {
     let raw = entry.trim();
-    let at = Some(crate::offset_in(entry, raw));
+    let at = crate::offset_in(entry, raw);
     if raw.is_empty() {
-        warnings.push(ParseWarning::new(
-            Field::Entry,
-            WarningCode::EmptyEntry,
-            None,
-        ));
+        warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
         return None;
     }
 
@@ -157,19 +153,11 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
         }
     };
     if data.is_empty() {
-        warnings.push(ParseWarning::new(
-            Field::Entry,
-            WarningCode::SkippedEntry,
-            at,
-        ));
+        warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
         return None;
     }
     if recovered {
-        warnings.push(ParseWarning::new(
-            Field::Entry,
-            WarningCode::MissingBrackets,
-            at,
-        ));
+        warnings.push(ParseWarning::new(Field::Entry, WarningCode::MissingBrackets).at(at));
     }
 
     Some(
@@ -190,7 +178,7 @@ impl CommaList for UriInfo {
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::Empty)
+        Self::new(entries).ok_or(ParseError::empty(Field::Value))
     }
 }
 

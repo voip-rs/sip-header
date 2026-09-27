@@ -8,7 +8,7 @@ use percent_encoding::percent_decode_str;
 use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::{FaultCode, ParseError};
+use crate::error::{Fault, FaultCode, ParseError};
 use crate::history_info::{parse_reason, HistoryInfoReason};
 use crate::is_token_char;
 use crate::list::CommaList;
@@ -445,7 +445,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
             .len();
     let s = input.trim();
     if s.is_empty() {
-        return Err(ParseError::Empty);
+        return Err(ParseError::empty(Field::Addr));
     }
     let mut warnings = Vec::new();
 
@@ -461,11 +461,9 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         (Some(name), Some(open))
     } else if let Some(open) = s.find('<') {
         if let Some(i) = s[..open].find(|c: char| !is_token_char(c) && !c.is_ascii_whitespace()) {
-            warnings.push(ParseWarning::new(
-                Field::DisplayName,
-                WarningCode::InvalidToken,
-                Some(lead + i),
-            ));
+            warnings.push(
+                ParseWarning::new(Field::DisplayName, WarningCode::InvalidToken).at(lead + i),
+            );
         }
         let name = s[..open].trim();
         (Some(name.to_string()), Some(open))
@@ -487,11 +485,9 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let params_start = if tail[junk..].is_empty() || tail[junk..].starts_with(';') {
         0
     } else {
-        warnings.push(ParseWarning::new(
-            Field::Param,
-            WarningCode::TrailingContent,
-            Some(lead + after + junk),
-        ));
+        warnings.push(
+            ParseWarning::new(Field::Param, WarningCode::TrailingContent).at(lead + after + junk),
+        );
         tail.find(';')
             .unwrap_or(tail.len())
     };
@@ -519,7 +515,10 @@ pub(crate) fn parse_list_addr(
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipHeaderAddr, ParseError> {
     let parsed = parse_addr(entry).map_err(|e| match e {
-        ParseError::Empty => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
+        ParseError::Malformed(Fault {
+            code: FaultCode::Empty,
+            ..
+        }) => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
         other => other,
     })?;
     warnings.extend(parsed.warnings);

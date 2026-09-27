@@ -208,7 +208,7 @@ pub(crate) fn parse_reason(
         .trim()
         .is_empty()
     {
-        return Err(ParseError::Empty);
+        return Err(ParseError::empty(Field::Value));
     }
     let (protocol, rest) = decoded
         .split_once(';')
@@ -263,11 +263,7 @@ fn parse_cause(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>
         p.value
             .unwrap_or(p.key),
     );
-    warnings.push(ParseWarning::new(
-        Field::Cause,
-        WarningCode::InvalidCause,
-        Some(at),
-    ));
+    warnings.push(ParseWarning::new(Field::Cause, WarningCode::InvalidCause).at(at));
     None
 }
 
@@ -277,7 +273,7 @@ fn parse_text(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>)
     let at = crate::offset_in(decoded, v);
     let unquoted = p.unquoted()?;
     let mut warn = |code, position| {
-        warnings.push(ParseWarning::new(Field::Text, code, Some(position)));
+        warnings.push(ParseWarning::new(Field::Text, code).at(position));
     };
     if p.unterminated {
         warn(WarningCode::UnterminatedQuote, at);
@@ -300,28 +296,23 @@ impl CommaList for HistoryInfo {
         let addr = parse_list_addr(entry, warnings)?;
         // A successful parse without `<` is the bare addr-spec branch.
         if !entry.contains('<') {
-            warnings.push(ParseWarning::new(
-                Field::Addr,
-                WarningCode::NotNameAddr,
-                Some(crate::offset_in(entry, entry.trim_start())),
-            ));
+            warnings.push(
+                ParseWarning::new(Field::Addr, WarningCode::NotNameAddr)
+                    .at(crate::offset_in(entry, entry.trim_start())),
+            );
         }
         if addr
             .param_raw("index")
             .flatten()
             .is_none()
         {
-            warnings.push(ParseWarning::new(
-                Field::Index,
-                WarningCode::MissingIndex,
-                None,
-            ));
+            warnings.push(ParseWarning::new(Field::Index, WarningCode::MissingIndex));
         }
         Ok(Some(HistoryInfoEntry::new(addr)))
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::Empty)
+        Self::new(entries).ok_or(ParseError::empty(Field::Value))
     }
 }
 

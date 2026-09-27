@@ -1,6 +1,6 @@
 //! The shared shape and parse path of every comma-list value type.
 
-use crate::diagnostic::{ParseWarning, Parsed};
+use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::ParseError;
 
 /// Constructor, accessors, iteration and Display for a
@@ -139,7 +139,7 @@ pub(crate) trait CommaList: Sized {
 
     /// What a whitespace-only value parses to.
     fn blank() -> Result<Self, ParseError> {
-        Err(ParseError::Empty)
+        Err(ParseError::empty(Field::Value))
     }
 
     /// Split `raw` at top-level commas and parse every entry.
