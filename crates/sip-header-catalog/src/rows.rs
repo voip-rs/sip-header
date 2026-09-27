@@ -166,20 +166,18 @@ impl std::error::Error for RowError {}
 pub trait SipHeaderRows {
     /// Every row of a header, by canonical name.
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError>;
+}
 
+/// Lookups derived from [`SipHeaderRows`], for every store.
+pub trait SipHeaderRowsExt: SipHeaderRows {
     /// The first row of a header, by canonical name.
-    ///
-    /// An override must return what the default does.
     fn sip_header_str(&self, name: &str) -> Result<Option<&str>, RowError> {
         Ok(self
             .sip_header_rows_str(name)?
             .into_iter()
             .next())
     }
-}
 
-/// [`SipHeaderRows`] lookups by [`SipHeader`], for every store.
-pub trait SipHeaderRowsExt: SipHeaderRows {
     /// Every row of a header.
     fn sip_header_rows(&self, name: SipHeader) -> Result<Vec<&str>, RowError> {
         self.sip_header_rows_str(name.as_str())
@@ -199,10 +197,6 @@ macro_rules! forward_rows {
             impl<T: SipHeaderRows + ?Sized> SipHeaderRows for $ty {
                 fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
                     (**self).sip_header_rows_str(name)
-                }
-
-                fn sip_header_str(&self, name: &str) -> Result<Option<&str>, RowError> {
-                    (**self).sip_header_str(name)
                 }
             }
         )+
