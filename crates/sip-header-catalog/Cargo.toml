@@ -2,7 +2,7 @@
 name = "sip-header-catalog"
 version = "0.1.0"
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.70"
 authors.workspace = true
 description = "IANA SIP header name catalog with compact forms, and the raw header-row lookup trait"
 license.workspace = true
@@ -14,10 +14,9 @@ categories = ["network-programming", "data-structures"]
 
 [features]
 serde = ["dep:serde"]
-draft = []
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"], optional = true }
+serde = { version = "1", optional = true }
 
 [dev-dependencies]
 serde_json = "1"

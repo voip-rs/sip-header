@@ -109,8 +109,10 @@ assert_eq!(ci.entries()[0].purpose(), Some("icon"));
 
 The `SipHeader` enum covers all registered SIP header field names from
 the [IANA SIP Parameters](https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml#sip-parameters-2)
-registry. Use it for typed lookups, or fall back to `sip_header_str()`
-for unregistered headers.
+registry, plus deployed headers from expired drafts (Diversion,
+Remote-Party-ID), which `registry()` reports as `Registry::Draft`. Use it
+for typed lookups, or fall back to `sip_header_str()` for unregistered
+headers.
 
 ### Compact header forms (RFC 3261 §7.3.3)
 
@@ -156,7 +158,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | header-name consumers depend on sip-header | sip-header-catalog |
 | `HistoryInfoEntry::reason()` | `entry.addr().reason()` via `AddrParts` |
 | `SipViaError`, `SipAuthError`, `UriInfoError`, `HistoryInfoError`, `ParseSipHeaderAddrError`, … | one `ParseError`; a URI failure keeps `sip_uri::ParseError` as its `source()` |
-| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store implements `SipHeaderRows`, overrides `sip_header_rows_str` and returns `RowError::new(RowErrorKind::TooManyEntries, entry)`, which accessors return as `ParseError::Row` |
+| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store implements `SipHeaderRows::sip_header_rows_str` and returns `RowError::too_many_entries(count, limit)` or `RowError::malformed().in_entry(i)`, which accessors return as `ParseError::Row` |
 | token-list accessors (`allow()`, `supported()`, …) return `Vec<&str>` | `Result<Vec<&str>, ParseError>` |
 | parsers reject some non-conformant input | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
 | `from_entries` only | also `from_entries_with_warnings` on every list type |
@@ -203,8 +205,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | Feature | Dependencies | Description |
 |---|---|---|
 | `message` | — | Raw SIP message extraction (`extract_header`, `extract_body`, …); on by default |
-| `serde` | serde | Structured serde on the catalog enums and value types; `serde_str` adapters for the wire text |
-| `draft` | — | Widely-deployed headers from expired IETF drafts (Diversion, Remote-Party-ID) |
+| `serde` | serde | `SipHeader` as its canonical wire name; structured serde on the value types; `serde_str` adapters for the wire text |
 | `conference-info` | quick-xml, serde | RFC 4575 XML parsing |
 
 ## Ecosystem
@@ -239,8 +240,9 @@ RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no
 cargo test
 ```
 
-The pre-commit hook validates the `SipHeader` enum against the IANA
-registry (`crates/sip-header-catalog/iana-sip-headers.txt`).
+A catalog test checks the `SipHeader` enum against the IANA and draft
+lists (`crates/sip-header-catalog/iana-sip-headers.txt` and
+`draft-sip-headers.txt`).
 
 ## License
 

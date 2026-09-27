@@ -3,8 +3,6 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-
 # Cargo.lock belongs only on the detached commit a release tag points at, so a
 # release build resolves an exact dependency set while master stays a library
 # crate with the lock gitignored. Detached HEAD is the whole signal: on a
@@ -30,12 +28,6 @@ if ! cargo clippy --workspace --all-targets --message-format=short -- -D warning
     exit 1
 fi
 
-echo "Running cargo clippy (draft feature)..."
-if ! cargo clippy --workspace --all-targets --features sip-header/draft --message-format=short -- -D warnings; then
-    echo "Clippy found warnings with --features draft. Fix them before committing."
-    exit 1
-fi
-
 echo "Running cargo clippy (serde feature)..."
 if ! cargo clippy --workspace --all-targets --features sip-header/serde --message-format=short -- -D warnings; then
     echo "Clippy found warnings with --features sip-header/serde. Fix them before committing."
@@ -56,23 +48,10 @@ if ! test_output=$(cargo test --workspace 2>&1); then
     exit 1
 fi
 
-echo "Running tests (draft feature)..."
-if ! test_output=$(cargo test --workspace --features sip-header/draft 2>&1); then
-    echo "$test_output" | tail
-    echo "Tests failed with --features draft. Fix them before committing."
-    exit 1
-fi
-
 echo "Running tests (serde feature)..."
 if ! test_output=$(cargo test --workspace --features sip-header/serde 2>&1); then
     echo "$test_output" | tail
     echo "Tests failed with --features sip-header/serde. Fix them before committing."
-    exit 1
-fi
-
-echo "Checking SipHeader against IANA registry..."
-if ! "$SCRIPT_DIR/check-sip-headers.sh"; then
-    echo "SipHeader enum is out of sync with IANA registry. Update crates/sip-header-catalog/src/lib.rs."
     exit 1
 fi
 

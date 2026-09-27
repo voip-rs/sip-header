@@ -39,7 +39,8 @@ struct ReadmeDoctests;
 
 pub use sip_header_catalog;
 pub use sip_header_catalog::{
-    define_header_enum, ParseSipHeaderError, RowError, RowErrorKind, SipHeader, SipHeaderRows,
+    define_header_enum, HeaderName, ParseSipHeaderError, Registry, RowError, RowErrorKind,
+    SipHeader, SipHeaderRows, SipHeaderRowsExt,
 };
 pub use sip_uri;
 

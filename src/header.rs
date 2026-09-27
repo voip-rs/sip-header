@@ -20,7 +20,7 @@ use crate::uri_info::UriInfo;
 use crate::via::SipVia;
 use crate::warning::SipWarning;
 
-pub use sip_header_catalog::{ParseSipHeaderError, SipHeader, SipHeaderRows};
+pub use sip_header_catalog::{ParseSipHeaderError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
 
 /// Typed accessors over any [`SipHeaderRows`] store.
 ///
@@ -201,7 +201,7 @@ pub trait SipHeaderLookup: SipHeaderRows {
     /// Parse `Authorization` into a list of [`SipAuthValue`] (RFC 3261 §20.7).
     ///
     /// Auth headers MUST NOT be comma-combined (RFC 3261 §7.3.1), so each
-    /// occurrence is parsed separately via [`sip_header_rows`](SipHeaderRows::sip_header_rows);
+    /// occurrence is parsed separately via [`sip_header_rows`](SipHeaderRowsExt::sip_header_rows);
     /// an error's entry index is the occurrence.
     fn authorization(&self) -> Result<Vec<SipAuthValue>, ParseError> {
         parse_auth_rows(self.sip_header_rows(SipHeader::Authorization)?)
@@ -266,13 +266,11 @@ pub trait SipHeaderLookup: SipHeaderRows {
     }
 
     /// Parse `Diversion` into a list of [`SipHeaderAddr`] (draft-levy-sip-diversion-08).
-    #[cfg(feature = "draft")]
     fn diversion(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_rows(SipHeader::Diversion)?)
     }
 
     /// Parse `Remote-Party-ID` into a list of [`SipHeaderAddr`] (draft-ietf-sip-privacy-01).
-    #[cfg(feature = "draft")]
     fn remote_party_id(&self) -> Result<Vec<SipHeaderAddr>, ParseError> {
         parse_addr_list(self.sip_header_rows(SipHeader::RemotePartyId)?)
     }

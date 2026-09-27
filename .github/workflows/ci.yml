@@ -62,20 +62,16 @@ jobs:
     - name: Check (conference-info)
       run: cargo check --workspace --features sip-header/conference-info --all-targets
 
-    - name: Check (draft)
-      run: cargo check --workspace --features sip-header/draft --all-targets
-
     - name: Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 
-    - name: Clippy (draft)
-      run: cargo clippy --workspace --features sip-header/draft --all-targets -- -D warnings
+    - name: Clippy (serde)
+      run: cargo clippy --workspace --features sip-header/serde --all-targets -- -D warnings
 
-    - name: Verify SipHeader against IANA registry
+    # The catalog's registry test keeps SipHeader in sync with this list.
+    - name: Count IANA SIP headers
       run: |
-        output=$(hooks/check-sip-headers.sh 2>&1 | tail -1)
-        echo "SIP_HEADER_COUNT=$(echo "$output" | grep -oP '^\S+ \K\d+/\d+')" >> "$GITHUB_ENV"
-        echo "DRAFT_HEADER_COUNT=$(echo "$output" | grep -oP 'draft \K\d+/\d+' || echo '0/0')" >> "$GITHUB_ENV"
+        echo "SIP_HEADER_COUNT=$(grep -cvE '^[[:space:]]*(#|$)' crates/sip-header-catalog/iana-sip-headers.txt)" >> "$GITHUB_ENV"
 
     - name: Count SipHeaderLookup accessors
       run: |
@@ -84,7 +80,7 @@ jobs:
     - name: Test
       run: |
         set -o pipefail
-        CARGO_TERM_COLOR=never cargo test --workspace --features sip-header/draft 2>&1 | tee test-output.txt
+        CARGO_TERM_COLOR=never cargo test --workspace --features sip-header/serde 2>&1 | tee test-output.txt
         passed=$(grep '^test result:' test-output.txt | sed 's/.*ok\. \([0-9]*\) passed.*/\1/' | paste -sd+ | bc)
         echo "TEST_PASSED=$passed" >> "$GITHUB_ENV"
 

@@ -30,7 +30,6 @@ sip-uri = { version = "0.3.0-rc.1", path = "../sip-uri" }
 default = ["message"]
 message = []
 serde = ["dep:serde", "sip-header-catalog/serde", "sip-uri/serde"]
-draft = ["sip-header-catalog/draft"]
 conference-info = ["dep:quick-xml", "serde"]
 
 [dependencies]

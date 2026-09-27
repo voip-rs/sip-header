@@ -1,29 +1,48 @@
 //! SIP header names with canonical wire casing (RFC 3261 and extensions),
 //! and the raw row lookup a header store implements.
 //!
-//! [`SipHeader`] covers the IANA SIP header field registry, with compact
-//! forms (RFC 3261 §7.3.3) and multi-value semantics. [`SipHeaderRows`] is
-//! the lookup a key-value store implements; the parsing accessors over it
-//! live in [sip-header](https://docs.rs/sip-header).
+//! [`SipHeader`] covers the IANA SIP header field registry and deployed
+//! headers from expired drafts, with compact forms (RFC 3261 §7.3.3) and
+//! each header's list and repetition rules. [`SipHeaderRows`] is the lookup
+//! a key-value store implements; the parsing accessors over it live in
+//! [sip-header](https://docs.rs/sip-header).
 
 #[macro_use]
 mod macros;
 mod rows;
+#[cfg(feature = "serde")]
+mod serde_name;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
-pub use rows::{RowError, RowErrorKind, SipHeaderRows};
+pub use macros::HeaderName;
+pub use rows::{RowError, RowErrorKind, SipHeaderRows, SipHeaderRowsExt};
+
+/// Items `define_header_enum!` expands to; not public API.
+#[doc(hidden)]
+pub mod __private {
+    #[cfg(feature = "serde")]
+    pub use crate::serde_name::{deserialize_name, serialize_name};
+    #[cfg(feature = "serde")]
+    pub use serde;
+}
 
 define_header_enum! {
     tests_mod: sip_header_generated_tests,
     error_type: ParseSipHeaderError => "unknown SIP header",
-    /// Standard SIP header names with canonical wire casing.
+    /// SIP header names with canonical wire casing.
     ///
     /// Each variant maps to the header's canonical form as defined in the
-    /// relevant RFC. `FromStr` is case-insensitive; `Display` always emits
-    /// the canonical form.
+    /// relevant RFC or draft; [`registry`](Self::registry) says which.
+    /// `FromStr` matches canonical names case-insensitively, and
+    /// [`parse_name`](Self::parse_name) also takes compact forms; `Display`
+    /// always emits the canonical form. With the `serde` feature a header
+    /// serializes as its canonical name and deserializes from any spelling
+    /// `parse_name` accepts.
+    ///
+    /// The order of `ALL` and the discriminant values are unspecified.
     pub enum SipHeader {
         /// `Accept` (RFC 3261).
         Accept => "Accept",
@@ -293,12 +312,9 @@ define_header_enum! {
         Warning => "Warning",
         /// `WWW-Authenticate` (RFC 3261).
         WwwAuthenticate => "WWW-Authenticate",
-        // Draft headers — appended after IANA variants to preserve discriminants.
         /// `Diversion` (draft-levy-sip-diversion-08, superseded by RFC 7044).
-        #[cfg(feature = "draft")]
         Diversion => "Diversion",
         /// `Remote-Party-ID` (draft-ietf-sip-privacy-01, superseded by RFC 3325).
-        #[cfg(feature = "draft")]
         RemotePartyId => "Remote-Party-ID",
     }
 }
@@ -350,81 +366,202 @@ impl SipHeader {
             .map(|(c, _)| *c as char)
     }
 
-    /// Whether this header may appear multiple times in a SIP message.
+    /// Whether the header's grammar is a comma list, `x *(COMMA x)` (RFC 3261
+    /// §7.3), so its rows may be joined and split at top-level commas.
+    pub fn is_list(&self) -> bool {
+        self.occurrence() == Occurrence::List
+    }
+
+    /// Whether a message may carry more than one row of this header.
     ///
-    /// Headers listed here use comma-separated or repeated-header semantics
-    /// per RFC 3261 §7.3.1 and their defining RFCs.
-    pub fn is_multi_valued(&self) -> bool {
-        if matches!(
-            self,
-            // RFC 3261 core
-            Self::Via
-                | Self::Route
-                | Self::RecordRoute
-                | Self::Contact
-                | Self::Allow
-                | Self::Supported
-                | Self::Require
-                | Self::ProxyRequire
-                | Self::Unsupported
-                | Self::Authorization
-                | Self::ProxyAuthorization
-                | Self::WwwAuthenticate
-                | Self::ProxyAuthenticate
-                | Self::Warning
-                | Self::ErrorInfo
-                | Self::CallInfo
-                | Self::AlertInfo
-                | Self::Accept
-                | Self::AcceptEncoding
-                | Self::AcceptLanguage
-                | Self::ContentEncoding
-                | Self::ContentLanguage
-                | Self::InReplyTo
-                // RFC 3325
-                | Self::PAssertedIdentity
-                | Self::PPreferredIdentity
-                // RFC 6665
-                | Self::AllowEvents
-                // RFC 3329
-                | Self::SecurityClient
-                | Self::SecurityServer
-                | Self::SecurityVerify
-                // RFC 3327
-                | Self::Path
-                // RFC 3608
-                | Self::ServiceRoute
-                // RFC 7044
-                | Self::HistoryInfo
-                // RFC 3326
-                | Self::Reason
-                // RFC 3841
-                | Self::AcceptContact
-                | Self::RejectContact
-                | Self::RequestDisposition
-                // RFC 4412
-                | Self::ResourcePriority
-                | Self::AcceptResourcePriority
-                // RFC 7315
-                | Self::PAssociatedUri
-                // RFC 6442
-                | Self::Geolocation
-        ) {
-            return true;
-        }
+    /// True for every comma list, and for the headers whose value is not a
+    /// list but whose RFC allows repeating the field: the authentication
+    /// headers (RFC 3261 §7.3.1), `Identity` (RFC 8224) and
+    /// `Remote-Party-ID`. Their rows are never joined or split.
+    pub fn may_repeat(&self) -> bool {
+        self.occurrence() != Occurrence::Single
+    }
 
-        #[cfg(feature = "draft")]
-        if matches!(
-            self,
-            // draft-levy-sip-diversion-08
-            Self::Diversion
-                // draft-ietf-sip-privacy-01
-                | Self::RemotePartyId
-        ) {
-            return true;
+    /// Classification per each header's ABNF.
+    fn occurrence(&self) -> Occurrence {
+        use Occurrence::{List, Repeated, Single};
+        match self {
+            // RFC 3261 §25
+            Self::Accept
+            | Self::AcceptEncoding
+            | Self::AcceptLanguage
+            | Self::AlertInfo
+            | Self::Allow
+            | Self::CallInfo
+            | Self::Contact
+            | Self::ContentEncoding
+            | Self::ContentLanguage
+            | Self::ErrorInfo
+            | Self::InReplyTo
+            | Self::ProxyRequire
+            | Self::RecordRoute
+            | Self::Require
+            | Self::Route
+            | Self::Supported
+            | Self::Unsupported
+            | Self::Via
+            | Self::Warning => List,
+            // RFC 3261 §7.3.1: may repeat, never combined
+            Self::Authorization
+            | Self::ProxyAuthorization
+            | Self::ProxyAuthenticate
+            | Self::WwwAuthenticate => Repeated,
+            // RFC 3261 §25; Authentication-Info's commas separate one value's params
+            Self::AuthenticationInfo
+            | Self::CallId
+            | Self::ContentDisposition
+            | Self::ContentLength
+            | Self::ContentType
+            | Self::Cseq
+            | Self::Date
+            | Self::Expires
+            | Self::From
+            | Self::MaxForwards
+            | Self::MimeVersion
+            | Self::MinExpires
+            | Self::Organization
+            | Self::Priority
+            | Self::ReplyTo
+            | Self::RetryAfter
+            | Self::Server
+            | Self::Subject
+            | Self::Timestamp
+            | Self::To
+            | Self::UserAgent => Single,
+            // RFC 2543, deprecated by RFC 3261
+            Self::Encryption | Self::Hide | Self::ResponseKey => Single,
+            // RFC 3841
+            Self::AcceptContact | Self::RejectContact | Self::RequestDisposition => List,
+            // RFC 4412
+            Self::AcceptResourcePriority | Self::ResourcePriority => List,
+            // RFC 6665
+            Self::AllowEvents => List,
+            Self::Event | Self::SubscriptionState => Single,
+            // RFC 6809
+            Self::FeatureCaps => List,
+            // RFC 6442
+            Self::Geolocation => List,
+            Self::GeolocationError | Self::GeolocationRouting => Single,
+            // RFC 7044
+            Self::HistoryInfo => List,
+            // RFC 6086
+            Self::RecvInfo => List,
+            Self::InfoPackage => Single,
+            // RFC 7315 (RFC 7913 changes only PANI's access-info)
+            Self::PAccessNetworkInfo
+            | Self::PAssociatedUri
+            | Self::PChargingFunctionAddresses
+            | Self::PVisitedNetworkId => List,
+            Self::PCalledPartyId | Self::PChargingVector => Single,
+            // RFC 3325
+            Self::PAssertedIdentity | Self::PPreferredIdentity => List,
+            // RFC 6050
+            Self::PAssertedService | Self::PPreferredService => List,
+            // RFC 5009
+            Self::PEarlyMedia => List,
+            // RFC 3313
+            Self::PMediaAuthorization => List,
+            // RFC 5318
+            Self::PRefusedUriList => List,
+            // RFC 3327, RFC 3608
+            Self::Path | Self::ServiceRoute => List,
+            // RFC 5360
+            Self::PermissionMissing | Self::TriggerConsent => List,
+            // RFC 6794
+            Self::PolicyContact | Self::PolicyId => List,
+            // RFC 3326
+            Self::Reason => List,
+            // RFC 3329
+            Self::SecurityClient | Self::SecurityServer | Self::SecurityVerify => List,
+            // RFC 7433
+            Self::UserToUser => List,
+            // draft-levy-sip-diversion-08: `1#`
+            Self::Diversion => List,
+            // RFC 8224 §4: one signature per field, and more than one field may appear
+            Self::Identity => Repeated,
+            // draft-ietf-sip-privacy-01 §5.1: one party per field, and the field may repeat
+            Self::RemotePartyId => Repeated,
+            // RFC 3323: `priv-value *(";" priv-value)`
+            Self::Privacy => Single,
+            // One value each: RFC 8876, 5373, 8262, 5626, 4474, 3911, 5393, 4028,
+            // 4964, 8496, 5503, 7316, 5002, 5502, 4457, 3262, 7614, 4488, 3515,
+            // 3892, 3891, 7989, 3903, 5839, 4538
+            Self::AlertmsgError
+            | Self::AnswerMode
+            | Self::PrivAnswerMode
+            | Self::ContentId
+            | Self::FlowTimer
+            | Self::IdentityInfo
+            | Self::Join
+            | Self::MaxBreadth
+            | Self::MinSe
+            | Self::SessionExpires
+            | Self::PAnswerState
+            | Self::PChargeInfo
+            | Self::PDcsTracePartyId
+            | Self::PDcsOsps
+            | Self::PDcsBillingInfo
+            | Self::PDcsLaes
+            | Self::PDcsRedirect
+            | Self::PPrivateNetworkIndication
+            | Self::PProfileKey
+            | Self::PServedUser
+            | Self::PUserDatabase
+            | Self::Rack
+            | Self::Rseq
+            | Self::ReferEventsAt
+            | Self::ReferSub
+            | Self::ReferTo
+            | Self::ReferredBy
+            | Self::Replaces
+            | Self::SessionId
+            | Self::SipEtag
+            | Self::SipIfMatch
+            | Self::SuppressIfMatch
+            | Self::TargetDialog => Single,
+            // 3GPP TS 24.229, grammar not checked: never split or repeated
+            Self::AdditionalIdentity
+            | Self::AttestationInfo
+            | Self::CellularNetworkInfo
+            | Self::DcInfo
+            | Self::OriginationId
+            | Self::PriorityShare
+            | Self::PriorityVerstat
+            | Self::RelayedCharge
+            | Self::ResourceShare
+            | Self::ResponseSource
+            | Self::RestorationInfo
+            | Self::ServiceInteractInfo => Single,
+            // reserved by IANA against RFC 6873, no grammar
+            Self::ReasonPhrase => Single,
         }
+    }
 
-        false
+    /// The registry this header's name comes from.
+    pub fn registry(&self) -> Registry {
+        match self {
+            Self::Diversion | Self::RemotePartyId => Registry::Draft,
+            _ => Registry::Iana,
+        }
+    }
+
+    /// Whether `wire_name`, as a message spells it, names this header:
+    /// case-insensitively, or as its compact form.
+    pub fn matches(&self, wire_name: &str) -> bool {
+        wire_name.eq_ignore_ascii_case(self.as_str())
+            || matches!(wire_name.as_bytes(), [c] if Self::from_compact(*c) == Some(*self))
+    }
+
+    /// [`matches`](Self::matches) for a name the catalog may not register:
+    /// an unregistered `name` matches `wire_name` case-insensitively only.
+    pub fn name_matches(name: &str, wire_name: &str) -> bool {
+        name.eq_ignore_ascii_case(wire_name)
+            || Self::parse_name(name).is_ok_and(|h| h.matches(wire_name))
     }
 
     /// Parse a header name, including RFC 3261 §7.3.3 compact forms.
@@ -432,12 +569,41 @@ impl SipHeader {
     /// Tries compact form resolution for single-character input, then
     /// falls back to case-insensitive canonical name matching.
     pub fn parse_name(name: &str) -> Result<Self, ParseSipHeaderError> {
-        if name.len() == 1 {
-            if let Some(h) = Self::from_compact(name.as_bytes()[0]) {
-                return Ok(h);
-            }
+        match name.as_bytes() {
+            [c] => Self::from_compact(*c).ok_or_else(|| ParseSipHeaderError(name.to_string())),
+            _ => name.parse(),
         }
-        name.parse()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Occurrence {
+    Single,
+    List,
+    Repeated,
+}
+
+/// The registry a [`SipHeader`] name comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Registry {
+    /// The IANA SIP header field registry.
+    Iana,
+    /// An expired or superseded IETF draft, still deployed.
+    Draft,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for SipHeader {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde_name::serialize_name(self.as_str(), serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SipHeader {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde_name::deserialize_name(deserializer, "SIP header name", SipHeader::parse_name)
     }
 }
 

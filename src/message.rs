@@ -60,26 +60,6 @@ pub fn extract_body(message: &str) -> Option<&str> {
     (!body.is_empty()).then_some(body)
 }
 
-/// The RFC 3261 §7.3.3 compact letter a header name, full or compact, shares.
-fn compact_letter(name: &str) -> Option<char> {
-    let header = match name.as_bytes() {
-        [c] => SipHeader::from_compact(*c)?,
-        _ => *SipHeader::ALL
-            .iter()
-            .find(|h| {
-                h.as_str()
-                    .eq_ignore_ascii_case(name)
-            })?,
-    };
-    header.compact_form()
-}
-
-/// Whether a header name on the wire names `target`, compact forms included.
-fn matches_header_name(wire_name: &str, target: &str) -> bool {
-    wire_name.eq_ignore_ascii_case(target)
-        || compact_letter(wire_name).is_some_and(|c| compact_letter(target) == Some(c))
-}
-
 /// Unfold a continuation line into `value`, replacing the folding LWS with
 /// one SP (RFC 3261 §7.3.1).
 fn append_folded(value: &mut String, line: &str) {
@@ -110,7 +90,7 @@ fn append_folded(value: &mut String, line: &str) {
 pub fn extract_header(message: &str, name: &str) -> Vec<String> {
     extract_all_headers(message)
         .into_iter()
-        .filter(|(hdr_name, _)| matches_header_name(hdr_name, name))
+        .filter(|(hdr_name, _)| SipHeader::name_matches(name, hdr_name))
         .map(|(_, value)| value)
         .collect()
 }

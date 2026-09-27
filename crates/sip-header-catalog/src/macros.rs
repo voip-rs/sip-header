@@ -1,39 +1,103 @@
-/// Generates a non-exhaustive enum mapping Rust variants to canonical protocol strings.
+use core::fmt::{Debug, Display};
+use core::hash::Hash;
+use core::str::FromStr;
+
+/// A fieldless enum of protocol names, as [`define_header_enum!`](crate::define_header_enum) generates.
 ///
-/// Produces: enum definition, `ALL` const, `as_str()`, `Display`, `AsRef<str>`,
-/// and `FromStr`. `FromStr` uses `eq_ignore_ascii_case` — appropriate for
-/// user-facing catalog types (header names, variable names) where input may
-/// come from config files. Wire protocol state types use hand-written strict
-/// `FromStr` instead.
+/// Mirrors the inherent `ALL` and `as_str` every generated enum carries, for
+/// code generic over name catalogs.
+pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr + 'static {
+    /// Every variant, in unspecified order.
+    const ALL: &'static [Self];
+
+    /// Canonical wire name.
+    fn as_str(&self) -> &'static str;
+}
+
+/// Defines a `#[non_exhaustive]` fieldless enum whose variants map to
+/// canonical protocol names.
 ///
-/// Two error forms:
+/// # Generated items
 ///
-/// - `error_type: ParseMyEnumError,` — the error newtype is defined separately
-///   by the caller as `struct ParseMyEnumError(pub String)`; its `Display` is
-///   the caller's to keep free of the input.
-/// - `error_type: ParseMyEnumError => "unknown my value",` — the newtype, its
-///   `Display` (`"unknown my value (<n> bytes)"`, the rejected input stays on
-///   the field), and `std::error::Error` are generated.
+/// - The enum, deriving `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and
+///   `Hash`, and nothing else.
+/// - Inherent `ALL` and `as_str(&self)`, and a [`HeaderName`] impl mirroring
+///   them.
+/// - `Display` and `AsRef<str>`, both the wire name.
+/// - `FromStr`, matching wire names with `eq_ignore_ascii_case`.
+/// - With `error_type: E => "msg",`: the error `struct E(pub String)`
+///   holding the rejected input, its `Display` (`msg (<n> bytes)`), and
+///   `std::error::Error`. With `error_type: E,` the caller defines
+///   `E(String)` and keeps its `Display` free of the input.
+/// - With `serde,`: `Serialize` as the wire name and `Deserialize` through
+///   `FromStr`, whose error never quotes the input. Needs this crate's
+///   `serde` feature; an invocation without it gets no serde impls.
+/// - With `tests_mod: m,`: a `#[cfg(test)] mod m` testing round trip, case
+///   insensitivity, `Display` and unknown input over `ALL` (needs
+///   `PartialEq` on the error).
 ///
-/// An optional leading `tests_mod: my_enum_tests,` generates a `#[cfg(test)]`
-/// module with round-trip, case-insensitivity, `Display`, and unknown-input
-/// tests over `ALL` (requires `PartialEq` on the error type).
+/// The order of `ALL` and the discriminant values are unspecified.
+/// Attributes on a variant apply to that variant only, so a `#[cfg]` on a
+/// variant is not supported.
 ///
 /// # Example
 ///
-/// ```ignore
-/// define_header_enum! {
+/// ```
+/// sip_header_catalog::define_header_enum! {
 ///     tests_mod: my_enum_tests,
 ///     error_type: ParseMyEnumError => "unknown my value",
 ///     /// Doc comment for the enum.
 ///     pub enum MyEnum {
+///         /// `foo-wire`.
 ///         Foo => "foo-wire",
+///         /// `bar-wire`.
 ///         Bar => "bar-wire",
 ///     }
 /// }
+///
+/// assert_eq!("FOO-WIRE".parse::<MyEnum>(), Ok(MyEnum::Foo));
+/// assert_eq!(MyEnum::Bar.to_string(), "bar-wire");
 /// ```
 #[macro_export]
 macro_rules! define_header_enum {
+    (@serde $Name:ident) => {
+        impl $crate::__private::serde::Serialize for $Name {
+            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
+            where
+                S: $crate::__private::serde::Serializer,
+            {
+                $crate::__private::serialize_name($Name::as_str(self), serializer)
+            }
+        }
+
+        impl<'de> $crate::__private::serde::Deserialize<'de> for $Name {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+            where
+                D: $crate::__private::serde::Deserializer<'de>,
+            {
+                $crate::__private::deserialize_name(
+                    deserializer,
+                    ::core::concat!(::core::stringify!($Name), " name"),
+                    <$Name as ::core::str::FromStr>::from_str,
+                )
+            }
+        }
+    };
+    (@serde_of
+        error_type: $Err:ident $(=> $err_msg:literal)?,
+        $(#[$enum_meta:meta])*
+        $vis:vis enum $Name:ident { $($body:tt)* }
+    ) => {
+        $crate::define_header_enum! { @serde $Name }
+    };
+    (
+        $(tests_mod: $tests_mod:ident,)?
+        serde,
+        $($rest:tt)*
+    ) => {
+        $crate::define_header_enum! { $(tests_mod: $tests_mod,)? $($rest)* }
+        $crate::define_header_enum! { @serde_of $($rest)* }
+    };
     (
         $(tests_mod: $tests_mod:ident,)?
         error_type: $Err:ident $(=> $err_msg:literal)?,
@@ -46,22 +110,33 @@ macro_rules! define_header_enum {
         }
     ) => {
         $(
-            #[doc = concat!("Error for an unrecognized value; displays as `", $err_msg, " (<n> bytes)`. The rejected input is the field.")]
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            $vis struct $Err(pub String);
+            #[doc = ::core::concat!("Error for an unrecognized value; displays as `", $err_msg, " (<n> bytes)`. The rejected input is the field.")]
+            #[derive(
+                ::core::fmt::Debug,
+                ::core::clone::Clone,
+                ::core::cmp::PartialEq,
+                ::core::cmp::Eq,
+            )]
+            $vis struct $Err(pub ::std::string::String);
 
-            impl std::fmt::Display for $Err {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    write!(f, concat!($err_msg, " ({} bytes)"), self.0.len())
+            impl ::core::fmt::Display for $Err {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    ::core::write!(f, ::core::concat!($err_msg, " ({} bytes)"), self.0.len())
                 }
             }
 
-            impl std::error::Error for $Err {}
+            impl ::std::error::Error for $Err {}
         )?
 
         $(#[$enum_meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[derive(
+            ::core::fmt::Debug,
+            ::core::clone::Clone,
+            ::core::marker::Copy,
+            ::core::cmp::PartialEq,
+            ::core::cmp::Eq,
+            ::core::hash::Hash,
+        )]
         #[non_exhaustive]
         #[allow(missing_docs)]
         $vis enum $Name {
@@ -71,55 +146,48 @@ macro_rules! define_header_enum {
             )+
         }
 
+        #[allow(deprecated)]
         impl $Name {
-            /// All variants, in declaration order (respecting any `#[cfg]` attributes).
-            // allow(unused_doc_comments): variant doc attrs are propagated onto
-            // array elements so that #[cfg] attrs also propagate; the doc attrs
-            // are harmless noise here. Same pattern in as_str/from_str below.
-            #[allow(unused_doc_comments)]
-            pub const ALL: &'static [Self] = &[
-                $(
-                    $(#[$var_meta])*
-                    $Name::$variant,
-                )+
-            ];
+            /// Every variant, in unspecified order.
+            pub const ALL: &'static [Self] = &[$($Name::$variant),+];
 
-            /// Canonical protocol string.
-            #[allow(unused_doc_comments)]
+            /// Canonical wire name.
             pub fn as_str(&self) -> &'static str {
                 match self {
-                    $(
-                        $(#[$var_meta])*
-                        $Name::$variant => $wire,
-                    )+
+                    $($Name::$variant => $wire,)+
                 }
             }
         }
 
-        impl std::fmt::Display for $Name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(self.as_str())
+        impl $crate::HeaderName for $Name {
+            const ALL: &'static [Self] = $Name::ALL;
+
+            fn as_str(&self) -> &'static str {
+                $Name::as_str(self)
             }
         }
 
-        impl AsRef<str> for $Name {
+        impl ::core::fmt::Display for $Name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str($Name::as_str(self))
+            }
+        }
+
+        impl ::core::convert::AsRef<str> for $Name {
             fn as_ref(&self) -> &str {
-                self.as_str()
+                $Name::as_str(self)
             }
         }
 
-        impl std::str::FromStr for $Name {
+        impl ::core::str::FromStr for $Name {
             type Err = $Err;
 
-            #[allow(unused_doc_comments)]
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                $(
-                    $(#[$var_meta])*
-                    if s.eq_ignore_ascii_case($wire) {
-                        return Ok($Name::$variant);
-                    }
-                )+
-                Err($Err(s.to_string()))
+            fn from_str(s: &str) -> ::core::result::Result<Self, Self::Err> {
+                $Name::ALL
+                    .iter()
+                    .copied()
+                    .find(|v| s.eq_ignore_ascii_case($Name::as_str(v)))
+                    .ok_or_else(|| $Err(::std::borrow::ToOwned::to_owned(s)))
             }
         }
 
@@ -197,6 +265,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "serde")]
     define_header_enum! {
         tests_mod: serde_enum_generated,
         serde,
@@ -259,13 +328,13 @@ mod tests {
             const SERIALIZE: bool = true;
         }
 
-        #[test]
-        fn only_invocations_that_ask_get_serde() {
+        // Only invocations that ask get serde.
+        const _: () = {
             assert!(Probe::<SerdeEnum>::SERIALIZE);
             assert!(!Probe::<TestEnum>::SERIALIZE);
             assert!(!Probe::<OldEnum>::SERIALIZE);
             assert!(Probe::<crate::SipHeader>::SERIALIZE);
-        }
+        };
 
         #[test]
         fn serde_uses_the_wire_name() {
