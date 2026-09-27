@@ -57,13 +57,25 @@ fn uri() -> impl Strategy<Value = Uri> {
     .prop_map(|s| Uri::parse_strict(s).unwrap())
 }
 
-/// `value` reads back from its wire form under strict parsing.
+/// Serde on the value types, when the feature builds it.
+#[cfg(feature = "serde")]
+trait Serde: serde::Serialize + serde::de::DeserializeOwned {}
+#[cfg(feature = "serde")]
+impl<T: serde::Serialize + serde::de::DeserializeOwned> Serde for T {}
+#[cfg(not(feature = "serde"))]
+trait Serde {}
+#[cfg(not(feature = "serde"))]
+impl<T> Serde for T {}
+
+/// `value` reads back from its wire form under strict parsing, and from
+/// its serde form.
 fn strict_round_trip<T>(value: T) -> Result<(), TestCaseError>
 where
-    T: HeaderParse + std::fmt::Display + std::fmt::Debug + PartialEq,
+    T: HeaderParse + std::fmt::Display + std::fmt::Debug + PartialEq + Clone + Serde,
 {
     let wire = value.to_string();
     prop_assert!(!wire.contains(['\r', '\n', '\0']), "{wire:?}");
+    serde_reads_back(Some(value.clone()), &wire)?;
     prop_assert_eq!(T::parse_strict(&wire), Ok(value), "{:?}", wire);
     Ok(())
 }
