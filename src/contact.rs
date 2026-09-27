@@ -1,8 +1,8 @@
 //! SIP Contact header value parser (RFC 3261 §20.10).
 //!
-//! Contact can be either `*` (wildcard, used in REGISTER with Expires: 0)
-//! or a comma-separated list of `name-addr / addr-spec` entries with
-//! optional parameters.
+//! `*` beside addresses is dropped with
+//! [`WildcardNotAlone`](crate::WarningCode::WildcardNotAlone), keeping the
+//! addresses.
 
 use std::fmt;
 
@@ -11,184 +11,253 @@ use crate::error::ParseError;
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
-use crate::traits::{HeaderParse, ListParse};
 
-/// A single Contact header value: either the `*` wildcard or an address.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "lowercase")
-)]
+/// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
+/// (RFC 3261 §20.10), either the `*` wildcard or one address or more.
+///
+/// ```
+/// use sip_header::{ContactList, HeaderParse, SipHeaderAddr};
+///
+/// assert!(ContactList::parse("*")?.is_wildcard());
+/// let addr = SipHeaderAddr::parse("<sip:alice@example.com>;expires=60")?;
+/// let list = ContactList::new(vec![addr])?;
+/// assert_eq!(list.addrs()[0].param("expires"), Some(Some("60")));
+/// assert_eq!(list.to_string(), "<sip:alice@example.com>;expires=60");
+/// assert!(ContactList::new(Vec::new()).is_err());
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+///
+/// # Equality
+///
+/// Two lists are equal when their wire forms are: both the wildcard, or
+/// the same addresses in the same order, each as [`SipHeaderAddr`]
+/// compares. [`Hash`] follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum ContactValue {
-    /// The `*` wildcard (RFC 3261 §10.2.2, used in REGISTER).
+pub struct ContactList(Contacts);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Contacts {
     Wildcard,
-    /// A `name-addr` or `addr-spec` with optional contact parameters.
-    Addr(Box<SipHeaderAddr>),
+    Addrs(Vec<SipHeaderAddr>),
 }
 
-impl fmt::Display for ContactValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Wildcard => f.write_str("*"),
-            Self::Addr(addr) => write!(f, "{addr}"),
+impl ContactList {
+    /// The `*` wildcard (RFC 3261 §10.2.2, used in REGISTER).
+    pub fn wildcard() -> Self {
+        ContactList(Contacts::Wildcard)
+    }
+
+    /// Build from addresses; errors when `addrs` is empty, which the
+    /// grammar forbids.
+    pub fn new(addrs: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {
+        if addrs.is_empty() {
+            return Err(ParseError::empty(Field::Value));
+        }
+        Ok(ContactList(Contacts::Addrs(addrs)))
+    }
+
+    /// Whether this is the `*` wildcard.
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self.0, Contacts::Wildcard)
+    }
+
+    /// The addresses, in order; empty for the wildcard.
+    pub fn addrs(&self) -> &[SipHeaderAddr] {
+        match &self.0 {
+            Contacts::Wildcard => &[],
+            Contacts::Addrs(addrs) => addrs,
+        }
+    }
+
+    /// Consume self and return the addresses; empty for the wildcard.
+    pub fn into_addrs(self) -> Vec<SipHeaderAddr> {
+        match self.0 {
+            Contacts::Wildcard => Vec::new(),
+            Contacts::Addrs(addrs) => addrs,
         }
     }
 }
 
-/// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
-/// (RFC 3261 §20.10), or the empty list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ContactList(Vec<ContactValue>);
-
-list_type!(ContactList, ContactValue, sep: ", ", may_be_empty);
+impl fmt::Display for ContactList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Contacts::Wildcard => f.write_str("*"),
+            Contacts::Addrs(addrs) => crate::fmt_joined(f, addrs, ", "),
+        }
+    }
+}
 
 impl CommaList for ContactList {
-    type Entry = ContactValue;
+    /// `None` for a `*` entry.
+    type Entry = Option<SipHeaderAddr>;
 
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<ContactValue>, ParseError> {
+    ) -> Result<Option<Option<SipHeaderAddr>>, ParseError> {
         if entry.trim() == "*" {
-            return Ok(Some(ContactValue::Wildcard));
+            return Ok(Some(None));
         }
-        let addr = parse_list_addr(entry, warnings)?;
-        Ok(Some(ContactValue::Addr(Box::new(addr))))
+        parse_list_addr(entry, warnings).map(|addr| Some(Some(addr)))
     }
 
-    fn from_parsed(entries: Vec<ContactValue>) -> Result<Self, ParseError> {
-        Ok(Self::new(entries))
+    fn from_parsed(entries: Vec<Option<SipHeaderAddr>>) -> Result<Self, ParseError> {
+        Self::from_parsed_reporting(entries, &mut Vec::new())
     }
 
     fn from_parsed_reporting(
-        entries: Vec<ContactValue>,
+        entries: Vec<Option<SipHeaderAddr>>,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Self, ParseError> {
-        if entries.len() > 1 {
-            let wildcards = entries
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| matches!(v, ContactValue::Wildcard))
-                .map(|(i, _)| {
-                    ParseWarning::new(Field::Entry, WarningCode::WildcardNotAlone).in_entry(i)
-                });
-            warnings.extend(wildcards);
-            warnings.sort_by_key(|w| w.entry);
+        let has_addr = entries
+            .iter()
+            .any(Option::is_some);
+        let mut addrs = Vec::with_capacity(entries.len());
+        let mut wildcard_seen = false;
+        for (i, entry) in entries
+            .into_iter()
+            .enumerate()
+        {
+            match entry {
+                Some(addr) => addrs.push(addr),
+                None if has_addr || wildcard_seen => warnings.push(
+                    ParseWarning::new(Field::Entry, WarningCode::WildcardNotAlone).in_entry(i),
+                ),
+                None => wildcard_seen = true,
+            }
         }
-        Ok(Self::new(entries))
-    }
-
-    fn blank() -> Result<Self, ParseError> {
-        Ok(Self::new(Vec::new()))
+        warnings.sort_by_key(|w| w.entry);
+        if addrs.is_empty() && wildcard_seen {
+            return Ok(Self::wildcard());
+        }
+        Self::new(addrs)
     }
 }
 
 list_parse!(ContactList);
 
-/// Parse a comma-separated Contact header value into a list of [`ContactValue`].
-pub fn parse_contact_list(raw: &str) -> Result<Vec<ContactValue>, ParseError> {
-    ContactList::parse(raw).map(ContactList::into_entries)
+#[cfg(feature = "serde")]
+impl serde::Serialize for ContactList {
+    /// `"*"` for the wildcard, the addresses as a sequence otherwise.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.0 {
+            Contacts::Wildcard => serializer.serialize_str("*"),
+            Contacts::Addrs(addrs) => serializer.collect_seq(addrs),
+        }
+    }
 }
 
-/// Build from entries a transport already split; each is `*` or one `contact-param`.
-///
-/// `*` is only valid alone (RFC 3261 §20.10 `STAR / (contact-param *(COMMA contact-param))`).
-pub fn parse_contact_entries<'a>(
-    entries: impl IntoIterator<Item = &'a str>,
-) -> Result<Vec<ContactValue>, ParseError> {
-    ContactList::from_entries(entries).map(ContactList::into_entries)
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ContactList {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ContactList;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(r#""*" or a sequence of addresses"#)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<ContactList, E> {
+                if v == "*" {
+                    Ok(ContactList::wildcard())
+                } else {
+                    Err(E::custom("a Contact string must be \"*\""))
+                }
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<ContactList, A::Error> {
+                let mut addrs = Vec::new();
+                while let Some(addr) = seq.next_element()? {
+                    addrs.push(addr);
+                }
+                ContactList::new(addrs).map_err(<A::Error as serde::de::Error>::custom)
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::FaultCode;
-    use crate::SipHeaderAddr;
-    use sip_uri::UriParse;
+    use crate::{HeaderParse, ListParse};
 
     #[test]
     fn wildcard() {
-        let contacts = parse_contact_list("*").unwrap();
-        assert_eq!(contacts.len(), 1);
-        assert!(matches!(contacts[0], ContactValue::Wildcard));
+        let contacts = ContactList::parse("*").unwrap();
+        assert!(contacts.is_wildcard());
+        assert_eq!(contacts.to_string(), "*");
     }
 
     #[test]
     fn single_addr() {
-        let contacts = parse_contact_list("<sip:alice@198.51.100.1>").unwrap();
-        assert_eq!(contacts.len(), 1);
-        match &contacts[0] {
-            ContactValue::Addr(addr) => {
-                assert!(addr
-                    .uri()
-                    .to_string()
-                    .contains("alice"));
-            }
-            _ => panic!("expected Addr"),
-        }
+        let contacts = ContactList::parse("<sip:alice@198.51.100.1>").unwrap();
+        assert_eq!(
+            contacts
+                .addrs()
+                .len(),
+            1
+        );
+        assert!(contacts.addrs()[0]
+            .uri()
+            .to_string()
+            .contains("alice"));
     }
 
     #[test]
     fn multiple_addrs() {
         let contacts =
-            parse_contact_list("<sip:alice@198.51.100.1>, \"Bob\" <sip:bob@198.51.100.2>").unwrap();
-        assert_eq!(contacts.len(), 2);
-        match &contacts[1] {
-            ContactValue::Addr(addr) => {
-                assert_eq!(addr.display_name(), Some("Bob"));
-            }
-            _ => panic!("expected Addr"),
-        }
-    }
-
-    #[test]
-    fn display_wildcard() {
-        assert_eq!(ContactValue::Wildcard.to_string(), "*");
-    }
-
-    #[test]
-    fn display_addr() {
-        let addr = sip_uri::Uri::parse("sip:alice@198.51.100.1").unwrap();
-        let cv = ContactValue::Addr(Box::new(SipHeaderAddr::new(addr).unwrap()));
-        assert!(cv
-            .to_string()
-            .contains("alice"));
+            ContactList::parse("<sip:alice@198.51.100.1>, \"Bob\" <sip:bob@198.51.100.2>").unwrap();
+        assert_eq!(
+            contacts
+                .addrs()
+                .len(),
+            2
+        );
+        assert_eq!(contacts.addrs()[1].display_name(), Some("Bob"));
     }
 
     #[test]
     fn entries_matches_list() {
         let a = "<sip:alice@198.51.100.1>";
         let b = "\"Bob\" <sip:bob@example.com>;expires=60";
-        let split = parse_contact_entries([a, b]).unwrap();
-        let joined = parse_contact_list(&format!("{a}, {b}")).unwrap();
+        let split = ContactList::from_entries([a, b]).unwrap();
+        let joined = ContactList::parse(&format!("{a}, {b}")).unwrap();
         assert_eq!(split, joined);
-        assert_eq!(split.len(), 2);
+        assert_eq!(
+            split
+                .into_addrs()
+                .len(),
+            2
+        );
     }
 
     #[test]
-    fn entries_empty_is_empty_list() {
-        let contacts = parse_contact_entries(std::iter::empty::<&str>()).unwrap();
-        assert!(contacts.is_empty());
+    fn no_entries_is_empty_error() {
+        assert_eq!(
+            ContactList::from_entries(std::iter::empty::<&str>()),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     #[test]
-    fn entries_lone_wildcard() {
-        let contacts = parse_contact_entries(["*"]).unwrap();
-        assert_eq!(contacts, vec![ContactValue::Wildcard]);
-    }
-
-    #[test]
-    fn wildcard_beside_addr_is_kept_with_warning() {
+    fn wildcard_beside_addr_is_dropped_with_warning() {
         let parsed =
             ContactList::from_entries_with_warnings(["<sip:alice@example.com>", "*"]).unwrap();
         assert_eq!(
             parsed
                 .value
-                .entries()[1],
-            ContactValue::Wildcard
+                .addrs()
+                .len(),
+            1
         );
         let w = parsed.warnings[0];
         assert_eq!(
@@ -196,15 +265,9 @@ mod tests {
             (
                 Field::Entry,
                 WarningCode::WildcardNotAlone,
-                sip_uri::WarningKind::Recovered,
+                sip_uri::WarningKind::Lost,
                 Some(1)
             )
-        );
-        assert_eq!(
-            parse_contact_list("*, <sip:alice@example.com>")
-                .unwrap()
-                .len(),
-            2
         );
         assert!(matches!(
             ContactList::parse_strict("*, <sip:alice@example.com>"),
@@ -221,6 +284,7 @@ mod tests {
         assert_eq!(
             parsed
                 .value
+                .addrs()
                 .len(),
             2
         );
@@ -237,24 +301,10 @@ mod tests {
                 )
             )
         );
-        let split = ContactList::from_entries_with_warnings(["*"]).unwrap();
-        assert_eq!(
-            split
-                .value
-                .entries(),
-            &[ContactValue::Wildcard]
-        );
         assert!(ContactList::parse_strict(bad).is_err());
-        assert!(ContactList::parse("")
-            .unwrap()
-            .is_empty());
         assert_eq!(
             ContactList::from_entries(["<sip:a@example.com>", " "]),
             Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
-        );
-        assert_eq!(
-            ContactList::parse("<sip:a@example.com>").map(ContactList::into_entries),
-            parse_contact_list("<sip:a@example.com>")
         );
     }
 }

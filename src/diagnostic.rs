@@ -254,8 +254,8 @@ pub enum WarningCode {
     /// A `\` ending a quoted-string, which RFC 3261 §25.1 `quoted-pair`
     /// requires to escape a character; dropped.
     TrailingBackslash,
-    /// Contact `*` beside addresses, where RFC 3261 §20.10 allows it only
-    /// alone; kept.
+    /// Contact `*` beside addresses or another `*`, where RFC 3261 §20.10
+    /// allows it only alone; dropped.
     WildcardNotAlone,
     /// A History-Info entry without the `index` RFC 7044 §9.1 makes
     /// mandatory.
@@ -299,6 +299,7 @@ impl WarningCode {
         match self {
             WarningCode::TrailingContent
             | WarningCode::TrailingBackslash
+            | WarningCode::WildcardNotAlone
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
             | WarningCode::EmptyEntry

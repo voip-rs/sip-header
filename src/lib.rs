@@ -84,7 +84,7 @@ pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};
 pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
 pub use auth::SipAuthValue;
 pub use call_id::SipCallId;
-pub use contact::{ContactList, ContactValue};
+pub use contact::ContactList;
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
 pub use error::{Fault, FaultCode, ParseError, UriFault};

@@ -166,7 +166,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
-| Contact `*` beside addresses is `Err` | kept, with a `WildcardNotAlone` warning |
+| Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
 | `param()` returns `Option<&str>` on Accept*, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>`; `Some(None)` is a flag |
 | `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |
 | `params()` returns pairs with values as sent, quotes included | `params() -> &HeaderParams`: `iter()`, `get()`, `is_quoted()`; values unescaped |
@@ -175,11 +175,14 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | an auth-param without `=` is `Err` | kept as a flag with an `AuthParamFlag` warning |
 | parameter serde as `[[name, value]]` or `{key, value, quoted}` | `[[name, value, quoted]]`; the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce |
 | `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
-| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; `SipGeolocationEntry::new(Uri)` with geoloc-params, `uri()`; `cid()` comes from a `cid:` scheme, `url()`/`urls()` yield the other URIs; `SipGeolocationRef` removed |
+| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`, `Err` when no entry yields a URI; `SipGeolocationEntry::new(Uri)` with geoloc-params, `uri()`; `cid()` comes from a `cid:` scheme, `url()`/`urls()` yield the other URIs; `SipGeolocationRef` removed |
 | `SipViaEntry::host() -> &str`, `with_host(String)` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`; `WarningCode::MissingHost` removed |
 | Reason yields `Utf8Error` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
 | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, parsed by `HeaderParse`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
 | `join()` returns `SipReplaces` | `SipJoin`, which has no `early-only` |
+| `ContactList` of `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries`, `contact() -> Vec<ContactValue>` | opaque `ContactList`: `wildcard()`, `new(addrs) -> Result` (non-empty), `is_wildcard()`, `addrs()`; `ContactList::parse` / `from_entries`; `contact() -> Option<ContactList>`; an empty Contact is `Err` |
+| list `new` returns `Option` (Via, Warning, Security, URI-info, History-Info) or `Self` | `Result`, `Err(Empty)` for an empty list, where the grammar needs an entry (those and Geolocation); `Self` for the Accept family |
+| `HistoryInfoEntry::new(addr)` | `new(addr, index) -> Result`; `with_index` replaces it |
 | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
 | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
 

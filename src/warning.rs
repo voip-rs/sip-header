@@ -280,7 +280,7 @@ impl CommaList for SipWarning {
     }
 
     fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::empty(Field::Value))
+        Self::new(entries)
     }
 }
 

@@ -62,6 +62,8 @@ fn catalog_store_gets_every_accessor() {
         store
             .contact()
             .unwrap()
+            .unwrap()
+            .addrs()
             .len(),
         1
     );

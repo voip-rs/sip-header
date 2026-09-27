@@ -51,7 +51,7 @@ use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
 /// [`Display`](std::fmt::Display) always emits angle brackets around the URI,
 /// even for bare addr-spec input. This is the canonical form required by
 /// RFC 3261 when header-level parameters are present.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),

@@ -7,14 +7,20 @@ use crate::scrub::{merge, scrub, Scrubbed};
 /// Constructor, accessors, iteration and Display for a
 /// `struct $Type(Vec<$Entry>)`.
 ///
-/// `non_empty` types refuse an empty list, which their grammar forbids.
+/// `non_empty` types refuse an empty list, which their grammar forbids;
+/// `may_be_empty` types build from any entries.
 macro_rules! list_type {
     ($Type:ident, $Entry:ty, sep: $sep:literal, non_empty) => {
         impl $Type {
-            /// Build from entries; `None` when `entries` is empty, which
+            /// Build from entries; errors when `entries` is empty, which
             /// this header's grammar forbids.
-            pub fn new(entries: Vec<$Entry>) -> Option<Self> {
-                (!entries.is_empty()).then(|| Self(entries))
+            pub fn new(entries: Vec<$Entry>) -> Result<Self, $crate::error::ParseError> {
+                if entries.is_empty() {
+                    return Err($crate::error::ParseError::empty(
+                        $crate::diagnostic::Field::Value,
+                    ));
+                }
+                Ok(Self(entries))
             }
         }
 
@@ -22,12 +28,7 @@ macro_rules! list_type {
         impl<'de> serde::Deserialize<'de> for $Type {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let entries = <Vec<$Entry> as serde::Deserialize>::deserialize(deserializer)?;
-                Self::new(entries).ok_or_else(|| {
-                    <D::Error as serde::de::Error>::custom(concat!(
-                        stringify!($Type),
-                        " needs one entry or more"
-                    ))
-                })
+                Self::new(entries).map_err(<D::Error as serde::de::Error>::custom)
             }
         }
 
@@ -35,7 +36,7 @@ macro_rules! list_type {
     };
     ($Type:ident, $Entry:ty, sep: $sep:literal, may_be_empty) => {
         impl $Type {
-            /// Build from entries.
+            /// Build from entries; this header's grammar admits the empty list.
             pub fn new(entries: Vec<$Entry>) -> Self {
                 Self(entries)
             }

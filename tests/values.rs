@@ -1,6 +1,6 @@
 use sip_header::sip_uri::{Host, SipUri, TelUri, Uri, UriParse};
 use sip_header::{
-    ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, ParseError, SipAccept,
+    ContactList, DialogFraming, HistoryInfo, HistoryInfoEntry, ParseError, SipAccept,
     SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
     SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr,
     SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
@@ -68,14 +68,12 @@ fn addr_constructors_and_display() -> R {
         SipHeaderAddr::new(TelUri::new("+15551234567").into())?.to_string(),
         "<tel:+15551234567>"
     );
-    let contact = ContactList::new(vec![
-        ContactValue::Addr(Box::new(addr)),
-        ContactValue::Wildcard,
-    ]);
+    let contact = ContactList::new(vec![addr.clone(), addr])?;
     assert_eq!(
         contact.to_string(),
-        r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr, *"#
+        r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr, "Alice Smith" <sip:alice@example.com>;tag=abc;lr"#
     );
+    assert_eq!(ContactList::wildcard().to_string(), "*");
     Ok(())
 }
 
@@ -124,15 +122,13 @@ fn list_and_entry_display() -> R {
         "<https://example.com/i>;purpose=icon"
     );
     assert_eq!(
-        SipGeolocation::new(vec![SipGeolocationEntry::new(uri("cid:loc@example.com"))?])
+        SipGeolocation::new(vec![SipGeolocationEntry::new(uri("cid:loc@example.com"))?])?
             .to_string(),
         "<cid:loc@example.com>"
     );
     assert_eq!(
-        HistoryInfo::new(vec![HistoryInfoEntry::new(addr())])
-            .unwrap()
-            .to_string(),
-        r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#
+        HistoryInfo::new(vec![HistoryInfoEntry::new(addr(), "1")?])?.to_string(),
+        r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr;index=1"#
     );
     assert_eq!(
         SipAuthValue::new("Digest")?
@@ -159,11 +155,6 @@ fn list_and_entry_display() -> R {
 
 #[test]
 fn structural_invariants() -> R {
-    assert_eq!(SipVia::new(Vec::new()), None);
-    assert_eq!(SipWarning::new(Vec::new()), None);
-    assert_eq!(SipSecurity::new(Vec::new()), None);
-    assert_eq!(UriInfo::new(Vec::new()), None);
-    assert_eq!(HistoryInfo::new(Vec::new()), None);
     assert!(
         SipViaEntry::new("SIP", "2.0", "UDP", Host::IPv4([198, 51, 100, 1].into()))?
             .with_param("RPORT", Some("5060"))
@@ -222,10 +213,8 @@ mod serde_round_trip {
     #[test]
     fn every_type_round_trips() -> R {
         round_trip(addr());
-        round_trip(ContactList::new(vec![
-            ContactValue::Wildcard,
-            ContactValue::Addr(Box::new(addr())),
-        ]));
+        round_trip(ContactList::new(vec![addr()])?);
+        round_trip(ContactList::wildcard());
         round_trip(via());
         round_trip(SipAccept::new(vec![SipAcceptEntry::new(
             "application",
@@ -251,8 +240,11 @@ mod serde_round_trip {
         round_trip(SipGeolocation::new(vec![SipGeolocationEntry::new(uri(
             "https://example.com/l",
         ))?
-        .with_param("inserted-by", Some("example.com"))?]));
-        round_trip(HistoryInfo::new(vec![HistoryInfoEntry::new(addr())]).unwrap());
+        .with_param("inserted-by", Some("example.com"))?])?);
+        round_trip(HistoryInfo::new(vec![HistoryInfoEntry::new(
+            addr(),
+            "1.1",
+        )?])?);
         round_trip(SipReason::new("SIP")?.with_cause(302));
         round_trip(replaces().with_framing(DialogFraming::UriHeader));
         round_trip(SipTargetDialog::new("a@example.com", "l", "r")?);
@@ -296,8 +288,8 @@ mod serde_round_trip {
             json!({"scheme": "Bearer", "params": [], "token68": "abc"})
         );
         assert_eq!(
-            serde_json::to_value(ContactValue::Wildcard).unwrap(),
-            json!("wildcard")
+            serde_json::to_value(ContactList::wildcard()).unwrap(),
+            json!("*")
         );
         Ok(())
     }

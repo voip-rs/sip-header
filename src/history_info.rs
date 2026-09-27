@@ -12,21 +12,30 @@ use crate::params::HeaderParams;
 /// A single entry from a History-Info header (RFC 7044).
 ///
 /// Each entry is a SIP name-addr (`<URI>;params`) where the URI may contain
-/// an embedded `?Reason=...` header and the params typically include `index`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// an embedded `?Reason=...` header and the params include `index`, which
+/// a parsed entry may lack.
+///
+/// # Equality
+///
+/// As its [`SipHeaderAddr`] compares.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
     serde(try_from = "HistoryInfoEntryParts", into = "HistoryInfoEntryParts")
 )]
+#[non_exhaustive]
 pub struct HistoryInfoEntry {
     addr: SipHeaderAddr,
 }
 
 impl HistoryInfoEntry {
-    /// An entry for `addr`.
-    pub fn new(addr: SipHeaderAddr) -> Self {
-        HistoryInfoEntry { addr }
+    /// An entry for `addr` at `index`, replacing every `index` `addr` held.
+    ///
+    /// Errors unless `index` is RFC 7044 §9.1 dot-separated digit runs
+    /// such as `1.2`.
+    pub fn new(addr: SipHeaderAddr, index: impl Into<String>) -> Result<Self, ParseError> {
+        HistoryInfoEntry { addr }.with_index(index)
     }
 
     /// The name-addr with its header-level parameters.
@@ -59,8 +68,7 @@ impl HistoryInfoEntry {
             .flatten()
     }
 
-    /// Set `index` (RFC 7044 §9.1), dot-separated digit runs such as
-    /// `1.2`, replacing every `index` the entry held.
+    /// Set `index`, as [`new`](Self::new) does.
     pub fn with_index(mut self, index: impl Into<String>) -> Result<Self, ParseError> {
         let index = index.into();
         let valid = index
@@ -110,12 +118,13 @@ impl fmt::Display for HistoryInfoEntry {
 /// use sip_header::{HistoryInfo, HistoryInfoEntry, SipHeaderAddr};
 ///
 /// let addr = SipHeaderAddr::new(SipUri::new(Host::Hostname("psap.example.com".into())).into())?;
-/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr).with_index("1.1")?]).unwrap();
+/// let hi = HistoryInfo::new(vec![HistoryInfoEntry::new(addr, "1.1")?])?;
 /// assert_eq!(hi.entries()[0].index(), Some("1.1"));
 /// assert_eq!(hi.to_string(), "<sip:psap.example.com>;index=1.1");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 
 list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", non_empty);
@@ -131,7 +140,7 @@ impl TryFrom<HistoryInfoEntryParts> for HistoryInfoEntry {
     type Error = ParseError;
 
     fn try_from(p: HistoryInfoEntryParts) -> Result<Self, Self::Error> {
-        crate::list::entry_reads_back::<HistoryInfo>(HistoryInfoEntry::new(p.addr))
+        crate::list::entry_reads_back::<HistoryInfo>(HistoryInfoEntry { addr: p.addr })
     }
 }
 
@@ -164,11 +173,11 @@ impl CommaList for HistoryInfo {
         {
             warnings.push(ParseWarning::new(Field::Index, WarningCode::MissingIndex));
         }
-        Ok(Some(HistoryInfoEntry::new(addr)))
+        Ok(Some(HistoryInfoEntry { addr }))
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::empty(Field::Value))
+        Self::new(entries)
     }
 }
 

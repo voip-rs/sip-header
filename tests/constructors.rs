@@ -1,11 +1,11 @@
 use sip_header::sip_uri::{Host, Uri, UriParse};
 use sip_header::{
-    AddrParts, ContactList, ContactValue, DialogFraming, DialogIdEdit, FaultCode, Field,
-    HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept,
-    SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
-    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr,
-    SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    AddrParts, ContactList, DialogFraming, DialogIdEdit, FaultCode, Field, HeaderParse,
+    HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
+    SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
+    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipReason, SipReplaces,
+    SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
+    SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -266,7 +266,7 @@ fn warning_entry() -> R {
         .unwrap(),
         r#"399 example.com "say \"hi\"""#,
     );
-    assert_eq!(SipWarning::new(Vec::new()), None);
+    assert!(SipWarning::new(Vec::new()).is_err());
     Ok(())
 }
 
@@ -363,7 +363,7 @@ fn uri_info_and_geolocation() -> R {
             SipGeolocationEntry::new(uri("cid:a@example.com"))?,
             SipGeolocationEntry::new(uri("https://example.com/l"))?
                 .with_param("inserted-by", Some("example.com"))?,
-        ]),
+        ])?,
         "<cid:a@example.com>, <https://example.com/l>;inserted-by=example.com",
     );
     Ok(())
@@ -389,16 +389,13 @@ fn uri_info_and_geolocation_refuse_what_does_not_read_back() {
 fn history_info_and_contact() -> R {
     let addr = SipHeaderAddr::parse("<sip:a@example.com>;index=1")?;
     built_as(
-        HistoryInfo::new(vec![HistoryInfoEntry::new(addr.clone())]).unwrap(),
+        HistoryInfo::new(vec![HistoryInfoEntry::new(addr.clone(), "1")?])?,
         "<sip:a@example.com>;index=1",
     );
-    built_as(
-        ContactList::new(vec![ContactValue::Addr(Box::new(addr))]),
-        "<sip:a@example.com>;index=1",
-    );
+    built_as(ContactList::new(vec![addr])?, "<sip:a@example.com>;index=1");
     assert_eq!(
-        ContactList::from_entries(["*"]).map(ContactList::into_entries),
-        Ok(vec![ContactValue::Wildcard])
+        ContactList::from_entries(["*"]),
+        Ok(ContactList::wildcard())
     );
     Ok(())
 }

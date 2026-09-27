@@ -5,7 +5,7 @@ use crate::accept::SipAccept;
 use crate::accept_encoding::SipAcceptEncoding;
 use crate::accept_language::SipAcceptLanguage;
 use crate::auth::SipAuthValue;
-use crate::contact::{ContactList, ContactValue};
+use crate::contact::ContactList;
 use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
@@ -97,12 +97,12 @@ pub trait SipHeaderLookup: SipHeaderRows {
         parse_addr_list(self.sip_header_rows(SipHeader::ServiceRoute)?)
     }
 
-    /// Parse `Contact` into a list of [`ContactValue`] (RFC 3261 §20.10).
+    /// Parse every `Contact` row into a [`ContactList`] (RFC 3261 §20.10):
+    /// the `*` wildcard or the addresses.
     ///
-    /// The Contact header may contain `*` (wildcard, used in REGISTER) or
-    /// a comma-separated list of name-addr/addr-spec entries.
-    fn contact(&self) -> Result<Vec<ContactValue>, ParseError> {
-        parse_rows(self.sip_header_rows(SipHeader::Contact)?).map(ContactList::into_entries)
+    /// Returns `Ok(None)` if the header is absent.
+    fn contact(&self) -> Result<Option<ContactList>, ParseError> {
+        parse_present(self.sip_header_rows(SipHeader::Contact)?)
     }
 
     /// Parse `Alert-Info` into a [`UriInfo`] (RFC 3261 §20.4).
@@ -647,9 +647,14 @@ mod tests {
         let h = headers_with(&[("Contact", "<sip:alice@198.51.100.1>")]);
         let contacts = h
             .contact()
+            .unwrap()
             .unwrap();
-        assert_eq!(contacts.len(), 1);
-        assert!(matches!(&contacts[0], ContactValue::Addr(_)));
+        assert_eq!(
+            contacts
+                .addrs()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -657,18 +662,15 @@ mod tests {
         let h = headers_with(&[("Contact", "*")]);
         let contacts = h
             .contact()
+            .unwrap()
             .unwrap();
-        assert_eq!(contacts.len(), 1);
-        assert!(matches!(contacts[0], ContactValue::Wildcard));
+        assert!(contacts.is_wildcard());
     }
 
     #[test]
     fn contact_absent() {
         let h = headers_with(&[]);
-        assert!(h
-            .contact()
-            .unwrap()
-            .is_empty());
+        assert_eq!(h.contact(), Ok(None));
     }
 
     #[test]
@@ -1081,24 +1083,19 @@ mod multi_row_tests {
                 "<sip:b@example.com>, <sip:c@example.com>",
             ],
         )]);
-        assert_eq!(
+        let addrs = |h: &HashMap<String, Vec<String>>| {
             h.contact()
-                .unwrap()
-                .len(),
-            3
-        );
+                .map(|c| {
+                    c.unwrap()
+                        .addrs()
+                        .len()
+                })
+        };
+        assert_eq!(addrs(&h), Ok(3));
         let h = rows(&[("Contact", &["*", "<sip:a@example.com>"])]);
-        assert_eq!(
-            h.contact()
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(addrs(&h), Ok(1));
         let h = rows(&[("Contact", &[""])]);
-        assert!(h
-            .contact()
-            .unwrap()
-            .is_empty());
+        assert_eq!(h.contact(), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]

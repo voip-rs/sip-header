@@ -138,10 +138,11 @@ fn reserved_keys_refuse_the_generic_setter() {
 
 #[test]
 fn history_info_index_setter() {
-    let entry =
-        HistoryInfoEntry::new(SipHeaderAddr::parse("<sip:a@example.com>;index=1;index=2").unwrap())
-            .with_index("1.1")
-            .unwrap();
+    let entry = HistoryInfoEntry::new(
+        SipHeaderAddr::parse("<sip:a@example.com>;index=1;index=2").unwrap(),
+        "1.1",
+    )
+    .unwrap();
     assert_eq!(entry.index(), Some("1.1"));
     assert_eq!(entry.to_string(), "<sip:a@example.com>;index=1.1");
     assert_eq!(

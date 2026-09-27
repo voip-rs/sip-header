@@ -2,8 +2,9 @@
 //!
 //! An entry that is not a non-empty `<uri>` is dropped with
 //! [`SkippedEntry`](crate::WarningCode::SkippedEntry), a blank one with
-//! [`EmptyEntry`](crate::WarningCode::EmptyEntry); only an empty value is an
-//! error.
+//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and `Err(Empty)` means
+//! no entry yielded a URI (RFC 6442 §4.1 `locationValue *(COMMA
+//! locationValue)`).
 
 use std::fmt;
 
@@ -76,8 +77,8 @@ impl fmt::Display for SipGeolocationEntry {
     }
 }
 
-/// SIP Geolocation header value (RFC 6442): `locationValue` entries, each a
-/// `cid:` body-part reference or a URI to dereference.
+/// SIP Geolocation header value (RFC 6442): one `locationValue` or more,
+/// each a `cid:` body-part reference or a URI to dereference.
 ///
 /// ```
 /// use sip_header::sip_uri::{Uri, UriParse};
@@ -86,7 +87,7 @@ impl fmt::Display for SipGeolocationEntry {
 /// let geo = SipGeolocation::new(vec![
 ///     SipGeolocationEntry::new(Uri::parse("cid:abc-123")?)?,
 ///     SipGeolocationEntry::new(Uri::parse("https://lis.example.com/held/abc")?)?,
-/// ]);
+/// ])?;
 /// assert_eq!(geo.len(), 2);
 /// assert_eq!(geo.cid(), Some("abc-123"));
 /// assert!(geo.url().is_some());
@@ -96,7 +97,7 @@ impl fmt::Display for SipGeolocationEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipGeolocation(Vec<SipGeolocationEntry>);
 
-list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", may_be_empty);
+list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", non_empty);
 
 impl SipGeolocation {
     /// Every entry's URI, in order.
@@ -224,7 +225,7 @@ impl CommaList for SipGeolocation {
     }
 
     fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {
-        Ok(Self::new(entries))
+        Self::new(entries)
     }
 }
 
@@ -289,7 +290,10 @@ mod tests {
             SipGeolocation::parse(" \t"),
             Err(ParseError::empty(Field::Value))
         );
-        assert!(parse("junk").is_empty());
+        assert_eq!(
+            SipGeolocation::parse("junk"),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     type Seen = (
@@ -490,9 +494,10 @@ mod tests {
             1
         );
         assert_eq!(split.warnings[0].code, WarningCode::SkippedEntry);
-        assert!(SipGeolocation::from_entries(["junk"])
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            SipGeolocation::from_entries(["junk"]),
+            Err(ParseError::empty(Field::Value))
+        );
         assert_eq!(
             SipGeolocation::parse_with_warnings(" "),
             Err(ParseError::empty(Field::Value))

@@ -424,7 +424,7 @@ impl CommaList for SipVia {
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::empty(Field::Value))
+        Self::new(entries)
     }
 }
 

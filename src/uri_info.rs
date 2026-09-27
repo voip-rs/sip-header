@@ -212,7 +212,7 @@ impl CommaList for UriInfo {
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
-        Self::new(entries).ok_or(ParseError::empty(Field::Value))
+        Self::new(entries)
     }
 }
 

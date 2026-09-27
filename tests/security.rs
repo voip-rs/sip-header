@@ -108,7 +108,7 @@ proptest! {
             with_params!(a, params)
         })();
         if let Ok(a) = built {
-            strict_round_trip(ContactList::new(vec![sip_header::ContactValue::Addr(Box::new(a.clone()))]))?;
+            strict_round_trip(ContactList::new(vec![a.clone(), a.clone()]).unwrap())?;
             strict_round_trip(a)?;
         }
     }
@@ -203,13 +203,13 @@ proptest! {
             strict_round_trip(UriInfo::new(vec![e]).unwrap())?;
         }
         if let Ok(e) = SipGeolocationEntry::new(u).and_then(|e| with_params!(e, params)) {
-            strict_round_trip(SipGeolocation::new(vec![e]))?;
+            strict_round_trip(SipGeolocation::new(vec![e]).unwrap())?;
         }
     }
 
     #[test]
     fn constructed_history_info_reads_back(uri in uri(), index in field()) {
-        if let Ok(e) = SipHeaderAddr::new(uri).map(HistoryInfoEntry::new).and_then(|e| e.with_index(index)) {
+        if let Ok(e) = SipHeaderAddr::new(uri).and_then(|a| HistoryInfoEntry::new(a, index)) {
             strict_round_trip(HistoryInfo::new(vec![e]).unwrap())?;
         }
     }
