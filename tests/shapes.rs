@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use sip_header::sip_uri::{Host, Uri, UriParse, WarningKind};
 use sip_header::{
-    AddrParts, Fault, FaultCode, Field, HeaderParse, ParseError, SipGeolocation,
+    AddrParts, ContactList, Fault, FaultCode, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
+    ListParse, ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipGeolocation,
     SipGeolocationEntry, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason, SipReasonCause,
-    SipVia, SipViaEntry, UriInfo, UriInfoEntry, WarningCode,
+    SipSecurity, SipVia, SipViaEntry, SipWarning, UriInfo, UriInfoEntry, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -17,6 +18,104 @@ fn empty() -> ParseError {
 
 fn uri(s: &str) -> Uri {
     Uri::parse(s).unwrap()
+}
+
+#[test]
+fn contact_is_a_wildcard_or_addresses() -> R {
+    let star = ContactList::parse_strict("*")?;
+    assert!(star.is_wildcard());
+    assert!(star
+        .addrs()
+        .is_empty());
+    assert_eq!(star, ContactList::wildcard());
+    assert_eq!(star.to_string(), "*");
+
+    let a = SipHeaderAddr::parse("<sip:a@example.com>")?;
+    let b = SipHeaderAddr::parse("\"B C\" <sip:b@example.com>;expires=60")?;
+    let list = ContactList::new(vec![a.clone(), b.clone()])?;
+    assert!(!list.is_wildcard());
+    assert_eq!(list.addrs(), &[a.clone(), b.clone()]);
+    assert_eq!(
+        list.to_string(),
+        r#"<sip:a@example.com>, "B C" <sip:b@example.com>;expires=60"#
+    );
+    assert_eq!(
+        ContactList::parse_strict(&list.to_string()),
+        Ok(list.clone())
+    );
+    assert_eq!(ContactList::new(Vec::new()), Err(empty()));
+    assert_eq!(ContactList::parse(" "), Err(empty()));
+    Ok(())
+}
+
+#[test]
+fn contact_wildcard_beside_addresses_is_dropped() -> R {
+    let a = SipHeaderAddr::parse("<sip:a@example.com>")?;
+    let input = "*, <sip:a@example.com>, *";
+    let parsed = ContactList::parse_with_warnings(input)?;
+    assert_eq!(parsed.value, ContactList::new(vec![a.clone()])?);
+    let seen: Vec<_> = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.field, w.code, w.kind, w.entry))
+        .collect();
+    let dropped = |i| {
+        (
+            Field::Entry,
+            WarningCode::WildcardNotAlone,
+            WarningKind::Lost,
+            Some(i),
+        )
+    };
+    assert_eq!(seen, vec![dropped(0), dropped(2)]);
+    assert_eq!(
+        ContactList::parse_strict(input),
+        Err(ParseError::NonConformant(parsed.warnings[0]))
+    );
+    assert_eq!(
+        ContactList::from_entries(["*", "*"])?,
+        ContactList::wildcard()
+    );
+
+    let headers: HashMap<String, String> =
+        [("Contact".to_string(), "<sip:a@example.com>".to_string())].into();
+    assert_eq!(headers.contact()?, Some(ContactList::new(vec![a])?));
+    assert_eq!(HashMap::<String, String>::new().contact()?, None);
+    Ok(())
+}
+
+#[test]
+fn geolocation_is_never_empty() {
+    assert_eq!(SipGeolocation::parse("junk, <>"), Err(empty()));
+    assert_eq!(SipGeolocation::new(Vec::new()), Err(empty()));
+    assert_eq!(SipGeolocation::from_entries(["junk"]), Err(empty()));
+}
+
+#[test]
+fn list_new_is_fallible_only_where_the_grammar_forbids_empty() {
+    assert_eq!(SipVia::new(Vec::new()), Err(empty()));
+    assert_eq!(SipWarning::new(Vec::new()), Err(empty()));
+    assert_eq!(SipSecurity::new(Vec::new()), Err(empty()));
+    assert_eq!(UriInfo::new(Vec::new()), Err(empty()));
+    assert_eq!(HistoryInfo::new(Vec::new()), Err(empty()));
+    assert!(SipAccept::new(Vec::new()).is_empty());
+    assert!(SipAcceptEncoding::new(Vec::new()).is_empty());
+    assert!(SipAcceptLanguage::new(Vec::new()).is_empty());
+}
+
+#[test]
+fn history_info_entry_takes_its_index() -> R {
+    let addr = SipHeaderAddr::parse("<sip:a@example.com>;index=9;x=1;index=8")?;
+    let entry = HistoryInfoEntry::new(addr.clone(), "1.2")?;
+    assert_eq!(entry.index(), Some("1.2"));
+    assert_eq!(entry.to_string(), "<sip:a@example.com>;index=1.2;x=1");
+    for bad in ["", "1.", ".1", "1..2", "a", "1 2", "1;x"] {
+        match HistoryInfoEntry::new(addr.clone(), bad) {
+            Err(ParseError::Malformed(f)) => assert_eq!(f.field, Field::Index, "{bad:?}"),
+            other => panic!("{bad:?}: {other:?}"),
+        }
+    }
+    Ok(())
 }
 
 #[test]
