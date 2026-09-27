@@ -57,7 +57,15 @@ fn catalog_store_gets_every_accessor() {
             "198.51.100.3"
         ]
     );
-    assert_eq!(store.allow(), Ok(vec!["INVITE", "ACK", "BYE"]));
+    assert_eq!(
+        store
+            .allow()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        ["INVITE", "ACK", "BYE"]
+    );
     assert_eq!(
         store
             .contact()
@@ -69,6 +77,7 @@ fn catalog_store_gets_every_accessor() {
     );
     let auth = store
         .authorization()
+        .unwrap()
         .unwrap();
     assert_eq!(auth.len(), 2);
     assert_eq!(auth[1].realm(), Some("example.org"));

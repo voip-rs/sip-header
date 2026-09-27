@@ -155,7 +155,7 @@ fn every_accessor_surfaces_the_row_error() {
     assert_row_error!(SipHeader::ErrorInfo, "<https://example.com/a>", error_info);
     assert_row_error!(SipHeader::Allow, "INVITE", allow);
     assert_row_error!(SipHeader::Supported, "timer", supported);
-    assert_row_error!(SipHeader::Require, "timer", require_header);
+    assert_row_error!(SipHeader::Require, "timer", require);
     assert_row_error!(SipHeader::ProxyRequire, "timer", proxy_require);
     assert_row_error!(SipHeader::Unsupported, "timer", unsupported);
     assert_row_error!(SipHeader::AllowEvents, "dialog", allow_events);
@@ -199,5 +199,12 @@ fn default_rows_match_every_occurrence() {
         rows.sip_header_rows(SipHeader::Allow),
         Ok(vec!["INVITE", "ACK, BYE"])
     );
-    assert_eq!(rows.allow(), Ok(vec!["INVITE", "ACK", "BYE"]));
+    assert_eq!(
+        rows.allow()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        ["INVITE", "ACK", "BYE"]
+    );
 }
