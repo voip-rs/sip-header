@@ -297,6 +297,10 @@ pub enum WarningCode {
     /// A `,` ending a list, which the list grammars' `x *(COMMA x)` (RFC
     /// 3261 §25.1) never leave without an entry after it; ignored.
     TrailingComma,
+    /// Whitespace around the elements of a request line other than the one
+    /// SP between each that RFC 3261 §25.1 `Request-Line = Method SP
+    /// Request-URI SP SIP-Version CRLF` allows; read as a separator.
+    RequestLineWhitespace,
 }
 
 impl WarningCode {
@@ -341,6 +345,7 @@ impl WarningCode {
             WarningCode::WarnCodeLeadingZero => "warn-code-leading-zero",
             WarningCode::StrayDelimiter => "stray-delimiter",
             WarningCode::TrailingComma => "trailing-comma",
+            WarningCode::RequestLineWhitespace => "request-line-whitespace",
         }
     }
 }
@@ -399,6 +404,7 @@ mod tests {
             WarningCode::WarnCodeLeadingZero,
             WarningCode::StrayDelimiter,
             WarningCode::TrailingComma,
+            WarningCode::RequestLineWhitespace,
         ];
         for code in &all {
             match code {
@@ -421,7 +427,8 @@ mod tests {
                 | WarningCode::ControlChar
                 | WarningCode::WarnCodeLeadingZero
                 | WarningCode::StrayDelimiter
-                | WarningCode::TrailingComma => {}
+                | WarningCode::TrailingComma
+                | WarningCode::RequestLineWhitespace => {}
             }
         }
         all

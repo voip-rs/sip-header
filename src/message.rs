@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use sip_header_catalog::{RowError, SipHeader, SipHeaderRows};
 use sip_uri::UriParse;
 
-use crate::diagnostic::Field;
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
@@ -259,7 +259,8 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 }
 
 /// The Request-URI of a SIP request (RFC 3261 §7.1
-/// `Method SP Request-URI SP SIP-Version`), parsed leniently.
+/// `Method SP Request-URI SP SIP-Version`), parsed leniently: the value
+/// [`extract_request_uri_with_warnings`] returns, without its warnings.
 ///
 /// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors when the message
 /// is empty, the first line has not three parts, the method is not a
@@ -273,6 +274,36 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 pub fn extract_request_uri(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
+    extract_request_uri_with_warnings(message).map(|p| p.map(|p| p.value))
+}
+
+/// [`extract_request_uri`], refusing the first warning
+/// [`extract_request_uri_with_warnings`] reports.
+pub fn extract_request_uri_strict(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
+    extract_request_uri_with_warnings(message)?
+        .map(Parsed::into_strict)
+        .transpose()
+}
+
+/// [`extract_request_uri`], with the breaches found on the way.
+///
+/// Whitespace other than one SP between the three parts, or around them,
+/// raises [`WarningCode::RequestLineWhitespace`]; the URI's own warnings
+/// pass through. Positions are byte offsets into the first line.
+///
+/// ```
+/// use sip_header::WarningCode;
+///
+/// let msg = "INVITE  sip:bob@example.com SIP/2.0\r\n\r\n";
+/// let parsed = sip_header::extract_request_uri_with_warnings(msg)?.unwrap();
+/// assert_eq!(parsed.value.to_string(), "sip:bob@example.com");
+/// assert_eq!(parsed.warnings[0].code, WarningCode::RequestLineWhitespace);
+/// assert_eq!(parsed.warnings[0].position, Some(6));
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub fn extract_request_uri_with_warnings(
+    message: &str,
+) -> Result<Option<Parsed<sip_uri::Uri>>, ParseError> {
     let first = message
         .split('\n')
         .next()
@@ -313,9 +344,45 @@ pub fn extract_request_uri(message: &str) -> Result<Option<sip_uri::Uri>, ParseE
             Some(crate::offset_in(first, version)),
         ));
     }
-    sip_uri::Uri::parse(uri)
-        .map(Some)
-        .map_err(|e| ParseError::uri(e, crate::offset_in(first, uri)))
+    let uri_at = crate::offset_in(first, uri);
+    let parsed = sip_uri::Uri::parse_with_warnings(uri).map_err(|e| ParseError::uri(e, uri_at))?;
+    let (before, after): (Vec<_>, Vec<_>) = spacing_breaches(first, &parts)
+        .into_iter()
+        .partition(|w| w.position < Some(uri_at));
+    let warnings = before
+        .into_iter()
+        .chain(
+            parsed
+                .warnings
+                .into_iter()
+                .map(|w| ParseWarning::from_uri(w, uri_at)),
+        )
+        .chain(after)
+        .collect();
+    Ok(Some(Parsed::new(parsed.value, warnings)))
+}
+
+/// A [`WarningCode::RequestLineWhitespace`] at each gap around `parts`, the
+/// words of `line`, that is not the one SP the request line allows.
+fn spacing_breaches(line: &str, parts: &[&str]) -> Vec<ParseWarning> {
+    let mut warnings = Vec::new();
+    let mut end = 0;
+    for (i, part) in parts
+        .iter()
+        .enumerate()
+    {
+        let start = crate::offset_in(line, part);
+        let gap = &line[end..start];
+        if gap != if i == 0 { "" } else { " " } {
+            warnings
+                .push(ParseWarning::new(Field::Value, WarningCode::RequestLineWhitespace).at(end));
+        }
+        end = start + part.len();
+    }
+    if end < line.len() {
+        warnings.push(ParseWarning::new(Field::Value, WarningCode::RequestLineWhitespace).at(end));
+    }
+    warnings
 }
 
 mod sealed {
@@ -343,7 +410,6 @@ impl SipHeaderExtract for SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{ParseWarning, WarningCode};
     use crate::HeaderParse;
 
     const SAMPLE_INVITE: &str = "\

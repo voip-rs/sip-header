@@ -188,7 +188,7 @@ assert_eq!(all.headers[1].0, "f");  // not "From"
 | address-list accessors (`route()`, `p_asserted_identity()`, …) return `Vec<SipHeaderAddr>`, auth accessors `Vec<SipAuthValue>` | every accessor returns `Result<Option<T>, ParseError>`: `SipHeaderAddrList`, `Vec<SipAuthValue>`; Remote-Party-ID rows are not split at commas |
 | no warnings through `SipHeaderLookup` | `parse_header::<T>(SipHeader)` returns `Parsed<T>`, `parse_header_strict` refuses; a header `T` does not hold is `FaultCode::WrongHeader` |
 | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`; `SipMessageHeaders` is a `SipHeaderRows` store over the message |
-| `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line |
+| `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them |
 | `WarningCode::as_str()` of a sip-uri code is `uri-…` | `as_str()` is sip-uri's name; `Display` prefixes `uri-` |
 | `serde_str::{replaces, join, target_dialog}` write the value's framing | header framing |
 | parsers reject some non-conformant input | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
