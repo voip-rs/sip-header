@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::diagnostic::Parsed;
 use crate::error::ParseError;
-use crate::history_info::HistoryInfoReason;
+use crate::reason::SipReason;
 use crate::replaces::SipReplaces;
 
 pub(crate) mod sealed {
@@ -148,7 +148,7 @@ pub trait AddrParts: Sized + sealed::Sealed {
     /// The value is percent-decoded as an RFC 3261 `hvalue`; `+` is a
     /// literal plus sign, not a space. Returns `None` if no Reason is
     /// present, `Err` if percent-decoding produces invalid UTF-8.
-    fn reason(&self) -> Option<Result<HistoryInfoReason, ParseError>> {
+    fn reason(&self) -> Option<Result<SipReason, ParseError>> {
         self.reason_with_warnings()
             .map(|r| r.map(|parsed| parsed.value))
     }
@@ -157,5 +157,5 @@ pub trait AddrParts: Sized + sealed::Sealed {
     /// breaches beside the value.
     ///
     /// Positions point into the percent-decoded Reason value, not the URI.
-    fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>>;
+    fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>>;
 }

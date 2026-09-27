@@ -7,10 +7,10 @@ use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{Fault, FaultCode, ParseError};
-use crate::history_info::{parse_reason, HistoryInfoReason};
 use crate::is_token_char;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::reason::{parse_reason, SipReason};
 use crate::replaces::SipReplaces;
 use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
 
@@ -308,7 +308,7 @@ impl AddrParts for SipHeaderAddr {
         Some(SipReplaces::parse_uri_header(value))
     }
 
-    fn reason_with_warnings(&self) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
+    fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>> {
         let raw = self
             .sip_uri()?
             .header("Reason")?

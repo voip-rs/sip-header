@@ -135,6 +135,10 @@ adapter! {
     geolocation => crate::SipGeolocation;
     /// [`SipReplaces`](crate::SipReplaces) as text, header framing.
     replaces => crate::SipReplaces;
+    /// [`SipJoin`](crate::SipJoin) as text, header framing.
+    join => crate::SipJoin;
+    /// [`SipReason`](crate::SipReason) as text.
+    reason => crate::SipReason;
     /// [`SipTargetDialog`](crate::SipTargetDialog) as text, header framing.
     target_dialog => crate::SipTargetDialog;
 }

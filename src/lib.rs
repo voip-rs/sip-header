@@ -24,8 +24,10 @@
 //! - [`security`] — RFC 3329 Security mechanism parser
 //! - [`uri_info`] — `<absoluteURI> *(SEMI generic-param)` parser (Call-Info, Alert-Info, Error-Info)
 //! - [`history_info`] — RFC 7044 History-Info header parser
+//! - [`reason`] — RFC 3326 Reason value parser
 //! - [`geolocation`] — RFC 6442 Geolocation header parser
-//! - [`replaces`] — RFC 3891 Replaces / RFC 3911 Join header parser
+//! - [`replaces`] — RFC 3891 Replaces header parser
+//! - [`join`] — RFC 3911 Join header parser
 //! - [`target_dialog`] — RFC 4538 Target-Dialog header parser
 //! - `conference_info` — RFC 4575 conference event package (feature: `conference-info`)
 
@@ -62,8 +64,10 @@ pub mod geolocation;
 pub mod header;
 pub mod header_addr;
 pub mod history_info;
+pub mod join;
 #[cfg(feature = "message")]
 pub mod message;
+pub mod reason;
 pub mod replaces;
 mod scrub;
 pub mod security;
@@ -87,12 +91,14 @@ pub use error::{Fault, FaultCode, ParseError, UriFault};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
 pub use header::SipHeaderLookup;
 pub use header_addr::SipHeaderAddr;
-pub use history_info::{HistoryInfo, HistoryInfoEntry, HistoryInfoReason};
+pub use history_info::{HistoryInfo, HistoryInfoEntry};
+pub use join::SipJoin;
 #[cfg(feature = "message")]
 pub use message::{
     extract_all_headers, extract_body, extract_header, extract_request_uri, SipHeaderExtract,
 };
 pub use params::HeaderParams;
+pub use reason::{SipReason, SipReasonCause};
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;

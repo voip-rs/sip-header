@@ -7,9 +7,9 @@ use sip_header::{
     ContactList, DialogFraming, DialogIdEdit, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
     ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
     SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipGeolocationRef, SipHeaderAddr, SipReplaces, SipSecurity,
-    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry,
-    UriInfo, UriInfoEntry, WarningCode,
+    SipGeolocationEntry, SipGeolocationRef, SipHeaderAddr, SipJoin, SipReason, SipReasonCause,
+    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
+    SipWarning, SipWarningEntry, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -210,6 +210,28 @@ proptest! {
     }
 
     #[test]
+    fn constructed_reason_reads_back(
+        protocol in field(),
+        cause in prop::option::of(prop_oneof!["[0-9]{1,6}", field()]),
+        text in prop::option::of(field()),
+        params in prop::collection::vec(param(), 0..2),
+    ) {
+        let built = (|| {
+            let mut r = SipReason::new(protocol)?;
+            if let Some(cause) = cause {
+                r = r.with_cause(SipReasonCause::new(cause)?);
+            }
+            if let Some(text) = text {
+                r = r.with_text(text)?;
+            }
+            with_params!(r, params)
+        })();
+        if let Ok(r) = built {
+            strict_round_trip(r)?;
+        }
+    }
+
+    #[test]
     fn constructed_dialog_ids_read_back_in_their_framing(
         call_id in prop_oneof![field(), Just("a84b4c76e66710@example.com".to_string())],
         first in field(),
@@ -229,6 +251,17 @@ proptest! {
                 _ => SipReplaces::parse_uri_header_strict(&wire),
             };
             prop_assert_eq!(back, Ok(r), "{:?}", wire);
+        }
+        let built = SipJoin::new(call_id.clone(), first.clone(), second.clone())
+            .map(|j| j.with_framing(framing))
+            .and_then(|j| with_params!(j, params.clone()));
+        if let Ok(j) = built {
+            let wire = j.to_string();
+            let back = match framing {
+                DialogFraming::Header => SipJoin::parse_strict(&wire),
+                _ => SipJoin::parse_uri_header_strict(&wire),
+            };
+            prop_assert_eq!(back, Ok(j), "{:?}", wire);
         }
         let built = SipTargetDialog::new(call_id, first, second)
             .map(|t| t.with_framing(framing))
@@ -263,6 +296,8 @@ const CORPUS: &[(&str, &str)] = &[
     ("replaces", "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only;foo=bar"),
     ("replaces-uri", "abc%40203.0.113.5%3Bto-tag%3Dt1%3Bfrom-tag%3Df1"),
     ("target-dialog", "abc@203.0.113.5;local-tag=l;remote-tag=r;x=\"a;b\""),
+    ("join", "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only"),
+    ("reason", r#"Q.850;cause=16;text="Normal; clearing";location=LN"#),
 ];
 
 /// Insert each of `snippets` at a char boundary chosen by its fraction.
@@ -355,6 +390,8 @@ fn check_kind(kind: &str, input: &str) -> Result<(), TestCaseError> {
         "target-dialog" => {
             serde_reads_back(lenient_is_stable(input, SipTargetDialog::parse)?, input)
         }
+        "join" => serde_reads_back(lenient_is_stable(input, SipJoin::parse)?, input),
+        "reason" => serde_reads_back(lenient_is_stable(input, SipReason::parse)?, input),
         other => panic!("{other}"),
     }
 }

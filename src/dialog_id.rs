@@ -1,5 +1,5 @@
-//! `callid *(SEMI param)` with two mandatory tags: the core Replaces, Join
-//! (RFC 3891, RFC 3911) and Target-Dialog (RFC 4538) share.
+//! `callid *(SEMI param)` with two mandatory tags: the core Replaces
+//! (RFC 3891), Join (RFC 3911) and Target-Dialog (RFC 4538) share.
 
 use std::fmt::{self, Write as _};
 
@@ -44,7 +44,7 @@ pub trait DialogKind: sealed::Sealed {
     const RESERVED: &'static [&'static str];
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DialogId {
     call_id: String,
     first_tag: String,

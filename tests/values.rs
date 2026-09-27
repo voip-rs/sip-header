@@ -1,10 +1,10 @@
 use sip_header::sip_uri::{Host, SipUri, TelUri, Uri};
 use sip_header::{
-    ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, HistoryInfoReason,
-    ParseError, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
-    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry,
-    SipGeolocationRef, SipHeaderAddr, SipReplaces, SipSecurity, SipSecurityMechanism,
-    SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, ParseError, SipAccept,
+    SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
+    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,
+    SipHeaderAddr, SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+    SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -131,12 +131,18 @@ fn list_and_entry_display() -> R {
             .to_string(),
         r#"Digest realm="example.com", algorithm=MD5"#
     );
-    let reason = HistoryInfoReason::new("SIP")?
+    let reason = SipReason::new("SIP")?
         .with_cause(302)
         .with_text("Moved")?;
     assert_eq!(
-        (reason.protocol(), reason.cause(), reason.text()),
-        ("SIP", Some(302), Some("Moved"))
+        (
+            reason.protocol(),
+            reason
+                .cause()
+                .map(|c| c.as_str()),
+            reason.text()
+        ),
+        ("SIP", Some("302"), Some("Moved"))
     );
     Ok(())
 }
@@ -235,7 +241,7 @@ mod serde_round_trip {
         )?
         .with_param("inserted-by", Some("example.com"))?]));
         round_trip(HistoryInfo::new(vec![HistoryInfoEntry::new(addr())]).unwrap());
-        round_trip(HistoryInfoReason::new("SIP")?.with_cause(302));
+        round_trip(SipReason::new("SIP")?.with_cause(302));
         round_trip(replaces().with_framing(DialogFraming::UriHeader));
         round_trip(SipTargetDialog::new("a@example.com", "l", "r")?);
         Ok(())
@@ -335,7 +341,7 @@ mod serde_round_trip {
         }));
         rejects::<SipWarningEntry>(json!({"code": 1000, "agent": "example.com", "text": "secret"}));
         rejects::<SipAcceptEntry>(json!({"media_type": "a/b", "subtype": "secret"}));
-        rejects::<HistoryInfoReason>(json!({"protocol": "S;IP", "cause": null, "text": "secret"}));
+        rejects::<SipReason>(json!({"protocol": "S;IP", "cause": null, "text": "secret"}));
     }
 
     #[test]

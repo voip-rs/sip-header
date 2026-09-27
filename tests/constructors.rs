@@ -1,11 +1,11 @@
 use sip_header::sip_uri::{Uri, UriParse};
 use sip_header::{
     AddrParts, ContactList, ContactValue, DialogFraming, DialogIdEdit, FaultCode, Field,
-    HeaderParse, HistoryInfo, HistoryInfoEntry, HistoryInfoReason, ListParse, ParseError, Redact,
-    SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
+    HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept,
+    SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
     SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,
-    SipHeaderAddr, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    SipHeaderAddr, SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+    SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -113,7 +113,15 @@ fn addr_parts_read_uri_headers() -> R {
     let reason = addr
         .reason()
         .unwrap()?;
-    assert_eq!((reason.protocol(), reason.cause()), ("SIP", Some(302)));
+    assert_eq!(
+        (
+            reason.protocol(),
+            reason
+                .cause()
+                .map(|c| c.as_str())
+        ),
+        ("SIP", Some("302"))
+    );
     assert_eq!(
         SipHeaderAddr::parse_list("<sip:a@example.com>, <sip:b@example.com>")?.len(),
         2
@@ -398,16 +406,16 @@ fn history_info_and_contact() -> R {
 
 #[test]
 fn history_info_reason_refuses() -> R {
-    let reason = HistoryInfoReason::new("SIP")?
+    let reason = SipReason::new("SIP")?
         .with_cause(302)
         .with_text("Moved")?;
     assert_eq!(reason.text(), Some("Moved"));
     assert_eq!(
-        refused(HistoryInfoReason::new("S;IP")),
+        refused(SipReason::new("S;IP")),
         (Field::Protocol, FaultCode::InvalidChar)
     );
     assert_eq!(
-        refused(HistoryInfoReason::new("")),
+        refused(SipReason::new("")),
         (Field::Protocol, FaultCode::Empty)
     );
     assert_eq!(

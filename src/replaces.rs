@@ -1,15 +1,11 @@
 //! RFC 3891 `Replaces` header parser.
-//!
-//! Also serves `Join` (RFC 3911), whose grammar is identical:
-//! `callid *(SEMI param)` with mandatory `to-tag` and `from-tag`.
 
 use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 
 /// A `Replaces` header value (RFC 3891 §6.1).
 ///
 /// Identifies the dialog to be replaced: Call-ID plus the mandatory
-/// `to-tag` and `from-tag`. Also used for `Join` (RFC 3911 §7.1), whose
-/// grammar is identical. [`Display`](std::fmt::Display) emits the
+/// `to-tag` and `from-tag`. [`Display`](std::fmt::Display) emits the
 /// [`framing`](Self::framing) the value holds.
 ///
 /// ```

@@ -11,6 +11,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
 use crate::header_addr::{AddrList, SipHeaderAddr};
 use crate::history_info::HistoryInfo;
+use crate::join::SipJoin;
 use crate::list::CommaList;
 use crate::replaces::SipReplaces;
 use crate::security::SipSecurity;
@@ -178,13 +179,12 @@ pub trait SipHeaderLookup: SipHeaderRows {
             .transpose()
     }
 
-    /// Parse `Join` into a [`SipReplaces`] (RFC 3911 §7.1).
+    /// Parse `Join` into a [`SipJoin`] (RFC 3911 §7.1).
     ///
-    /// Join shares the Replaces grammar (`callid;to-tag=x;from-tag=y`), so
-    /// it reuses the same type. More than one occurrence is `Err` (RFC 3911 §4).
-    fn join(&self) -> Result<Option<SipReplaces>, ParseError> {
+    /// More than one occurrence is `Err` (RFC 3911 §4).
+    fn join(&self) -> Result<Option<SipJoin>, ParseError> {
         single_row(self, SipHeader::Join)?
-            .map(SipReplaces::parse)
+            .map(SipJoin::parse)
             .transpose()
     }
 

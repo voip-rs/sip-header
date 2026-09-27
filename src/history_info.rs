@@ -1,115 +1,13 @@
-//! SIP History-Info header parser (RFC 7044) with embedded RFC 3326 Reason.
+//! SIP History-Info header parser (RFC 7044).
 
 use std::fmt;
 
-use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
-use crate::RawParam;
-
-/// RFC 3326 Reason header value, as a History-Info URI carries it.
-///
-/// The Reason header embedded in History-Info URIs as `?Reason=...` follows
-/// the format: `protocol ;cause=code ;text="description"`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "HistoryInfoReasonParts", into = "HistoryInfoReasonParts")
-)]
-pub struct HistoryInfoReason {
-    protocol: String,
-    cause: Option<u16>,
-    text: Option<String>,
-}
-
-impl HistoryInfoReason {
-    fn unchecked(protocol: String) -> Self {
-        HistoryInfoReason {
-            protocol,
-            cause: None,
-            text: None,
-        }
-    }
-
-    /// A Reason for `protocol`, with no cause or text.
-    ///
-    /// Errors unless `protocol` is a `token`.
-    pub fn new(protocol: impl Into<String>) -> Result<Self, ParseError> {
-        checked_token(Field::Protocol, protocol.into()).map(Self::unchecked)
-    }
-
-    /// Set the cause code.
-    pub fn with_cause(mut self, cause: u16) -> Self {
-        self.cause = Some(cause);
-        self
-    }
-
-    /// Set the reason text, unquoted.
-    ///
-    /// Errors when `text` holds CR, LF or NUL.
-    pub fn with_text(mut self, text: impl Into<String>) -> Result<Self, ParseError> {
-        let text = text.into();
-        crate::check::refuse_controls(Field::Text, &text)?;
-        self.text = Some(text);
-        Ok(self)
-    }
-}
-
-/// A Reason as the `protocol *(SEMI reason-params)` text [`parse_reason`]
-/// reads.
-#[cfg(feature = "serde")]
-#[derive(PartialEq)]
-struct ReasonWire(HistoryInfoReason);
-
-#[cfg(feature = "serde")]
-impl fmt::Display for ReasonWire {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            &self
-                .0
-                .protocol,
-        )?;
-        if let Some(cause) = self
-            .0
-            .cause
-        {
-            write!(f, ";cause={cause}")?;
-        }
-        if let Some(text) = &self
-            .0
-            .text
-        {
-            f.write_str(";text=")?;
-            crate::write_quoted_pair(f, text)?;
-        }
-        Ok(())
-    }
-}
-
-impl HistoryInfoReason {
-    /// The protocol token (e.g. `"SIP"`, `"Q.850"`, `"RouteAction"`).
-    pub fn protocol(&self) -> &str {
-        &self.protocol
-    }
-
-    /// The cause code (e.g. `200`, `302`); `None` when absent or when the
-    /// value is not a `u16`.
-    pub fn cause(&self) -> Option<u16> {
-        self.cause
-    }
-
-    /// The reason text, if present, without its quotes and with
-    /// `quoted-pair` unescaped.
-    pub fn text(&self) -> Option<&str> {
-        self.text
-            .as_deref()
-    }
-}
 
 /// A single entry from a History-Info header (RFC 7044).
 ///
@@ -224,42 +122,6 @@ list_type!(HistoryInfo, HistoryInfoEntry, sep: ",", non_empty);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
-struct HistoryInfoReasonParts {
-    protocol: String,
-    cause: Option<u16>,
-    text: Option<String>,
-}
-
-#[cfg(feature = "serde")]
-impl TryFrom<HistoryInfoReasonParts> for HistoryInfoReason {
-    type Error = ParseError;
-
-    fn try_from(p: HistoryInfoReasonParts) -> Result<Self, Self::Error> {
-        let reason = ReasonWire(HistoryInfoReason {
-            protocol: p.protocol,
-            cause: p.cause,
-            text: p.text,
-        });
-        crate::check::reads_back(reason, |wire| {
-            parse_reason(wire, &mut Vec::new()).map(ReasonWire)
-        })
-        .map(|r| r.0)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl From<HistoryInfoReason> for HistoryInfoReasonParts {
-    fn from(r: HistoryInfoReason) -> Self {
-        HistoryInfoReasonParts {
-            protocol: r.protocol,
-            cause: r.cause,
-            text: r.text,
-        }
-    }
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Serialize, serde::Deserialize)]
 struct HistoryInfoEntryParts {
     addr: SipHeaderAddr,
 }
@@ -278,95 +140,6 @@ impl From<HistoryInfoEntry> for HistoryInfoEntryParts {
     fn from(e: HistoryInfoEntry) -> Self {
         HistoryInfoEntryParts { addr: e.addr }
     }
-}
-
-/// Parse a percent-decoded RFC 3326 `protocol *(SEMI reason-params)`,
-/// positions relative to `decoded`.
-pub(crate) fn parse_reason(
-    decoded: &str,
-    warnings: &mut Vec<ParseWarning>,
-) -> Result<HistoryInfoReason, ParseError> {
-    if decoded
-        .trim()
-        .is_empty()
-    {
-        return Err(ParseError::empty(Field::Value));
-    }
-    let (protocol, rest) = decoded
-        .split_once(';')
-        .unwrap_or((decoded, ""));
-    if protocol
-        .trim()
-        .is_empty()
-    {
-        return Err(ParseError::malformed(
-            Field::Value,
-            FaultCode::Missing,
-            Some(0),
-        ));
-    }
-
-    let params = crate::parse_params(rest);
-    let find = |name: &str| {
-        params
-            .iter()
-            .find(|p| {
-                p.key
-                    .eq_ignore_ascii_case(name)
-            })
-    };
-    let protocol = protocol.trim();
-    if !crate::is_token(protocol) {
-        warnings.push(
-            ParseWarning::new(Field::Protocol, WarningCode::InvalidToken)
-                .at(crate::offset_in(decoded, protocol)),
-        );
-    }
-    Ok(HistoryInfoReason {
-        cause: find("cause").and_then(|p| parse_cause(p, decoded, warnings)),
-        text: find("text").and_then(|p| parse_text(p, decoded, warnings)),
-        ..HistoryInfoReason::unchecked(protocol.to_string())
-    })
-}
-
-/// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.
-fn parse_cause(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>) -> Option<u16> {
-    let digits = p
-        .value
-        .filter(|v| {
-            !v.is_empty()
-                && v.bytes()
-                    .all(|b| b.is_ascii_digit())
-        });
-    if let Some(Ok(cause)) = digits.map(str::parse::<u16>) {
-        return Some(cause);
-    }
-    let at = crate::offset_in(
-        decoded,
-        p.value
-            .unwrap_or(p.key),
-    );
-    warnings.push(ParseWarning::new(Field::Cause, WarningCode::InvalidCause).at(at));
-    None
-}
-
-/// RFC 3326 `"text" EQUAL quoted-string`, unescaped.
-fn parse_text(p: &RawParam<'_>, decoded: &str, warnings: &mut Vec<ParseWarning>) -> Option<String> {
-    let v = p.value?;
-    let at = crate::offset_in(decoded, v);
-    let unquoted = p.unquoted()?;
-    let mut warn = |code, position| {
-        warnings.push(ParseWarning::new(Field::Text, code).at(position));
-    };
-    if p.unterminated {
-        warn(WarningCode::UnterminatedQuote, at);
-    } else if !unquoted.quoted {
-        warn(WarningCode::UnquotedText, at);
-    }
-    if unquoted.trailing_backslash {
-        warn(WarningCode::TrailingBackslash, at + v.len() - 2);
-    }
-    Some(unquoted.value)
 }
 
 impl CommaList for HistoryInfo {
@@ -403,7 +176,7 @@ list_parse!(HistoryInfo);
 
 #[cfg(test)]
 mod tests {
-    use crate::{AddrParts, HeaderParse, ListParse};
+    use crate::{AddrParts, HeaderParse, ListParse, SipReason, SipReasonCause};
     use sip_uri::WarningKind;
 
     use super::*;
@@ -544,7 +317,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(reason.protocol(), "RouteAction");
-        assert_eq!(reason.cause(), Some(200));
+        assert_eq!(
+            reason
+                .cause()
+                .and_then(SipReasonCause::as_u16),
+            Some(200)
+        );
         assert_eq!(reason.text(), Some("Normal+Next+Hop"));
     }
 
@@ -557,7 +335,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(reason.protocol(), "SIP");
-        assert_eq!(reason.cause(), Some(200));
+        assert_eq!(
+            reason
+                .cause()
+                .and_then(SipReasonCause::as_u16),
+            Some(200)
+        );
         assert_eq!(reason.text(), Some("Legacy+routing"));
     }
 
@@ -647,78 +430,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
     }
 
-    // -- parse_reason unit tests --
-
-    #[test]
-    fn parse_reason_full() {
-        let r = reason_value("SIP;cause=302;text=\"Moved\"");
-        assert_eq!(r.protocol(), "SIP");
-        assert_eq!(r.cause(), Some(302));
-        assert_eq!(r.text(), Some("Moved"));
-    }
-
-    #[test]
-    fn parse_reason_no_text() {
-        let r = reason_value("Q.850;cause=16");
-        assert_eq!(r.protocol(), "Q.850");
-        assert_eq!(r.cause(), Some(16));
-        assert_eq!(r.text(), None);
-    }
-
-    #[test]
-    fn parse_reason_protocol_only() {
-        let r = reason_value("SIP");
-        assert_eq!(r.protocol(), "SIP");
-        assert_eq!(r.cause(), None);
-        assert_eq!(r.text(), None);
-    }
-
-    #[test]
-    fn parse_reason_unquoted_text() {
-        let r = reason_value("SIP;cause=200;text=OK");
-        assert_eq!(r.text(), Some("OK"));
-    }
-
-    #[test]
-    fn parse_reason_quoted_text_hides_cause_lookalike() {
-        let r = reason_value(r#"SIP;text="because=5";cause=200"#);
-        assert_eq!(r.cause(), Some(200));
-        assert_eq!(r.text(), Some("because=5"));
-    }
-
-    #[test]
-    fn parse_reason_text_unescapes_quoted_pair() {
-        let r = reason_value(r#"SIP;cause=480;text="say \"hi\"""#);
-        assert_eq!(r.cause(), Some(480));
-        assert_eq!(r.text(), Some(r#"say "hi""#));
-    }
-
-    #[test]
-    fn parse_reason_keys_case_insensitive_and_sws() {
-        let r = reason_value(r#"SIP ; Cause = 486 ; TEXT = "Busy; here""#);
-        assert_eq!(r.protocol(), "SIP");
-        assert_eq!(r.cause(), Some(486));
-        assert_eq!(r.text(), Some("Busy; here"));
-    }
-
-    #[test]
-    fn parse_reason_key_suffix_not_matched() {
-        let r = reason_value(r#"SIP;xcause=1;subtext="no";cause=2"#);
-        assert_eq!(r.cause(), Some(2));
-        assert_eq!(r.text(), None);
-    }
-
-    fn reason_parsed(decoded: &str) -> Parsed<HistoryInfoReason> {
-        let mut warnings = Vec::new();
-        let value = parse_reason(decoded, &mut warnings).unwrap();
-        Parsed::new(value, warnings)
-    }
-
-    fn reason_value(decoded: &str) -> HistoryInfoReason {
-        reason_parsed(decoded).value
-    }
-
-    fn entry_reason(encoded: &str) -> Option<Result<Parsed<HistoryInfoReason>, ParseError>> {
+    fn entry_reason(encoded: &str) -> Option<Result<Parsed<SipReason>, ParseError>> {
         let hi =
             HistoryInfo::parse(&format!("<sip:a@example.com?Reason={encoded}>;index=1")).unwrap();
         hi.entries()[0]
@@ -742,9 +454,7 @@ mod tests {
         );
     }
 
-    fn only_warning(
-        p: &Parsed<HistoryInfoReason>,
-    ) -> (Field, WarningCode, WarningKind, Option<usize>) {
+    fn only_warning(p: &Parsed<SipReason>) -> (Field, WarningCode, WarningKind, Option<usize>) {
         assert_eq!(
             p.warnings
                 .len(),
@@ -759,37 +469,6 @@ mod tests {
             Err(ParseError::NonConformant(w))
         );
         (w.field, w.code, w.kind, w.position)
-    }
-
-    #[test]
-    fn parse_reason_unparseable_cause_is_dropped_with_warning() {
-        for (decoded, at) in [
-            ("SIP;cause=abc", 10),
-            ("SIP;cause=70000", 10),
-            ("SIP;cause=+5", 10),
-            ("SIP;cause", 4),
-        ] {
-            let p = reason_parsed(decoded);
-            assert_eq!(
-                p.value
-                    .cause(),
-                None,
-                "{decoded}"
-            );
-            assert_eq!(
-                only_warning(&p),
-                (
-                    Field::Cause,
-                    WarningCode::InvalidCause,
-                    WarningKind::Lost,
-                    Some(at)
-                ),
-                "{decoded}"
-            );
-        }
-        assert!(reason_parsed("SIP;cause=200")
-            .warnings
-            .is_empty());
     }
 
     #[test]

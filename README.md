@@ -163,7 +163,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | parsers reject some non-conformant input | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
 | `from_entries` only | also `from_entries_with_warnings` on every list type |
 | `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
-| `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `HistoryInfoReason`) and `SipViaEntry::with_host`, `HistoryInfoReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
+| `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipViaEntry::with_host`, `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
 | Contact `*` beside addresses is `Err` | kept, with a `WildcardNotAlone` warning |
@@ -178,6 +178,8 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; entries are `SipGeolocationEntry` with geoloc-params, `refs()` iterates |
 | `SipViaEntry::host() -> &str` | `Option<&str>`, `None` with a `MissingHost` warning |
 | Reason yields `Utf8Error` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
+| `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, parsed by `HeaderParse`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
+| `join()` returns `SipReplaces` | `SipJoin`, which has no `early-only` |
 | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
 | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
 
@@ -204,9 +206,11 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `accept_language` | RFC 3261 Accept-Language header parser |
 | `security` | RFC 3329 Security-Client/Server/Verify |
 | `uri_info` | Call-Info, Alert-Info, Error-Info (URI + params) |
-| `history_info` | RFC 7044 History-Info with RFC 3326 Reason |
+| `history_info` | RFC 7044 History-Info |
+| `reason` | RFC 3326 Reason value |
 | `geolocation` | RFC 6442 Geolocation header |
-| `replaces` | RFC 3891 Replaces / RFC 3911 Join headers |
+| `replaces` | RFC 3891 Replaces header |
+| `join` | RFC 3911 Join header |
 | `target_dialog` | RFC 4538 Target-Dialog header |
 | `conference_info` | RFC 4575 conference event XML (feature: `conference-info`) |
 
