@@ -2,14 +2,14 @@
 //! it, serde reads back whatever the parser produced.
 
 use proptest::prelude::*;
-use sip_header::sip_uri::{Redaction, Uri, UriParse, UserMask};
+use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
     ContactList, DialogFraming, DialogIdEdit, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
     ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
     SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipGeolocationRef, SipHeaderAddr, SipJoin, SipReason, SipReasonCause,
-    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
-    SipWarning, SipWarningEntry, UriInfo, UriInfoEntry, WarningCode,
+    SipGeolocationEntry, SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces,
+    SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
+    SipWarningEntry, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -116,13 +116,17 @@ proptest! {
     #[test]
     fn constructed_via_reads_back(
         parts in (field(), field(), field()),
-        host in prop_oneof![field(), Just("198.51.100.1".to_string()), Just("2001:db8::1".to_string())],
+        host in prop_oneof![
+            field().prop_map(|h| Host::Hostname(h.into())),
+            any::<[u8; 4]>().prop_map(|a| Host::IPv4(a.into())),
+            any::<[u16; 8]>().prop_map(|a| Host::IPv6(a.into())),
+        ],
         port in prop::option::of(any::<u16>()),
         rport in prop::option::of(prop::option::of(any::<u16>())),
         params in prop::collection::vec(param(), 0..3),
     ) {
         let built = (|| {
-            let mut v = SipViaEntry::new(parts.0, parts.1, parts.2)?.with_host(host)?;
+            let mut v = SipViaEntry::new(parts.0, parts.1, parts.2, host)?;
             if let Some(port) = port {
                 v = v.with_port(port);
             }
@@ -189,15 +193,16 @@ proptest! {
 
     #[test]
     fn constructed_uri_entries_read_back(
-        text in field(),
-        cid in any::<bool>(),
+        text in prop_oneof![field(), field().prop_map(|t| format!("cid:{t}")), uri().prop_map(|u| u.to_string())],
         params in prop::collection::vec(param(), 0..2),
     ) {
-        if let Ok(e) = UriInfoEntry::new(text.clone()).and_then(|e| with_params!(e, params.clone())) {
+        let Ok(u) = Uri::parse(&text) else {
+            return Ok(());
+        };
+        if let Ok(e) = UriInfoEntry::new(u.clone()).and_then(|e| with_params!(e, params.clone())) {
             strict_round_trip(UriInfo::new(vec![e]).unwrap())?;
         }
-        let r = if cid { SipGeolocationRef::Cid(text) } else { SipGeolocationRef::Url(text) };
-        if let Ok(e) = SipGeolocationEntry::new(r).and_then(|e| with_params!(e, params)) {
+        if let Ok(e) = SipGeolocationEntry::new(u).and_then(|e| with_params!(e, params)) {
             strict_round_trip(SipGeolocation::new(vec![e]))?;
         }
     }
@@ -501,7 +506,7 @@ fn control_char_in_a_list_entry_carries_the_entry() {
             .value
             .entries()[1]
             .host(),
-        Some("b.example.com")
+        &Host::Hostname("b.example.com".into())
     );
     let entry = &input[input
         .find(',')

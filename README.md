@@ -163,7 +163,7 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | parsers reject some non-conformant input | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
 | `from_entries` only | also `from_entries_with_warnings` on every list type |
 | `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
-| `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipViaEntry::with_host`, `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
+| `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
 | Contact `*` beside addresses is `Err` | kept, with a `WildcardNotAlone` warning |
@@ -174,9 +174,9 @@ assert_eq!(headers[1].0, "f");  // not "From"
 | `with_param("tag" / "rport" / "to-tag" / "early-only" …)` | refused; `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `HistoryInfoEntry::with_index` |
 | an auth-param without `=` is `Err` | kept as a flag with an `AuthParamFlag` warning |
 | parameter serde as `[[name, value]]` or `{key, value, quoted}` | `[[name, value, quoted]]`; the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce |
-| `UriInfoEntry { data, metadata }` pub fields | `uri()`, `param()`, `params()` |
-| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; entries are `SipGeolocationEntry` with geoloc-params, `refs()` iterates |
-| `SipViaEntry::host() -> &str` | `Option<&str>`, `None` with a `MissingHost` warning |
+| `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
+| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`; `SipGeolocationEntry::new(Uri)` with geoloc-params, `uri()`; `cid()` comes from a `cid:` scheme, `url()`/`urls()` yield the other URIs; `SipGeolocationRef` removed |
+| `SipViaEntry::host() -> &str`, `with_host(String)` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`; `WarningCode::MissingHost` removed |
 | Reason yields `Utf8Error` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
 | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, parsed by `HeaderParse`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
 | `join()` returns `SipReplaces` | `SipJoin`, which has no `early-only` |

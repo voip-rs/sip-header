@@ -489,6 +489,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         assert!(geo
             .url()
             .unwrap()
+            .to_string()
             .contains("lis.example.com"));
     }
 

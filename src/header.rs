@@ -605,6 +605,7 @@ mod tests {
         assert_eq!(ai.len(), 1);
         assert!(ai.entries()[0]
             .uri()
+            .to_string()
             .contains("moo.wav"));
     }
 
@@ -689,7 +690,13 @@ mod tests {
             .unwrap();
         assert_eq!(via.len(), 1);
         assert_eq!(via.entries()[0].transport(), "UDP");
-        assert_eq!(via.entries()[0].host(), Some("198.51.100.1"));
+        assert_eq!(
+            via.entries()[0]
+                .host()
+                .bare()
+                .to_string(),
+            "198.51.100.1"
+        );
     }
 
     #[test]
@@ -847,7 +854,12 @@ mod tests {
             .unwrap();
         assert_eq!(geo.len(), 2);
         assert_eq!(geo.cid(), Some("loc@example.com"));
-        assert_eq!(geo.url(), Some("https://lis.example.com/held/a"));
+        assert_eq!(
+            geo.url()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("https://lis.example.com/held/a")
+        );
     }
 
     #[test]

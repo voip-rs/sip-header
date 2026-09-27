@@ -42,6 +42,27 @@ pub(crate) fn only(
     }
 }
 
+/// What a URI inside `<…>` cannot hold: the brackets themselves, and CR,
+/// LF and NUL.
+pub(crate) const URI_REFUSED: [char; 5] = ['<', '>', '\r', '\n', '\0'];
+
+/// `uri` when its text holds none of [`URI_REFUSED`] and reads back
+/// strictly as `uri`.
+pub(crate) fn checked_uri(field: Field, uri: sip_uri::Uri) -> Result<sip_uri::Uri, ParseError> {
+    use sip_uri::UriParse;
+
+    let wire = uri.to_string();
+    refuse(field, &wire, &URI_REFUSED)?;
+    match sip_uri::Uri::parse_strict(&wire) {
+        Ok(back) if back == uri => Ok(uri),
+        _ => Err(ParseError::malformed(
+            field,
+            FaultCode::Unrepresentable,
+            None,
+        )),
+    }
+}
+
 /// `value` when it is a `token`, the fault on `field` otherwise.
 pub(crate) fn checked_token(field: Field, value: String) -> Result<String, ParseError> {
     only(field, &value, crate::is_token_char)?;

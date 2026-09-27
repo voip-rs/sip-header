@@ -43,15 +43,18 @@ fn catalog_store_gets_every_accessor() {
     let hosts: Vec<_> = via
         .entries()
         .iter()
-        .map(|v| v.host())
+        .map(|v| {
+            v.host()
+                .to_string()
+        })
         .collect();
     assert_eq!(
         hosts,
         [
-            Some("198.51.100.1"),
-            Some("198.51.100.2"),
-            Some("203.0.113.5"),
-            Some("198.51.100.3")
+            "198.51.100.1",
+            "198.51.100.2",
+            "203.0.113.5",
+            "198.51.100.3"
         ]
     );
     assert_eq!(store.allow(), Ok(vec!["INVITE", "ACK", "BYE"]));

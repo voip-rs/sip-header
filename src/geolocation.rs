@@ -7,45 +7,27 @@
 
 use std::fmt;
 
+use sip_uri::Uri;
+
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::error::{FaultCode, ParseError};
-use crate::header_addr::URI_REFUSED;
+use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
-
-/// A reference extracted from a SIP Geolocation header (RFC 6442).
-///
-/// Each entry is either a `cid:` reference to a MIME body part
-/// (typically containing PIDF-LO XML) or a URL for location dereference.
-///
-/// Resolving `cid:` references against the SIP message body (multipart
-/// MIME) or dereferencing HTTP URLs is the caller's responsibility.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "lowercase")
-)]
-#[non_exhaustive]
-pub enum SipGeolocationRef {
-    /// Content-ID reference to a MIME body part (e.g., `cid:uuid`).
-    Cid(String),
-    /// HTTP(S) or other URL for location dereference.
-    Url(String),
-}
-
-impl fmt::Display for SipGeolocationRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cid(id) => write!(f, "<cid:{id}>"),
-            Self::Url(url) => write!(f, "<{url}>"),
-        }
-    }
-}
+use crate::uri_info::read_uri;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
-/// (RFC 6442 §4.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// (RFC 6442 §4.1): a `cid:` reference to a MIME body part (typically
+/// PIDF-LO) or a URI to dereference.
+///
+/// Resolving `cid:` references against the message body or dereferencing
+/// the URI is the caller's responsibility.
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the URI as [`Uri`]
+/// compares it, the parameters as [`HeaderParams`] does. [`Hash`] follows
+/// the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -56,72 +38,60 @@ impl fmt::Display for SipGeolocationRef {
 )]
 #[non_exhaustive]
 pub struct SipGeolocationEntry {
-    reference: SipGeolocationRef,
+    uri: Uri,
     params: HeaderParams,
 }
 
 header_params!(SipGeolocationEntry);
 
 impl SipGeolocationEntry {
-    /// An entry for `reference`, with no parameters.
+    /// An entry for `uri`, with no parameters.
     ///
-    /// Errors when the reference holds `<`, `>`, CR, LF or NUL, when a URL
-    /// is empty, and when a URL starts `cid:`, which reads back as a
-    /// [`Cid`](SipGeolocationRef::Cid).
-    pub fn new(reference: SipGeolocationRef) -> Result<Self, ParseError> {
-        let text = match &reference {
-            SipGeolocationRef::Cid(id) => id,
-            SipGeolocationRef::Url(url) => {
-                if url.is_empty() {
-                    return Err(ParseError::empty(Field::Reference));
-                }
-                if url
-                    .get(..4)
-                    .is_some_and(|s| s.eq_ignore_ascii_case("cid:"))
-                {
-                    return Err(ParseError::malformed(
-                        Field::Reference,
-                        FaultCode::Ambiguous,
-                        Some(0),
-                    ));
-                }
-                url
-            }
-        };
-        crate::check::refuse(Field::Reference, text, &URI_REFUSED)?;
+    /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL, or does
+    /// not read back strictly as `uri`.
+    pub fn new(uri: Uri) -> Result<Self, ParseError> {
         Ok(SipGeolocationEntry {
-            reference,
+            uri: crate::check::checked_uri(Field::Reference, uri)?,
             params: HeaderParams::default(),
         })
     }
 
-    /// The location reference inside the angle brackets.
-    pub fn reference(&self) -> &SipGeolocationRef {
-        &self.reference
+    /// The location URI inside the angle brackets.
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// The Content-ID of a `cid:` URI (RFC 2392), the text after the scheme.
+    pub fn cid(&self) -> Option<&str> {
+        self.uri
+            .as_other()
+            .filter(|o| o.scheme() == Some("cid"))
+            .map(|o| o.rest())
     }
 }
 
 impl fmt::Display for SipGeolocationEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.reference, self.params)
+        write!(f, "<{}>{}", self.uri, self.params)
     }
 }
 
 /// SIP Geolocation header value (RFC 6442): `locationValue` entries, each a
-/// `cid:` body-part reference or a dereference URL.
+/// `cid:` body-part reference or a URI to dereference.
 ///
 /// ```
-/// use sip_header::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
+/// use sip_header::sip_uri::{Uri, UriParse};
+/// use sip_header::{SipGeolocation, SipGeolocationEntry};
 ///
 /// let geo = SipGeolocation::new(vec![
-///     SipGeolocationEntry::new(SipGeolocationRef::Cid("abc-123".into()))?,
-///     SipGeolocationEntry::new(SipGeolocationRef::Url("https://lis.example.com/held/abc".into()))?,
+///     SipGeolocationEntry::new(Uri::parse("cid:abc-123")?)?,
+///     SipGeolocationEntry::new(Uri::parse("https://lis.example.com/held/abc")?)?,
 /// ]);
 /// assert_eq!(geo.len(), 2);
-/// assert!(geo.cid().is_some());
+/// assert_eq!(geo.cid(), Some("abc-123"));
 /// assert!(geo.url().is_some());
 /// assert_eq!(geo.to_string(), "<cid:abc-123>, <https://lis.example.com/held/abc>");
-/// # Ok::<(), sip_header::ParseError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipGeolocation(Vec<SipGeolocationEntry>);
@@ -129,48 +99,48 @@ pub struct SipGeolocation(Vec<SipGeolocationEntry>);
 list_type!(SipGeolocation, SipGeolocationEntry, sep: ", ", may_be_empty);
 
 impl SipGeolocation {
-    /// Every entry's reference, in order.
-    pub fn refs(&self) -> impl Iterator<Item = &SipGeolocationRef> {
+    /// Every entry's URI, in order.
+    pub fn uris(&self) -> impl Iterator<Item = &Uri> {
         self.0
             .iter()
-            .map(SipGeolocationEntry::reference)
+            .map(SipGeolocationEntry::uri)
     }
 
-    /// The first `cid:` reference, if any.
+    /// The first `cid:` reference's Content-ID, if any.
     pub fn cid(&self) -> Option<&str> {
         self.cids()
             .next()
     }
 
-    /// The first URL reference, if any.
-    pub fn url(&self) -> Option<&str> {
+    /// The first URI that is not a `cid:` reference, if any.
+    pub fn url(&self) -> Option<&Uri> {
         self.urls()
             .next()
     }
 
-    /// Iterate over all `cid:` references.
+    /// Every `cid:` reference's Content-ID.
     pub fn cids(&self) -> impl Iterator<Item = &str> {
-        self.refs()
-            .filter_map(|r| match r {
-                SipGeolocationRef::Cid(id) => Some(id.as_str()),
-                _ => None,
-            })
+        self.0
+            .iter()
+            .filter_map(SipGeolocationEntry::cid)
     }
 
-    /// Iterate over all URL references.
-    pub fn urls(&self) -> impl Iterator<Item = &str> {
-        self.refs()
-            .filter_map(|r| match r {
-                SipGeolocationRef::Url(url) => Some(url.as_str()),
-                _ => None,
+    /// Every URI that is not a `cid:` reference.
+    pub fn urls(&self) -> impl Iterator<Item = &Uri> {
+        self.0
+            .iter()
+            .filter(|e| {
+                e.cid()
+                    .is_none()
             })
+            .map(SipGeolocationEntry::uri)
     }
 }
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipGeolocationEntryParts {
-    reference: SipGeolocationRef,
+    uri: Uri,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
@@ -181,7 +151,7 @@ impl TryFrom<SipGeolocationEntryParts> for SipGeolocationEntry {
 
     fn try_from(p: SipGeolocationEntryParts) -> Result<Self, Self::Error> {
         let entry = SipGeolocationEntry {
-            reference: p.reference,
+            uri: p.uri,
             params: p.params,
         };
         crate::list::entry_reads_back::<SipGeolocation>(entry)
@@ -192,31 +162,39 @@ impl TryFrom<SipGeolocationEntryParts> for SipGeolocationEntry {
 impl From<SipGeolocationEntry> for SipGeolocationEntryParts {
     fn from(e: SipGeolocationEntry) -> Self {
         SipGeolocationEntryParts {
-            reference: e.reference,
+            uri: e.uri,
             params: e.params,
         }
     }
 }
 
 /// Read one `locationValue`, positions relative to `entry`; `None` when it
-/// is not a non-empty `<uri>`.
+/// is not a non-empty `<uri>` sip-uri can read.
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeolocationEntry> {
     let raw = entry.trim();
     if raw.is_empty() {
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
         return None;
     }
+    let skipped = |warnings: &mut Vec<ParseWarning>| {
+        warnings.push(
+            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
+                .at(crate::offset_in(entry, raw)),
+        );
+    };
     let Some((inner, tail)) = raw
         .strip_prefix('<')
         .and_then(|s| s.split_once('>'))
         .filter(|(inner, _)| !inner.is_empty() && !inner.contains('<'))
     else {
-        warnings.push(
-            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
-                .at(crate::offset_in(entry, raw)),
-        );
+        skipped(warnings);
         return None;
     };
+    let Some((uri, uri_warnings)) = read_uri(inner, crate::offset_in(entry, inner)) else {
+        skipped(warnings);
+        return None;
+    };
+    warnings.extend(uri_warnings);
     let junk = tail.trim_start();
     let params = if junk.is_empty() || junk.starts_with(';') {
         tail
@@ -229,15 +207,8 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
             .find(';')
             .unwrap_or(junk.len())..]
     };
-    let reference = match inner
-        .get(..4)
-        .filter(|scheme| scheme.eq_ignore_ascii_case("cid:"))
-    {
-        Some(_) => SipGeolocationRef::Cid(inner[4..].to_string()),
-        None => SipGeolocationRef::Url(inner.to_string()),
-    };
     Some(SipGeolocationEntry {
-        reference,
+        uri,
         params: HeaderParams::read(entry, params, warnings),
     })
 }
@@ -279,6 +250,7 @@ mod tests {
         assert!(geo
             .url()
             .unwrap()
+            .to_string()
             .contains("lis.example.com"));
     }
 
@@ -299,7 +271,12 @@ mod tests {
         assert!(geo
             .cid()
             .is_none());
-        assert_eq!(geo.url(), Some("https://lis.example.com/location"));
+        assert_eq!(
+            geo.url()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("https://lis.example.com/location")
+        );
     }
 
     #[test]
@@ -383,10 +360,7 @@ mod tests {
     fn geoloc_params_kept() {
         let geo = parse("<cid:x@example.com> ; Inserted-By = y ; flag");
         let entry = &geo.entries()[0];
-        assert_eq!(
-            entry.reference(),
-            &SipGeolocationRef::Cid("x@example.com".into())
-        );
+        assert_eq!(entry.cid(), Some("x@example.com"));
         assert_eq!(entry.param("inserted-by"), Some(Some("y")));
         assert_eq!(entry.param("flag"), Some(None));
         assert_eq!(
@@ -437,9 +411,10 @@ mod tests {
     fn comma_inside_brackets_not_split() {
         let geo = parse("<https://example.com/a,b>");
         assert_eq!(
-            geo.refs()
+            geo.uris()
+                .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            vec![&SipGeolocationRef::Url("https://example.com/a,b".into())]
+            vec!["https://example.com/a,b"]
         );
     }
 
@@ -453,7 +428,12 @@ mod tests {
     fn unbracketed_entry_skipped() {
         let (geo, seen) = lenient("<cid:a>, cid:x@example.com, <https://example.com/loc>");
         assert_eq!(geo.len(), 2);
-        assert_eq!(geo.url(), Some("https://example.com/loc"));
+        assert_eq!(
+            geo.url()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("https://example.com/loc")
+        );
         assert_eq!(
             seen,
             vec![(
@@ -486,6 +466,7 @@ mod tests {
         assert_eq!(cids, vec!["first", "second"]);
         let urls: Vec<_> = geo
             .urls()
+            .map(ToString::to_string)
             .collect();
         assert_eq!(urls, vec!["https://example.com/loc"]);
     }

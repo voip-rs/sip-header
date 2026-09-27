@@ -1,13 +1,17 @@
-use sip_header::sip_uri::{Host, SipUri, TelUri, Uri};
+use sip_header::sip_uri::{Host, SipUri, TelUri, Uri, UriParse};
 use sip_header::{
     ContactList, ContactValue, DialogFraming, HistoryInfo, HistoryInfoEntry, ParseError, SipAccept,
     SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
-    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,
-    SipHeaderAddr, SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
-    SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr,
+    SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
+
+fn uri(s: &str) -> Uri {
+    Uri::parse(s).unwrap()
+}
 
 fn alice() -> Uri {
     SipUri::new(Host::Hostname("example.com".into()))
@@ -24,14 +28,22 @@ fn addr() -> SipHeaderAddr {
 }
 
 fn via() -> SipVia {
-    SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "TCP")
-        .and_then(|v| v.with_host("[2001:db8::1]"))
-        .map(|v| {
-            v.with_port(5061)
-                .with_rport(None)
-        })
-        .and_then(|v| v.with_param("branch", Some("z9hG4bK1")))
-        .unwrap()])
+    SipVia::new(vec![SipViaEntry::new(
+        "SIP",
+        "2.0",
+        "TCP",
+        Host::IPv6(
+            "2001:db8::1"
+                .parse()
+                .unwrap(),
+        ),
+    )
+    .map(|v| {
+        v.with_port(5061)
+            .with_rport(None)
+    })
+    .and_then(|v| v.with_param("branch", Some("z9hG4bK1")))
+    .unwrap()])
     .unwrap()
 }
 
@@ -105,17 +117,15 @@ fn list_and_entry_display() -> R {
     );
     assert_eq!(
         UriInfo::new(vec![
-            UriInfoEntry::new("https://example.com/i")?.with_param("purpose", Some("icon"))?
+            UriInfoEntry::new(uri("https://example.com/i"))?.with_param("purpose", Some("icon"))?
         ])
         .unwrap()
         .to_string(),
         "<https://example.com/i>;purpose=icon"
     );
     assert_eq!(
-        SipGeolocation::new(vec![SipGeolocationEntry::new(SipGeolocationRef::Cid(
-            "loc@example.com".into()
-        ))?])
-        .to_string(),
+        SipGeolocation::new(vec![SipGeolocationEntry::new(uri("cid:loc@example.com"))?])
+            .to_string(),
         "<cid:loc@example.com>"
     );
     assert_eq!(
@@ -154,9 +164,11 @@ fn structural_invariants() -> R {
     assert_eq!(SipSecurity::new(Vec::new()), None);
     assert_eq!(UriInfo::new(Vec::new()), None);
     assert_eq!(HistoryInfo::new(Vec::new()), None);
-    assert!(SipViaEntry::new("SIP", "2.0", "UDP")?
-        .with_param("RPORT", Some("5060"))
-        .is_err());
+    assert!(
+        SipViaEntry::new("SIP", "2.0", "UDP", Host::IPv4([198, 51, 100, 1].into()))?
+            .with_param("RPORT", Some("5060"))
+            .is_err()
+    );
     assert_eq!(
         SipAuthValue::from_token68("Bearer", "abc")?
             .with_param("realm", "x")?
@@ -235,10 +247,10 @@ mod serde_round_trip {
         );
         round_trip(SipAuthValue::new("Digest")?.with_quoted_param("realm", "example.com")?);
         round_trip(SipAuthValue::from_token68("Bearer", "abc.def")?);
-        round_trip(UriInfo::new(vec![UriInfoEntry::new("https://example.com/i")?]).unwrap());
-        round_trip(SipGeolocation::new(vec![SipGeolocationEntry::new(
-            SipGeolocationRef::Url("https://example.com/l".into()),
-        )?
+        round_trip(UriInfo::new(vec![UriInfoEntry::new(uri("https://example.com/i"))?]).unwrap());
+        round_trip(SipGeolocation::new(vec![SipGeolocationEntry::new(uri(
+            "https://example.com/l",
+        ))?
         .with_param("inserted-by", Some("example.com"))?]));
         round_trip(HistoryInfo::new(vec![HistoryInfoEntry::new(addr())]).unwrap());
         round_trip(SipReason::new("SIP")?.with_cause(302));
@@ -306,7 +318,7 @@ mod serde_round_trip {
             "protocol": "SIP",
             "version": "2.0",
             "transport": "UDP",
-            "host": "198.51.100.1",
+            "host": {"ipv4": "198.51.100.1"},
             "rport": 5060,
             "params": [],
         }))
@@ -326,7 +338,7 @@ mod serde_round_trip {
             "protocol": "SIP",
             "version": "2.0",
             "transport": "UDP",
-            "host": "198.51.100.1",
+            "host": {"ipv4": "198.51.100.1"},
             "port": null,
             "params": [["rport", "secret", false]],
         }));
@@ -360,11 +372,19 @@ mod serde_round_trip {
             json!({"code": 399, "agent": "example.com", "text": "secret\r"}),
         );
         rejects::<SipAuthValue>(json!({"scheme": "Bearer", "params": [], "token68": "secret\n"}));
-        rejects::<SipViaEntry>(json!({
+        let via = serde_json::from_value::<SipViaEntry>(json!({
             "protocol": "SIP", "version": "2.0", "transport": "UDP",
-            "host": "secret\r\n.example.com", "port": null,
+            "host": {"hostname": "secret\r\n.example.com"}, "port": null,
         }));
-        rejects::<UriInfoEntry>(json!({"uri": "https://example.com/secret\n"}));
+        assert!(via.map_or(true, |v| !v
+            .to_string()
+            .contains(['\r', '\n'])));
+        let entry = serde_json::from_value::<UriInfoEntry>(json!({
+            "uri": {"other": {"scheme": "https", "rest": "//example.com/secret\n"}},
+        }));
+        assert!(entry.map_or(true, |e| !e
+            .to_string()
+            .contains('\n')));
         rejects::<SipHeaderAddr>(json!({
             "uri": serde_json::to_value(alice()).unwrap(),
             "params": [["x", "secret\r\nX: y", true]],

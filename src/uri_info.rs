@@ -4,21 +4,30 @@
 //! and Error-Info (RFC 3261 §20.18).
 //!
 //! An entry without its angle brackets is kept with
-//! [`MissingBrackets`](crate::WarningCode::MissingBrackets); one that yields
-//! no URI is dropped with [`SkippedEntry`](crate::WarningCode::SkippedEntry),
-//! a blank one with [`EmptyEntry`](crate::WarningCode::EmptyEntry), and
-//! `Err(Empty)` means no entry yielded a URI.
+//! [`MissingBrackets`](crate::WarningCode::MissingBrackets). Text that is
+//! no URI is kept as a scheme-less [`Uri::Other`] with sip-uri's warning;
+//! an entry sip-uri cannot read at all is dropped with
+//! [`SkippedEntry`](crate::WarningCode::SkippedEntry), a blank one with
+//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and `Err(Empty)` means
+//! no entry yielded a URI.
 
 use std::fmt;
 
+use sip_uri::{Uri, UriParse};
+
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
-use crate::header_addr::URI_REFUSED;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the URI as
+/// [`Uri`] compares it, the parameters as [`HeaderParams`] does. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -26,7 +35,7 @@ use crate::params::HeaderParams;
 )]
 #[non_exhaustive]
 pub struct UriInfoEntry {
-    uri: String,
+    uri: Uri,
     params: HeaderParams,
 }
 
@@ -35,25 +44,21 @@ header_params!(UriInfoEntry);
 impl UriInfoEntry {
     /// An entry for `uri`, written inside angle brackets, with no parameters.
     ///
-    /// Errors when `uri` is empty or holds `<`, `>`, CR, LF or NUL.
-    pub fn new(uri: impl Into<String>) -> Result<Self, ParseError> {
-        let uri = uri.into();
-        if uri.is_empty() {
-            return Err(ParseError::empty(Field::Addr));
-        }
-        crate::check::refuse(Field::Addr, &uri, &URI_REFUSED)?;
-        Ok(Self::unchecked(uri))
+    /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL, or does
+    /// not read back strictly as `uri`.
+    pub fn new(uri: Uri) -> Result<Self, ParseError> {
+        crate::check::checked_uri(Field::Addr, uri).map(Self::unchecked)
     }
 
-    fn unchecked(uri: String) -> Self {
+    fn unchecked(uri: Uri) -> Self {
         UriInfoEntry {
             uri,
             params: HeaderParams::default(),
         }
     }
 
-    /// The URI or data inside the angle brackets, with brackets stripped.
-    pub fn uri(&self) -> &str {
+    /// The URI inside the angle brackets.
+    pub fn uri(&self) -> &Uri {
         &self.uri
     }
 
@@ -75,16 +80,18 @@ impl fmt::Display for UriInfoEntry {
 /// Used by Call-Info, Alert-Info, and Error-Info.
 ///
 /// ```
+/// use sip_header::sip_uri::{Uri, UriParse};
 /// use sip_header::{UriInfo, UriInfoEntry};
 ///
 /// let info = UriInfo::new(vec![
-///     UriInfoEntry::new("urn:example:call:123")?.with_param("purpose", Some("emergency-CallId"))?,
-///     UriInfoEntry::new("https://example.com/data")?,
+///     UriInfoEntry::new(Uri::parse("urn:example:call:123")?)?
+///         .with_param("purpose", Some("emergency-CallId"))?,
+///     UriInfoEntry::new(Uri::parse("https://example.com/data")?)?,
 /// ])
 /// .unwrap();
 /// assert_eq!(info.to_string(), "<urn:example:call:123>;purpose=emergency-CallId,<https://example.com/data>");
 /// assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
-/// # Ok::<(), sip_header::ParseError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UriInfo(Vec<UriInfoEntry>);
@@ -94,7 +101,7 @@ list_type!(UriInfo, UriInfoEntry, sep: ",", non_empty);
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UriInfoEntryParts {
-    uri: String,
+    uri: Uri,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
@@ -159,14 +166,39 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
         return None;
     }
+    let Some((uri, uri_warnings)) = read_uri(data, crate::offset_in(entry, data)) else {
+        warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
+        return None;
+    };
     if recovered {
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::MissingBrackets).at(at));
     }
+    warnings.extend(uri_warnings);
 
     Some(UriInfoEntry {
         params: HeaderParams::read(entry, params, warnings),
-        ..UriInfoEntry::unchecked(data.to_string())
+        ..UriInfoEntry::unchecked(uri)
     })
+}
+
+/// Read the URI inside a list entry's brackets, with sip-uri's warnings
+/// moved `offset` bytes into the entry; `None` when sip-uri cannot read it
+/// or it would print a bracket.
+pub(crate) fn read_uri(data: &str, offset: usize) -> Option<(Uri, Vec<ParseWarning>)> {
+    let parsed = Uri::parse_with_warnings(data).ok()?;
+    if parsed
+        .value
+        .to_string()
+        .contains(['<', '>'])
+    {
+        return None;
+    }
+    let warnings = parsed
+        .warnings
+        .into_iter()
+        .map(|w| ParseWarning::from_uri(w, offset))
+        .collect();
+    Some((parsed.value, warnings))
 }
 
 impl CommaList for UriInfo {
@@ -226,7 +258,12 @@ mod tests {
     #[test]
     fn entry_no_metadata() {
         let entry = parse_entry("<data>").unwrap();
-        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "data"
+        );
         assert_eq!(
             entry
                 .params()
@@ -238,7 +275,12 @@ mod tests {
     #[test]
     fn entry_no_metadata_trailing_semicolon() {
         let entry = parse_entry("<data>;").unwrap();
-        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "data"
+        );
         assert_eq!(
             entry
                 .params()
@@ -276,7 +318,12 @@ mod tests {
     #[test]
     fn entry_two_metadata_items() {
         let entry = parse_entry("<data>;meta1=one;meta2=two;").unwrap();
-        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "data"
+        );
         assert_eq!(
             entry
                 .params()
@@ -291,7 +338,12 @@ mod tests {
     #[test]
     fn entry_strips_angle_brackets() {
         let entry = parse_entry("<data>;meta1=one;meta2=two;").unwrap();
-        assert_eq!(entry.uri(), "data");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "data"
+        );
     }
 
     #[test]
@@ -322,7 +374,12 @@ mod tests {
     fn entry_display_contains_all_metadata() {
         let raw = "<http://somedata/?arg=123>;meta1=one;meta2=two";
         let entry = parse_entry(raw).unwrap();
-        assert_eq!(entry.uri(), "http://somedata/?arg=123");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "http://somedata/?arg=123"
+        );
         assert_eq!(entry.to_string(), raw);
     }
 
@@ -387,6 +444,7 @@ mod tests {
             .unwrap();
         assert!(entry
             .uri()
+            .to_string()
             .contains("callid"));
     }
 
@@ -404,6 +462,7 @@ mod tests {
         assert_eq!(eido.len(), 1);
         assert!(eido[0]
             .uri()
+            .to_string()
             .contains("EidoRetrievalService"));
     }
 
@@ -433,6 +492,7 @@ mod tests {
             .unwrap();
         assert!(call_id
             .uri()
+            .to_string()
             .contains("callid"));
 
         let incident = info
@@ -442,6 +502,7 @@ mod tests {
             .unwrap();
         assert!(incident
             .uri()
+            .to_string()
             .contains("incidentid"));
     }
 
@@ -542,7 +603,12 @@ mod tests {
     #[test]
     fn semicolon_inside_brackets_stays_in_data() {
         let entry = parse_entry("<sip:a@example.com;lr>;purpose=icon").unwrap();
-        assert_eq!(entry.uri(), "sip:a@example.com;lr");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "sip:a@example.com;lr"
+        );
         assert_eq!(entry.purpose(), Some("icon"));
         assert_eq!(entry.to_string(), "<sip:a@example.com;lr>;purpose=icon");
     }
@@ -550,7 +616,12 @@ mod tests {
     #[test]
     fn quoted_param_keeps_semicolon_and_quotes() {
         let entry = parse_entry(r#"<https://example.com/a>;note="x;y";Purpose=info"#).unwrap();
-        assert_eq!(entry.uri(), "https://example.com/a");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "https://example.com/a"
+        );
         assert_eq!(
             entry
                 .params()
@@ -579,15 +650,30 @@ mod tests {
     #[test]
     fn unbracketed_and_trailing_junk_keep_fallback() {
         let entry = parse_entry("urn:example:1;purpose=icon").unwrap();
-        assert_eq!(entry.uri(), "urn:example:1");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "urn:example:1"
+        );
         assert_eq!(entry.purpose(), Some("icon"));
 
         let entry = parse_entry("<urn:example:1>junk;purpose=icon").unwrap();
-        assert_eq!(entry.uri(), "urn:example:1>junk");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "urn:example:1%3Ejunk"
+        );
         assert_eq!(entry.purpose(), Some("icon"));
 
         let entry = parse_entry("<urn:example:1;purpose=icon").unwrap();
-        assert_eq!(entry.uri(), "urn:example:1");
+        assert_eq!(
+            entry
+                .uri()
+                .to_string(),
+            "urn:example:1"
+        );
         assert_eq!(entry.purpose(), Some("icon"));
     }
 
@@ -608,16 +694,18 @@ mod tests {
             assert_eq!(info.len(), 2);
             assert_eq!(info.entries()[1].purpose(), Some("icon"));
             assert_eq!(
-                seen,
-                vec![(
+                seen[0],
+                (
                     Field::Entry,
                     WarningCode::MissingBrackets,
                     WarningKind::Recovered,
                     Some(1),
                     Some(1)
-                )],
+                ),
                 "{second}"
             );
+            let bracket_in_nss = second.contains("junk");
+            assert_eq!(seen.len(), 1 + usize::from(bracket_in_nss), "{second}");
         }
     }
 

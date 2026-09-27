@@ -88,7 +88,7 @@ pub use contact::{ContactList, ContactValue};
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
 pub use error::{Fault, FaultCode, ParseError, UriFault};
-pub use geolocation::{SipGeolocation, SipGeolocationEntry, SipGeolocationRef};
+pub use geolocation::{SipGeolocation, SipGeolocationEntry};
 pub use header::SipHeaderLookup;
 pub use header_addr::SipHeaderAddr;
 pub use history_info::{HistoryInfo, HistoryInfoEntry};

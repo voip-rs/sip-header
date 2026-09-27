@@ -86,9 +86,13 @@ fn reserved_keys_refuse_the_generic_setter() {
     assert!(addr()
         .with_tag("a b")
         .is_err());
-    let via = SipViaEntry::new("SIP", "2.0", "UDP")
-        .and_then(|v| v.with_host("198.51.100.1"))
-        .unwrap();
+    let via = SipViaEntry::new(
+        "SIP",
+        "2.0",
+        "UDP",
+        sip_header::sip_uri::Host::IPv4([198, 51, 100, 1].into()),
+    )
+    .unwrap();
     assert!(is_misplaced_param(
         via.clone()
             .with_param("rport", None::<&str>)
@@ -440,10 +444,14 @@ mod serde_shape {
         r["params"] = json!([["early-only", null, false]]);
         assert!(serde_json::from_value::<SipReplaces>(r).is_err());
 
-        let via = SipViaEntry::new("SIP", "2.0", "UDP")
-            .and_then(|v| v.with_host("198.51.100.1"))
-            .unwrap()
-            .with_rport(None);
+        let via = SipViaEntry::new(
+            "SIP",
+            "2.0",
+            "UDP",
+            sip_header::sip_uri::Host::IPv4([198, 51, 100, 1].into()),
+        )
+        .unwrap()
+        .with_rport(None);
         let mut v = serde_json::to_value(&via).unwrap();
         assert_eq!(v["rport"], json!(null));
         assert_eq!(v["params"], json!([]));

@@ -273,8 +273,6 @@ pub enum WarningCode {
     SkippedEntry,
     /// An empty list entry between commas, dropped.
     EmptyEntry,
-    /// A Via `sent-by` without the host RFC 3261 §20.42 requires.
-    MissingHost,
     /// An accept-param `q` outside RFC 3261 §25.1 `qvalue`, kept as sent.
     InvalidQvalue,
     /// A parameter name repeated within one value, kept; lookup returns the
@@ -304,7 +302,6 @@ impl WarningCode {
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
             | WarningCode::EmptyEntry
-            | WarningCode::MissingHost
             | WarningCode::ControlChar => WarningKind::Lost,
             _ => WarningKind::Recovered,
         }
@@ -327,7 +324,6 @@ impl WarningCode {
             WarningCode::MissingBrackets => "missing-brackets",
             WarningCode::SkippedEntry => "skipped-entry",
             WarningCode::EmptyEntry => "empty-entry",
-            WarningCode::MissingHost => "missing-host",
             WarningCode::InvalidQvalue => "invalid-qvalue",
             WarningCode::DuplicateParam => "duplicate-param",
             WarningCode::AuthParamFlag => "auth-param-flag",
@@ -419,7 +415,6 @@ mod tests {
             WarningCode::MissingBrackets,
             WarningCode::SkippedEntry,
             WarningCode::EmptyEntry,
-            WarningCode::MissingHost,
             WarningCode::InvalidQvalue,
             WarningCode::DuplicateParam,
             WarningCode::AuthParamFlag,
@@ -441,7 +436,6 @@ mod tests {
                 | WarningCode::MissingBrackets
                 | WarningCode::SkippedEntry
                 | WarningCode::EmptyEntry
-                | WarningCode::MissingHost
                 | WarningCode::InvalidQvalue
                 | WarningCode::DuplicateParam
                 | WarningCode::AuthParamFlag
@@ -502,10 +496,6 @@ mod tests {
         assert_ne!(
             WarningCode::Uri(sip_uri::WarningCode::TrailingContent).as_str(),
             WarningCode::TrailingContent.as_str()
-        );
-        assert_ne!(
-            WarningCode::Uri(sip_uri::WarningCode::MissingHost).as_str(),
-            WarningCode::MissingHost.as_str()
         );
     }
 

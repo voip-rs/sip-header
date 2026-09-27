@@ -1,11 +1,11 @@
 //! SIP Via header parser (RFC 3261 §20.42).
 //!
-//! A sent-by without a host is kept with
-//! [`MissingHost`](crate::WarningCode::MissingHost).
+//! An entry whose sent-by has no host is dropped with
+//! [`SkippedEntry`](crate::WarningCode::SkippedEntry).
 
 use std::fmt;
 
-use sip_uri::UriParse;
+use sip_uri::{Host, UriParse};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
@@ -16,10 +16,11 @@ use crate::{is_token, RawParam};
 /// A single Via entry.
 ///
 /// ```
+/// use sip_header::sip_uri::Host;
 /// use sip_header::SipViaEntry;
 ///
-/// let via = SipViaEntry::new("SIP", "2.0", "UDP")?
-///     .with_host("2001:db8::1")?
+/// let host = Host::IPv6("2001:db8::1".parse().unwrap());
+/// let via = SipViaEntry::new("SIP", "2.0", "UDP", host)?
 ///     .with_port(5060)
 ///     .with_rport(None)
 ///     .with_param("branch", Some("z9hG4bK776"))?;
@@ -27,7 +28,13 @@ use crate::{is_token, RawParam};
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP [2001:db8::1]:5060;rport;branch=z9hG4bK776");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// Two entries are equal when their wire forms are: the `sent-protocol`
+/// parts byte for byte, the host as [`Host`] compares it, the port, and
+/// the parameters as [`HeaderParams`] does. [`Hash`] follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -38,7 +45,7 @@ pub struct SipViaEntry {
     protocol_name: String,
     protocol_version: String,
     transport: String,
-    host: Option<String>,
+    host: Host,
     port: Option<u16>,
     params: HeaderParams,
     /// The first `rport` in `params`, read as a port; only the parser and
@@ -52,63 +59,58 @@ const RESERVED: &[&str] = &["rport"];
 header_params!(SipViaEntry, reserved: RESERVED);
 
 impl SipViaEntry {
-    /// An entry with the given `sent-protocol` and no host, port or params.
+    /// An entry with the given `sent-protocol` and `sent-by` host, and no
+    /// port or parameters.
     ///
-    /// Errors unless each part is a non-empty `token`.
+    /// Errors unless each `sent-protocol` part is a non-empty `token` and
+    /// the host prints as text sip-uri's strict host grammar reads back as
+    /// the same host.
     pub fn new(
         protocol: impl Into<String>,
         version: impl Into<String>,
         transport: impl Into<String>,
+        host: Host,
     ) -> Result<Self, ParseError> {
         let token = |part: String| checked_token(Field::SentProtocol, part);
-        Ok(SipViaEntry::unchecked(
+        let entry = SipViaEntry::unchecked(
             token(protocol.into())?,
             token(version.into())?,
             token(transport.into())?,
-        ))
+            host,
+        );
+        if Host::parse_strict(
+            &entry
+                .host
+                .to_string(),
+        )
+        .ok()
+        .as_ref()
+            != Some(&entry.host)
+        {
+            return Err(ParseError::malformed(
+                Field::SentBy,
+                FaultCode::InvalidChar,
+                None,
+            ));
+        }
+        Ok(entry)
     }
 
-    fn unchecked(protocol_name: String, protocol_version: String, transport: String) -> Self {
+    fn unchecked(
+        protocol_name: String,
+        protocol_version: String,
+        transport: String,
+        host: Host,
+    ) -> Self {
         SipViaEntry {
             protocol_name,
             protocol_version,
             transport,
-            host: None,
+            host,
             port: None,
             params: HeaderParams::default(),
             rport: None,
         }
-    }
-
-    /// Set the `sent-by` host, IPv6 with or without brackets.
-    ///
-    /// Errors unless the host reads under sip-uri's strict host grammar.
-    pub fn with_host(mut self, host: impl Into<String>) -> Result<Self, ParseError> {
-        let host = host.into();
-        let bare = host
-            .strip_prefix('[')
-            .and_then(|h| h.strip_suffix(']'))
-            .unwrap_or(&host);
-        if bare.is_empty() {
-            return Err(ParseError::empty(Field::SentBy));
-        }
-        crate::check::refuse_controls(Field::SentBy, bare)?;
-        let wire = if bare.contains(':') {
-            format!("[{bare}]")
-        } else {
-            bare.to_string()
-        };
-        let mut warnings = Vec::new();
-        read_host(&wire, 0, &mut warnings)?;
-        if let Some(w) = warnings.first() {
-            return Err(ParseError::malformed(
-                Field::SentBy,
-                FaultCode::InvalidChar,
-                w.position,
-            ));
-        }
-        self.host = Some(bare.to_string());
-        Ok(self)
     }
 
     /// Set the `sent-by` port.
@@ -126,7 +128,7 @@ impl SipViaEntry {
         self
     }
 
-    /// Returns the protocol name (e.g., "SIP").
+    /// Returns the protocol name (e.g., "SIP"), case as sent.
     pub fn protocol(&self) -> &str {
         &self.protocol_name
     }
@@ -136,15 +138,14 @@ impl SipViaEntry {
         &self.protocol_version
     }
 
-    /// Returns the transport protocol (e.g., "UDP", "TCP", "TLS").
+    /// Returns the transport protocol (e.g., "UDP", "TCP", "TLS"), case as sent.
     pub fn transport(&self) -> &str {
         &self.transport
     }
 
-    /// Returns the host, IPv6 without brackets; `None` for a sent-by without one.
-    pub fn host(&self) -> Option<&str> {
-        self.host
-            .as_deref()
+    /// Returns the `sent-by` host, a hostname lowercased as sip-uri holds it.
+    pub fn host(&self) -> &Host {
+        &self.host
     }
 
     /// Returns the port, if present.
@@ -178,18 +179,9 @@ impl fmt::Display for SipViaEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}/{}/{}",
-            self.protocol_name, self.protocol_version, self.transport
+            "{}/{}/{} {}",
+            self.protocol_name, self.protocol_version, self.transport, self.host
         )?;
-
-        match self
-            .host
-            .as_deref()
-        {
-            Some(host) if host.contains(':') && !host.starts_with('[') => write!(f, " [{host}]")?,
-            Some(host) => write!(f, " {host}")?,
-            None => f.write_str(" ")?,
-        }
 
         if let Some(port) = self.port {
             write!(f, ":{}", port)?;
@@ -202,9 +194,11 @@ impl fmt::Display for SipViaEntry {
 /// SIP Via header value: one `via-parm` or more.
 ///
 /// ```
+/// use sip_header::sip_uri::Host;
 /// use sip_header::{SipVia, SipViaEntry};
 ///
-/// let via = SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "UDP")?.with_host("198.51.100.1")?]).unwrap();
+/// let host = Host::IPv4("198.51.100.1".parse().unwrap());
+/// let via = SipVia::new(vec![SipViaEntry::new("SIP", "2.0", "UDP", host)?]).unwrap();
 /// assert_eq!(via.to_string(), "SIP/2.0/UDP 198.51.100.1");
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
@@ -222,7 +216,7 @@ struct SipViaEntryParts {
     protocol: String,
     version: String,
     transport: String,
-    host: Option<String>,
+    host: Host,
     port: Option<u16>,
     /// Absent without `rport`, null for the flag.
     #[serde(
@@ -269,11 +263,10 @@ impl TryFrom<SipViaEntryParts> for SipViaEntry {
             .transpose()
             .map_err(|_| ParseError::malformed(Field::Param, FaultCode::InvalidNumber, None))?;
         let via = SipViaEntry {
-            host: p.host,
             port: p.port,
             params,
             rport,
-            ..SipViaEntry::unchecked(p.protocol, p.version, p.transport)
+            ..SipViaEntry::unchecked(p.protocol, p.version, p.transport, p.host)
         };
         crate::list::entry_reads_back::<SipVia>(via)
     }
@@ -304,11 +297,12 @@ impl From<SipViaEntry> for SipViaEntryParts {
     }
 }
 
-/// Parse one `via-parm`, positions relative to `entry`.
+/// Parse one `via-parm`, positions relative to `entry`; `None` when the
+/// sent-by has no host.
 fn parse_via_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<SipViaEntry, ParseError> {
+) -> Result<Option<SipViaEntry>, ParseError> {
     let trimmed = entry.trim();
     if trimmed.is_empty() {
         return Err(ParseError::malformed(
@@ -328,11 +322,17 @@ fn parse_via_entry(
     let (protocol_name, protocol_version, transport, sent_by) =
         parse_sent_protocol(entry, main_part, warnings)?;
     let (host, port) = parse_host_port(entry, sent_by, warnings)?;
+    let Some(host) = host else {
+        warnings.push(
+            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
+                .at(crate::offset_in(entry, trimmed)),
+        );
+        return Ok(None);
+    };
 
     let mut via = SipViaEntry {
-        host,
         port,
-        ..SipViaEntry::unchecked(protocol_name, protocol_version, transport)
+        ..SipViaEntry::unchecked(protocol_name, protocol_version, transport, host)
     };
     for p in crate::parse_params(params_part.unwrap_or("")) {
         if via
@@ -346,7 +346,7 @@ fn parse_via_entry(
         via.params
             .push_raw(entry, &p, warnings);
     }
-    Ok(via)
+    Ok(Some(via))
 }
 
 /// The first `rport`, a flag or a port number (RFC 3581).
@@ -420,7 +420,7 @@ impl CommaList for SipVia {
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipViaEntry>, ParseError> {
-        parse_via_entry(entry, warnings).map(Some)
+        parse_via_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
@@ -436,7 +436,7 @@ fn parse_host_port(
     entry: &str,
     sent_by: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<(Option<String>, Option<u16>), ParseError> {
+) -> Result<(Option<Host>, Option<u16>), ParseError> {
     let at = |code, part: &str| {
         ParseError::malformed(Field::SentBy, code, Some(crate::offset_in(entry, part)))
     };
@@ -474,18 +474,10 @@ fn parse_host_port(
         })
         .transpose()?;
     if host.is_empty() {
-        warnings.push(
-            ParseWarning::new(Field::SentBy, WarningCode::MissingHost)
-                .at(crate::offset_in(entry, sent_by)),
-        );
         return Ok((None, port));
     }
-    read_host(host, crate::offset_in(entry, host), warnings)?;
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-    Ok((Some(bare.to_string()), port))
+    let host = read_host(host, crate::offset_in(entry, host), warnings)?;
+    Ok((Some(host), port))
 }
 
 /// Read `host`, `offset` bytes into the caller's input, by sip-uri's host
@@ -494,16 +486,15 @@ fn read_host(
     host: &str,
     offset: usize,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<(), ParseError> {
-    let parsed =
-        sip_uri::Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset))?;
+) -> Result<Host, ParseError> {
+    let parsed = Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset))?;
     warnings.extend(
         parsed
             .warnings
             .into_iter()
             .map(|w| ParseWarning::from_uri(w, offset)),
     );
-    Ok(())
+    Ok(parsed.value)
 }
 
 #[cfg(test)]
@@ -522,7 +513,13 @@ mod tests {
         assert_eq!(entry.protocol(), "SIP");
         assert_eq!(entry.version(), "2.0");
         assert_eq!(entry.transport(), "UDP");
-        assert_eq!(entry.host(), Some("198.51.100.1"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "198.51.100.1"
+        );
         assert_eq!(entry.port(), Some(5060));
         assert!(entry
             .params()
@@ -535,12 +532,24 @@ mod tests {
         assert_eq!(via.len(), 2);
 
         let entry1 = &via.entries()[0];
-        assert_eq!(entry1.host(), Some("198.51.100.1"));
+        assert_eq!(
+            entry1
+                .host()
+                .bare()
+                .to_string(),
+            "198.51.100.1"
+        );
         assert_eq!(entry1.port(), Some(5060));
         assert_eq!(entry1.transport(), "UDP");
 
         let entry2 = &via.entries()[1];
-        assert_eq!(entry2.host(), Some("203.0.113.5"));
+        assert_eq!(
+            entry2
+                .host()
+                .bare()
+                .to_string(),
+            "203.0.113.5"
+        );
         assert_eq!(entry2.port(), None);
         assert_eq!(entry2.transport(), "TCP");
     }
@@ -579,7 +588,13 @@ mod tests {
         let via = SipVia::parse("SIP/2.0/UDP [2001:db8::1]:5060").unwrap();
 
         let entry = &via.entries()[0];
-        assert_eq!(entry.host(), Some("2001:db8::1"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "2001:db8::1"
+        );
         assert_eq!(entry.port(), Some(5060));
     }
 
@@ -588,7 +603,13 @@ mod tests {
         let via = SipVia::parse("SIP/2.0/UDP [2001:db8::1]").unwrap();
 
         let entry = &via.entries()[0];
-        assert_eq!(entry.host(), Some("2001:db8::1"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "2001:db8::1"
+        );
         assert_eq!(entry.port(), None);
     }
 
@@ -597,7 +618,13 @@ mod tests {
         let via = SipVia::parse("SIP/2.0/TLS example.com:5061").unwrap();
 
         let entry = &via.entries()[0];
-        assert_eq!(entry.host(), Some("example.com"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "example.com"
+        );
         assert_eq!(entry.port(), Some(5061));
         assert_eq!(entry.transport(), "TLS");
     }
@@ -671,7 +698,12 @@ mod tests {
 
         let mut count = 0;
         for entry in &via {
-            assert!(entry.host() == Some("198.51.100.1") || entry.host() == Some("203.0.113.5"));
+            assert!(["198.51.100.1", "203.0.113.5"].contains(
+                &entry
+                    .host()
+                    .to_string()
+                    .as_str()
+            ));
             count += 1;
         }
         assert_eq!(count, 2);
@@ -687,8 +719,20 @@ mod tests {
         let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060, SIP/2.0/TCP 203.0.113.5").unwrap();
         let entries = via.into_entries();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].host(), Some("198.51.100.1"));
-        assert_eq!(entries[1].host(), Some("203.0.113.5"));
+        assert_eq!(
+            entries[0]
+                .host()
+                .bare()
+                .to_string(),
+            "198.51.100.1"
+        );
+        assert_eq!(
+            entries[1]
+                .host()
+                .bare()
+                .to_string(),
+            "203.0.113.5"
+        );
     }
 
     #[test]
@@ -737,7 +781,13 @@ mod tests {
         assert_eq!(entry.protocol(), "SIP");
         assert_eq!(entry.version(), "2.0");
         assert_eq!(entry.transport(), "UDP");
-        assert_eq!(entry.host(), Some("example.com"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "example.com"
+        );
         assert_eq!(entry.port(), None);
     }
 
@@ -745,7 +795,13 @@ mod tests {
     fn sws_around_sent_by_colon() {
         let via = SipVia::parse("SIP/2.0/UDP example.com : 5060;branch=z9hG4bK1").unwrap();
         let entry = &via.entries()[0];
-        assert_eq!(entry.host(), Some("example.com"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "example.com"
+        );
         assert_eq!(entry.port(), Some(5060));
         assert_eq!(entry.branch(), Some("z9hG4bK1"));
     }
@@ -754,7 +810,13 @@ mod tests {
     fn sws_around_ipv6_reference_colon() {
         let via = SipVia::parse("SIP/2.0/UDP [2001:db8::1] : 5060").unwrap();
         let entry = &via.entries()[0];
-        assert_eq!(entry.host(), Some("2001:db8::1"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "2001:db8::1"
+        );
         assert_eq!(entry.port(), Some(5060));
     }
 
@@ -763,7 +825,13 @@ mod tests {
         let via = SipVia::parse("SIP/2.0/ example.com:5060").unwrap();
         let entry = &via.entries()[0];
         assert_eq!(entry.transport(), "");
-        assert_eq!(entry.host(), Some("example.com"));
+        assert_eq!(
+            entry
+                .host()
+                .bare()
+                .to_string(),
+            "example.com"
+        );
         assert_eq!(entry.port(), Some(5060));
     }
 
@@ -798,26 +866,29 @@ mod tests {
     }
 
     #[test]
-    fn empty_host_is_none_with_missing_host() {
-        for (raw, port, at) in [
-            ("SIP/2.0/UDP :5060;branch=z9hG4bK1", Some(5060), 12),
-            ("SIP/2.0/UDP ", None, 11),
-            ("SIP/2.0/UDP ;branch=z9hG4bK1", None, 11),
+    fn entry_without_host_is_skipped() {
+        for bad in [
+            " SIP/2.0/UDP :5060;branch=z9hG4bK1",
+            " SIP/2.0/UDP ",
+            " SIP/2.0/UDP ;branch=z9hG4bK1",
         ] {
-            let (via, seen) = lenient(raw);
-            let entry = &via.entries()[0];
-            assert_eq!(entry.host(), None, "{raw}");
-            assert_eq!(entry.port(), port, "{raw}");
+            let (via, seen) = lenient(&format!("SIP/2.0/UDP 198.51.100.1,{bad}"));
+            assert_eq!(via.len(), 1, "{bad}");
             assert_eq!(
                 seen,
                 vec![(
-                    Field::SentBy,
-                    WarningCode::MissingHost,
+                    Field::Entry,
+                    WarningCode::SkippedEntry,
                     WarningKind::Lost,
-                    Some(at),
-                    Some(0)
+                    Some(1),
+                    Some(1)
                 )],
-                "{raw}"
+                "{bad}"
+            );
+            assert_eq!(
+                SipVia::parse(bad),
+                Err(ParseError::empty(Field::Value)),
+                "{bad}"
             );
         }
     }
@@ -826,7 +897,13 @@ mod tests {
     fn host_breach_forwarded_from_sip_uri() {
         let raw = "SIP/2.0/UDP 198.51.100.1, SIP/2.0/UDP exa_mple.com:5060";
         let (via, seen) = lenient(raw);
-        assert_eq!(via.entries()[1].host(), Some("exa_mple.com"));
+        assert_eq!(
+            via.entries()[1]
+                .host()
+                .bare()
+                .to_string(),
+            "exa_mple.com"
+        );
         assert_eq!(
             seen,
             vec![(

@@ -127,19 +127,15 @@ impl From<SipHeaderAddr> for SipHeaderAddrParts {
     }
 }
 
-/// What a URI inside `<…>` cannot hold: the brackets themselves, and CR,
-/// LF and NUL.
-pub(crate) const URI_REFUSED: [char; 5] = ['<', '>', '\r', '\n', '\0'];
-
 impl SipHeaderAddr {
     /// An address for `uri`, with no display name or parameters.
     ///
-    /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL.
+    /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL, or does
+    /// not read back strictly as `uri`.
     pub fn new(uri: sip_uri::Uri) -> Result<Self, ParseError> {
-        crate::check::refuse(Field::Addr, &uri.to_string(), &URI_REFUSED)?;
         Ok(SipHeaderAddr {
             display_name: None,
-            uri,
+            uri: crate::check::checked_uri(Field::Addr, uri)?,
             params: HeaderParams::default(),
         })
     }

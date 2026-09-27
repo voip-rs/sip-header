@@ -1,11 +1,11 @@
-use sip_header::sip_uri::{Uri, UriParse};
+use sip_header::sip_uri::{Host, Uri, UriParse};
 use sip_header::{
     AddrParts, ContactList, ContactValue, DialogFraming, DialogIdEdit, FaultCode, Field,
     HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept,
     SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
-    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipGeolocationRef,
-    SipHeaderAddr, SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
-    SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
+    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr,
+    SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -129,43 +129,49 @@ fn addr_parts_read_uri_headers() -> R {
     Ok(())
 }
 
+fn host(name: &str) -> Host {
+    Host::Hostname(name.into())
+}
+
 #[test]
 fn via_entry() -> R {
-    let entry = SipViaEntry::new("SIP", "2.0", "UDP")?
-        .with_host("[2001:db8::1]")?
+    let v6 = Host::IPv6(
+        "2001:db8::1"
+            .parse()
+            .unwrap(),
+    );
+    let entry = SipViaEntry::new("SIP", "2.0", "UDP", v6.clone())?
         .with_port(5060)
         .with_rport(Some(5061))
         .with_param("Branch", Some("z9hG4bK1"))?;
-    assert_eq!(entry.host(), Some("2001:db8::1"));
+    assert_eq!(entry.host(), &v6);
     assert_eq!(entry.rport(), Some(Some(5061)));
     assert_eq!(entry.branch(), Some("z9hG4bK1"));
     built_as(
         SipVia::new(vec![entry]).unwrap(),
         "SIP/2.0/UDP [2001:db8::1]:5060;rport=5061;branch=z9hG4bK1",
     );
-    assert!(SipViaEntry::new("SIP", "2.0", "UDP")?
+    assert!(SipViaEntry::new("SIP", "2.0", "UDP", host("example.com"))?
         .with_param("rport", Some("5061"))
         .is_err());
-    assert_eq!(SipVia::new(Vec::new()), None);
     Ok(())
 }
 
 #[test]
-fn via_refuses_what_would_print_as_another_entry() -> R {
+fn via_refuses_what_would_print_as_another_entry() {
     for (p, v, t) in [
         ("", "2.0", "UDP"),
         ("SIP", "2.0", ""),
         ("SIP", "2.0", "U;DP"),
     ] {
         assert_eq!(
-            refused(SipViaEntry::new(p, v, t)).0,
+            refused(SipViaEntry::new(p, v, t, host("example.com"))).0,
             Field::SentProtocol,
             "{p}/{v}/{t}"
         );
     }
-    assert!(SipViaEntry::new("SIP", "2/0", "UDP").is_err());
-    let entry = SipViaEntry::new("SIP", "2.0", "UDP")?;
-    for host in [
+    assert!(SipViaEntry::new("SIP", "2/0", "UDP", host("example.com")).is_err());
+    for name in [
         "",
         "a;branch=x",
         "a,b",
@@ -176,15 +182,12 @@ fn via_refuses_what_would_print_as_another_entry() -> R {
         "a\0b",
         "exa_mple.com",
     ] {
-        assert!(
-            entry
-                .clone()
-                .with_host(host)
-                .is_err(),
-            "{host:?}"
+        assert_eq!(
+            refused(SipViaEntry::new("SIP", "2.0", "UDP", host(name))).0,
+            Field::SentBy,
+            "{name:?}"
         );
     }
-    Ok(())
 }
 
 #[test]
@@ -350,16 +353,15 @@ fn security_mechanism() -> R {
 fn uri_info_and_geolocation() -> R {
     built_as(
         UriInfo::new(vec![
-            UriInfoEntry::new("https://example.com/a")?.with_param("Purpose", Some("icon"))?
+            UriInfoEntry::new(uri("https://example.com/a"))?.with_param("Purpose", Some("icon"))?
         ])
         .unwrap(),
         "<https://example.com/a>;purpose=icon",
     );
-    assert_eq!(UriInfo::new(Vec::new()), None);
     built_as(
         SipGeolocation::new(vec![
-            SipGeolocationEntry::new(SipGeolocationRef::Cid("a@example.com".into()))?,
-            SipGeolocationEntry::new(SipGeolocationRef::Url("https://example.com/l".into()))?
+            SipGeolocationEntry::new(uri("cid:a@example.com"))?,
+            SipGeolocationEntry::new(uri("https://example.com/l"))?
                 .with_param("inserted-by", Some("example.com"))?,
         ]),
         "<cid:a@example.com>, <https://example.com/l>;inserted-by=example.com",
@@ -368,20 +370,17 @@ fn uri_info_and_geolocation() -> R {
 }
 
 #[test]
-fn uri_info_and_geolocation_refuse_bracket_breakers() {
-    for uri in ["", "a>b", "a<b", "a\r\nb", "a\0"] {
-        assert_eq!(refused(UriInfoEntry::new(uri)).0, Field::Addr, "{uri:?}");
-    }
-    for r in [
-        SipGeolocationRef::Url(String::new()),
-        SipGeolocationRef::Url("CID:x".into()),
-        SipGeolocationRef::Url("a>b".into()),
-        SipGeolocationRef::Cid("a\nb".into()),
-    ] {
+fn uri_info_and_geolocation_refuse_what_does_not_read_back() {
+    for text in ["data", "a b>c", "a\r\nb"] {
         assert_eq!(
-            refused(SipGeolocationEntry::new(r.clone())).0,
+            refused(UriInfoEntry::new(uri(text))).0,
+            Field::Addr,
+            "{text:?}"
+        );
+        assert_eq!(
+            refused(SipGeolocationEntry::new(uri(text))).0,
             Field::Reference,
-            "{r:?}"
+            "{text:?}"
         );
     }
 }
