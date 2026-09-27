@@ -1065,7 +1065,41 @@ mod tests {
             .map(|w| (w.code, w.entry))
             .collect();
         let code = crate::WarningCode::EmptyEntry;
-        assert_eq!(empty, [(code, Some(1)), (code, Some(3))]);
+        let comma = crate::WarningCode::TrailingComma;
+        assert_eq!(empty, [(code, Some(1)), (comma, Some(2)), (code, Some(3))]);
+        assert_eq!(parsed.warnings[1].position, Some(" ACK".len()));
+    }
+
+    #[test]
+    fn list_rows_report_a_final_comma_per_row() {
+        let h = rows(&[("Route", &["<sip:a@example.com>,", "<sip:b@example.com>"])]);
+        let parsed = h
+            .parse_header::<SipHeaderAddrList>(SipHeader::Route)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            2
+        );
+        let seen: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.position, w.entry))
+            .collect();
+        assert_eq!(
+            seen,
+            [(
+                Field::Entry,
+                crate::WarningCode::TrailingComma,
+                Some("<sip:a@example.com>".len()),
+                Some(0)
+            )]
+        );
+        assert!(h
+            .parse_header_strict::<SipHeaderAddrList>(SipHeader::Route)
+            .is_err());
     }
 
     #[test]

@@ -7,7 +7,7 @@ use sip_header::{
     ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ParseError,
     ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
     SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry,
-    SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces, SipSecurity,
+    SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
     SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry,
     UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
@@ -763,6 +763,90 @@ fn a_quote_that_never_closes_does_not_hold_commas() {
         sip_header::split_comma_entries(r#"a"b, c, "d, e""#),
         vec![r#"a"b"#, " c", r#" "d, e""#]
     );
+}
+
+#[test]
+fn a_final_comma_is_warned_and_strictly_refused() {
+    fn check<T: HeaderParse + PartialEq + std::fmt::Debug>(input: &str, last: &str, len: usize) {
+        let last = input
+            .rfind(last)
+            .unwrap();
+        let parsed = T::parse_with_warnings(input).unwrap();
+        assert_eq!(parsed.value, T::parse(&input[..input.len() - 1]).unwrap());
+        assert_eq!(
+            parsed
+                .warnings
+                .iter()
+                .map(seen)
+                .collect::<Vec<_>>(),
+            [(
+                Field::Entry,
+                WarningCode::TrailingComma,
+                WarningKind::Recovered,
+                Some(input.len() - 1 - last),
+                Some(len - 1)
+            )],
+            "{input}"
+        );
+        assert_eq!(
+            T::parse_strict(input),
+            Err(ParseError::NonConformant(parsed.warnings[0])),
+            "{input}"
+        );
+    }
+    check::<SipVia>(
+        "SIP/2.0/UDP 198.51.100.1, SIP/2.0/TCP 198.51.100.2,",
+        " SIP/2.0/TCP",
+        2,
+    );
+    check::<ContactList>("<sip:a@example.com>,", "<sip", 1);
+    check::<SipAccept>("application/sdp, text/plain,", " text", 2);
+    check::<SipWarning>(r#"399 example.com "a, b","#, "399", 1);
+    check::<SipReasonList>("SIP;cause=200,", "SIP", 1);
+
+    let parsed = SipAccept::parse_with_warnings(",").unwrap();
+    assert!(parsed
+        .value
+        .is_empty());
+    assert_eq!(parsed.warnings[0].code, WarningCode::TrailingComma);
+
+    let input = r#"Digest realm="a", nonce="b","#;
+    let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+    assert_eq!(
+        parsed
+            .warnings
+            .iter()
+            .map(seen)
+            .collect::<Vec<_>>(),
+        [(
+            Field::Credentials,
+            WarningCode::TrailingComma,
+            WarningKind::Recovered,
+            Some(input.len() - 1),
+            None
+        )]
+    );
+    assert!(SipAuthValue::parse_strict(input).is_err());
+
+    let split = sip_header::split_comma_entries_with_warnings("a, b,");
+    assert_eq!(split.value, ["a", " b"]);
+    assert_eq!(
+        split
+            .warnings
+            .iter()
+            .map(seen)
+            .collect::<Vec<_>>(),
+        [(
+            Field::Entry,
+            WarningCode::TrailingComma,
+            WarningKind::Recovered,
+            Some(2),
+            Some(1)
+        )]
+    );
+    assert!(sip_header::split_comma_entries_with_warnings("a, b")
+        .warnings
+        .is_empty());
 }
 
 #[test]
