@@ -416,6 +416,28 @@ mod equality_and_case {
     }
 
     #[test]
+    fn protocol_tokens_compare_without_case_and_print_as_sent() -> R {
+        same::<SipVia>(
+            "SIP/2.0/UDP 198.51.100.1;branch=x",
+            "sip/2.0/udp 198.51.100.1;branch=x",
+        );
+        same::<SipVia>("SIP/2.0A/TLS 198.51.100.1", "SIP/2.0a/tls 198.51.100.1");
+        same::<SipReason>("Q.850;cause=16", "q.850;cause=16");
+        assert_ne!(
+            SipVia::parse("SIP/2.0/UDP 198.51.100.1")?,
+            SipVia::parse("SIP/2.0/TCP 198.51.100.1")?
+        );
+        assert_ne!(SipReason::parse("SIP")?, SipReason::parse("Q.850")?);
+        let via = SipVia::parse("sip/2.0/Udp 198.51.100.1")?;
+        assert_eq!(via.to_string(), "sip/2.0/Udp 198.51.100.1");
+        assert_eq!(
+            SipReason::parse("q.850;cause=16")?.to_string(),
+            "q.850;cause=16"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn case_rules() -> R {
         let accept = SipAccept::parse("Application/SDP")?;
         assert_eq!(accept.entries()[0].media_range(), "application/sdp");
