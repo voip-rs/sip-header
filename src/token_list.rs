@@ -86,10 +86,13 @@ impl<'a> TokenList<'a> {
         header: SipHeader,
         rows: Vec<&'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<&'a str> = rows
+        let entries: Vec<(&'a str, bool)> = rows
             .into_iter()
-            .flat_map(|row| crate::split_entries(row, crate::QuoteStart::Param))
+            .flat_map(|row| crate::split_entries(row, crate::QuoteStart::Param).marked())
             .collect();
+        let comma = |i: usize, (entry, comma): (&str, bool)| {
+            comma.then(|| crate::trailing_comma(entry).in_entry(i))
+        };
         let mut list = TokenList {
             tokens: Vec::with_capacity(entries.len()),
             case_sensitive: matches!(
@@ -100,29 +103,38 @@ impl<'a> TokenList<'a> {
         let mut warnings = Vec::new();
         if entries
             .iter()
-            .all(|e| {
+            .all(|(e, _)| {
                 e.trim()
                     .is_empty()
             })
         {
             return match header {
-                SipHeader::Allow | SipHeader::Supported => Ok(Parsed::new(list, warnings)),
+                SipHeader::Allow | SipHeader::Supported => {
+                    warnings.extend(
+                        entries
+                            .into_iter()
+                            .enumerate()
+                            .filter_map(|(i, e)| comma(i, e)),
+                    );
+                    Ok(Parsed::new(list, warnings))
+                }
                 _ => Err(ParseError::empty(Field::Value)),
             };
         }
-        for (i, entry) in entries
+        for (i, marked) in entries
             .into_iter()
             .enumerate()
         {
             let mut found = Vec::new();
-            if let Some(token) = read_token(header, entry, &mut found) {
+            if let Some(token) = read_token(header, marked.0, &mut found) {
                 list.tokens
                     .push(token);
             }
             warnings.extend(
                 found
                     .into_iter()
-                    .map(|w| w.in_entry(i)),
+                    .map(|w| w.in_entry(i))
+                    .chain(comma(i, marked)),
             );
         }
         Ok(Parsed::new(list, warnings))

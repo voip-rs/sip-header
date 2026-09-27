@@ -49,9 +49,9 @@ pub trait TypedHeader<'a>: rows::FromRows<'a> {
 /// Every entry of every row, entry indexes counted across rows.
 fn list_rows<L: CommaList>(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<L>, ParseError> {
     if header.is_list() {
-        L::list_from_entries(
+        L::list_from_marked(
             rows.into_iter()
-                .flat_map(|row| crate::split_entries(row, L::QUOTE_START)),
+                .flat_map(|row| crate::split_entries(row, L::QUOTE_START).marked()),
         )
     } else {
         L::list_from_entries(rows)

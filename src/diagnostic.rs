@@ -294,6 +294,9 @@ pub enum WarningCode {
     /// A `"`, `<`, `>` or `,` inside a field RFC 3261 §25.1 makes a `token`,
     /// where it would reframe the list the value is written into; dropped.
     StrayDelimiter,
+    /// A `,` ending a list, which the list grammars' `x *(COMMA x)` (RFC
+    /// 3261 §25.1) never leave without an entry after it; ignored.
+    TrailingComma,
 }
 
 impl WarningCode {
@@ -337,6 +340,7 @@ impl WarningCode {
             WarningCode::ControlChar => "control-char",
             WarningCode::WarnCodeLeadingZero => "warn-code-leading-zero",
             WarningCode::StrayDelimiter => "stray-delimiter",
+            WarningCode::TrailingComma => "trailing-comma",
         }
     }
 }
@@ -394,6 +398,7 @@ mod tests {
             WarningCode::ControlChar,
             WarningCode::WarnCodeLeadingZero,
             WarningCode::StrayDelimiter,
+            WarningCode::TrailingComma,
         ];
         for code in &all {
             match code {
@@ -415,7 +420,8 @@ mod tests {
                 | WarningCode::AuthParamFlag
                 | WarningCode::ControlChar
                 | WarningCode::WarnCodeLeadingZero
-                | WarningCode::StrayDelimiter => {}
+                | WarningCode::StrayDelimiter
+                | WarningCode::TrailingComma => {}
             }
         }
         all

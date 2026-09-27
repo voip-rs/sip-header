@@ -168,7 +168,7 @@ pub(crate) trait CommaList: Sized {
         {
             return Self::blank().map(|v| Parsed::new(v, whole.warnings));
         }
-        Self::list_from_entries(crate::split_entries(raw, Self::QUOTE_START))
+        Self::list_from_marked(crate::split_entries(raw, Self::QUOTE_START).marked())
     }
 
     /// Parse entries already split, attributing errors and warnings to
@@ -176,21 +176,33 @@ pub(crate) trait CommaList: Sized {
     fn list_from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<Scrubbed<'a>> = entries
+        Self::list_from_marked(
+            entries
+                .into_iter()
+                .map(|e| (e, false)),
+        )
+    }
+
+    /// [`list_from_entries`](Self::list_from_entries), each entry paired
+    /// with whether a final comma follows it.
+    fn list_from_marked<'a>(
+        entries: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> Result<Parsed<Self>, ParseError> {
+        let entries: Vec<(Scrubbed<'a>, Option<ParseWarning>)> = entries
             .into_iter()
-            .map(scrub)
+            .map(|(e, comma)| (scrub(e), comma.then(|| crate::trailing_comma(e))))
             .collect();
         let mut warnings = Vec::new();
         if Self::BLANK_ENTRIES_ARE_EMPTY
             && entries
                 .iter()
-                .all(|e| {
+                .all(|(e, _)| {
                     e.text
                         .trim()
                         .is_empty()
                 })
         {
-            for (i, entry) in entries
+            for (i, (entry, comma)) in entries
                 .into_iter()
                 .enumerate()
             {
@@ -198,13 +210,14 @@ pub(crate) trait CommaList: Sized {
                     entry
                         .warnings
                         .into_iter()
+                        .chain(comma)
                         .map(|w| w.in_entry(i)),
                 );
             }
             return Self::blank().map(|v| Parsed::new(v, warnings));
         }
         let mut kept = Vec::with_capacity(entries.len());
-        for (i, entry) in entries
+        for (i, (entry, comma)) in entries
             .into_iter()
             .enumerate()
         {
@@ -221,6 +234,7 @@ pub(crate) trait CommaList: Sized {
             warnings.extend(
                 merge(entry.warnings, found)
                     .into_iter()
+                    .chain(comma)
                     .map(|w| w.in_entry(i)),
             );
             kept.extend(value);

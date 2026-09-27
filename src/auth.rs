@@ -459,7 +459,8 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Ok(auth);
     }
 
-    for param_str in crate::split_entries(rest, crate::QuoteStart::AuthParam) {
+    let split = crate::split_entries(rest, crate::QuoteStart::AuthParam);
+    for param_str in split.entries {
         let param_str = param_str.trim();
         if param_str.is_empty() {
             continue;
@@ -517,6 +518,12 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             let raw = param_str[eq + 1..].trim();
             warn(warnings, WarningCode::TrailingBackslash, at + raw.len() - 2);
         }
+    }
+    if split.trailing_comma {
+        warnings.push(
+            ParseWarning::new(Field::Credentials, WarningCode::TrailingComma)
+                .at(crate::offset_in(input, rest) + rest.len() - 1),
+        );
     }
     Ok(auth)
 }

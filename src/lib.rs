@@ -456,7 +456,8 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
 /// starts.
 ///
 /// Entries are returned untrimmed. An empty entry between two commas is
-/// kept; the empty text after a final comma is not an entry.
+/// kept; the empty text after a final comma is not an entry, and
+/// [`split_comma_entries_with_warnings`] reports that comma.
 ///
 /// ```
 /// assert_eq!(
@@ -465,7 +466,65 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
 /// );
 /// ```
 pub fn split_comma_entries(raw: &str) -> Vec<&str> {
-    split_entries(raw, QuoteStart::Anywhere)
+    split_entries(raw, QuoteStart::Anywhere).entries
+}
+
+/// [`split_comma_entries`], with a final comma reported as the list parsers
+/// report it: [`WarningCode::TrailingComma`] positioned in the last entry.
+///
+/// ```
+/// use sip_header::WarningCode;
+///
+/// let split = sip_header::split_comma_entries_with_warnings("a, b,");
+/// assert_eq!(split.value, ["a", " b"]);
+/// assert_eq!(split.warnings[0].code, WarningCode::TrailingComma);
+/// assert_eq!((split.warnings[0].position, split.warnings[0].entry), (Some(2), Some(1)));
+/// ```
+pub fn split_comma_entries_with_warnings(raw: &str) -> Parsed<Vec<&str>> {
+    let split = split_entries(raw, QuoteStart::Anywhere);
+    let warnings = split
+        .entries
+        .last()
+        .filter(|_| split.trailing_comma)
+        .map(|last| {
+            trailing_comma(last).in_entry(
+                split
+                    .entries
+                    .len()
+                    - 1,
+            )
+        })
+        .into_iter()
+        .collect();
+    Parsed::new(split.entries, warnings)
+}
+
+/// [`WarningCode::TrailingComma`] after `entry`, positioned in it.
+pub(crate) fn trailing_comma(entry: &str) -> ParseWarning {
+    ParseWarning::new(Field::Entry, WarningCode::TrailingComma).at(entry.len())
+}
+
+/// A list split at its top-level commas.
+pub(crate) struct Split<'a> {
+    /// The entries, untrimmed.
+    pub(crate) entries: Vec<&'a str>,
+    /// Whether a `,` ends the text, with no entry after it.
+    pub(crate) trailing_comma: bool,
+}
+
+impl<'a> Split<'a> {
+    /// Each entry with whether the final comma follows it.
+    pub(crate) fn marked(self) -> impl Iterator<Item = (&'a str, bool)> {
+        let last = self
+            .entries
+            .len()
+            .checked_sub(1)
+            .filter(|_| self.trailing_comma);
+        self.entries
+            .into_iter()
+            .enumerate()
+            .map(move |(i, e)| (e, Some(i) == last))
+    }
 }
 
 /// Where a list grammar lets a `quoted-string` start.
@@ -485,7 +544,7 @@ pub(crate) enum QuoteStart {
 
 /// [`split_comma_entries`], a `"` opening a quoted string only where
 /// `rule` lets one start.
-pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Vec<&str> {
+pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Split<'_> {
     let bytes = raw.as_bytes();
     let mut entries = Vec::new();
     let mut depth = 0u32;
@@ -512,11 +571,14 @@ pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Vec<&str> {
         }
         i += 1;
     }
+    let trailing_comma = start > 0 && start == raw.len();
     if start < raw.len() {
         entries.push(&raw[start..]);
     }
-
-    entries
+    Split {
+        entries,
+        trailing_comma,
+    }
 }
 
 /// Whether a `"` following `before`, the entry so far, stands where `rule`
@@ -705,6 +767,7 @@ mod tests {
     #[test]
     fn split_opens_quotes_only_where_the_grammar_does() {
         let raw = r#""a, b" x=", c" "d, e";f="g, h""#;
+        let split_entries = |raw, rule| split_entries(raw, rule).entries;
         assert_eq!(
             split_entries(raw, QuoteStart::Param),
             vec![r#""a"#, r#" b" x=""#, r#" c" "d"#, r#" e";f="g, h""#]
