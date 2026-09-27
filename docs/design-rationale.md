@@ -4,7 +4,11 @@
 
 Every list header splits through `split_comma_entries`, which skips commas inside `<...>` and inside quoted strings (honouring `quoted-pair`). No header gets a private splitter, because a list entry's quoted string (Warning's warn-text, an auth param, a display name) is as likely to hold a comma as its URI is.
 
-Quote state is tracked only at bracket depth zero. A conformant header never carries a quote inside `<...>`, so the guard costs nothing there; on malformed input it keeps a stray quote from holding the bracket open and swallowing every entry after it.
+A `"` opens a quoted string only at bracket depth zero, only where the list's grammar lets one start (a display name, a parameter value, warn-text), and only when it closes; any other quote is ordinary text. The public splitter, which does not know the grammar, accepts the union of those positions. A stray quote therefore never holds commas, and printing a leniently parsed list cannot pair it with a later quote and reframe the entries.
+
+## Token fields drop stray framing
+
+A `"`, `<`, `>` or `,` inside a token field is dropped by the lenient parser under a warning whose kind says data was lost, so no printed token carries list framing into the next reader. A tag the parameter reader framed as a closed quoted value is kept verbatim, because it prints with the same framing it arrived with.
 
 ## Header parameters parse through one quote-aware reader
 
@@ -40,7 +44,7 @@ Namespace prefixes are stripped before deserialization, so an element is matched
 
 ## Constructors refuse what would print as a different value
 
-A parser's leniency is what makes real traffic survivable; a value handed to a constructor or builder never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Every constructor, builder and deserializer therefore returns `Result`, and a value built through them prints something `parse_strict` reads back as the same value: control characters, a field's own delimiter, empty mandatory parts and out-of-range numbers are refused. NUL is refused even as a `quoted-pair` the grammar allows, and `<` inside a URI, because either would re-frame the value for a downstream reader. The resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a builder.
+A parser's leniency is what makes real traffic survivable; a value handed to a constructor or builder never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Every constructor, builder and deserializer therefore returns `Result`, and a value built through them prints something `parse_strict` reads back as the same value: control characters, a field's own delimiter, empty mandatory parts and out-of-range numbers are refused. NUL is refused even as a `quoted-pair` the grammar allows, and `<` inside a URI, because either would re-frame the value for a downstream reader. A URI or host handed to a constructor must itself read back strictly. A list whose grammar needs an entry cannot be built empty. The resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a builder.
 
 A leniently parsed value is not held to strict round-trip, only to safety: it never prints a CR, LF or NUL, and parsing its output yields it again. A folded line is whitespace and becomes one space; any other control character is dropped with a warning.
 
@@ -50,7 +54,7 @@ Every header-value type parses the way sip-uri does, so the two crates read one 
 
 ## Lenient parsing fails only where no value exists
 
-`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection. Where a type cannot hold what the input carries, such as a wildcard beside addresses or a Via entry without a host, the parser drops that part under a warning whose kind says data was lost.
+`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection. Where a type cannot hold what the input carries, such as a wildcard beside addresses or a Via entry without a host, the parser drops that part under a warning whose kind says data was lost. A list whose grammar needs an entry and has none left is `Err`.
 
 ## One error type for every header value
 
