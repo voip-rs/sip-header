@@ -4,12 +4,12 @@
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, DialogIdEdit, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
-    ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
-    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces,
-    SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
-    SipWarningEntry, UriInfo, UriInfoEntry, WarningCode,
+    ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ParseError,
+    ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
+    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry,
+    SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces, SipSecurity,
+    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry,
+    UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 

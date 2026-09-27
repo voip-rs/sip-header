@@ -1,11 +1,11 @@
 use sip_header::sip_uri::{Host, Uri, UriParse};
 use sip_header::{
-    AddrParts, ContactList, DialogFraming, DialogIdEdit, FaultCode, Field, HeaderParse,
-    HistoryInfo, HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
+    AddrParts, ContactList, DialogFraming, FaultCode, Field, HeaderParse, HistoryInfo,
+    HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
     SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
-    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipReason, SipReplaces,
-    SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
-    SipWarningEntry, UriInfo, UriInfoEntry,
+    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipReason,
+    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
+    SipWarning, SipWarningEntry, UriHeaderParse, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -123,7 +123,7 @@ fn addr_parts_read_uri_headers() -> R {
         ("SIP", Some("302"))
     );
     assert_eq!(
-        SipHeaderAddr::parse_list("<sip:a@example.com>, <sip:b@example.com>")?.len(),
+        SipHeaderAddrList::parse("<sip:a@example.com>, <sip:b@example.com>")?.len(),
         2
     );
     Ok(())
