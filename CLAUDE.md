@@ -70,7 +70,12 @@ test checks `SipHeader::ALL` filtered by `registry()` against
 
 1. Add the header name to `crates/sip-header-catalog/iana-sip-headers.txt` (alphabetical order)
 2. Add the variant to `SipHeader` in `crates/sip-header-catalog/src/lib.rs`
-3. Classify it in `is_list()` and `may_repeat()`, citing its ABNF
+3. Classify it in `is_list()` and `may_repeat()`, citing its ABNF from the
+   RFC text, never memory. Headers defined only in 3GPP TS 24.229 are
+   classified single and unverified until someone checks that spec.
+
+`define_header_enum!` callers get wire-name serde only through the macro's
+`serde,` arm plus the catalog's `serde` feature.
 
 ### Non-IANA headers
 
