@@ -9,7 +9,7 @@ use crate::contact::ContactList;
 use crate::diagnostic::Field;
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
-use crate::header_addr::{AddrList, SipHeaderAddr};
+use crate::header_addr::{SipHeaderAddr, SipHeaderAddrList};
 use crate::history_info::HistoryInfo;
 use crate::join::SipJoin;
 use crate::list::CommaList;
@@ -296,7 +296,7 @@ fn parse_present<L: CommaList>(rows: Vec<&str>) -> Result<Option<L>, ParseError>
 }
 
 fn parse_addr_list(rows: Vec<&str>) -> Result<Vec<SipHeaderAddr>, ParseError> {
-    parse_rows::<AddrList>(rows).map(|list| list.0)
+    Ok(parse_present::<SipHeaderAddrList>(rows)?.map_or_else(Vec::new, |l| l.into_entries()))
 }
 
 fn split_trim(rows: Vec<&str>) -> Vec<&str> {

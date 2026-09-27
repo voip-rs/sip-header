@@ -6,8 +6,9 @@ use std::fmt;
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::list::CommaList;
 use crate::params::HeaderParams;
-use crate::traits::{sealed, HeaderParse};
+use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 use crate::RawParam;
 
 /// An RFC 3326 `cause-value = 1*DIGIT`, kept as the digits were written.
@@ -185,14 +186,71 @@ impl fmt::Display for SipReason {
 
 impl sealed::Sealed for SipReason {}
 
+fn parse_reason_value(s: &str) -> Result<Parsed<SipReason>, ParseError> {
+    let mut warnings = Vec::new();
+    parse_reason(s, &mut warnings).map(|v| Parsed::new(v, warnings))
+}
+
 impl HeaderParse for SipReason {
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed(input, |s| {
-            let mut warnings = Vec::new();
-            parse_reason(s, &mut warnings).map(|v| Parsed::new(v, warnings))
-        })
+        crate::scrub::parse_scrubbed(input, parse_reason_value)
     }
 }
+
+impl UriHeaderParse for SipReason {
+    fn parse_uri_header_with_warnings(raw: &str) -> Result<Parsed<Self>, ParseError> {
+        crate::scrub::parse_uri_header(raw, parse_reason_value)
+    }
+}
+
+/// The Reason header: `reason-value *(COMMA reason-value)` (RFC 3326 §2),
+/// one reason or more.
+///
+/// ```
+/// use sip_header::{HeaderParse, SipReasonList};
+///
+/// let list = SipReasonList::parse(r#"SIP;cause=200;text="Call completed elsewhere", Q.850;cause=16"#)?;
+/// assert_eq!(list.len(), 2);
+/// assert_eq!(list.entries()[1].protocol(), "Q.850");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipReason`] compares. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct SipReasonList(Vec<SipReason>);
+
+list_type!(SipReasonList, SipReason, non_empty);
+
+impl CommaList for SipReasonList {
+    type Entry = SipReason;
+
+    fn parse_entry(
+        entry: &str,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Result<Option<SipReason>, ParseError> {
+        if entry
+            .trim()
+            .is_empty()
+        {
+            return Err(ParseError::malformed(
+                Field::Entry,
+                FaultCode::Missing,
+                None,
+            ));
+        }
+        parse_reason(entry, warnings).map(Some)
+    }
+
+    fn from_parsed(entries: Vec<SipReason>) -> Result<Self, ParseError> {
+        Self::new(entries)
+    }
+}
+
+list_parse!(SipReasonList);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]

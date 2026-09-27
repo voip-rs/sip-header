@@ -464,7 +464,7 @@ mod tests {
             Some(Some(ParseError::malformed(
                 Field::Value,
                 FaultCode::Missing,
-                Some(0)
+                None
             )))
         );
     }

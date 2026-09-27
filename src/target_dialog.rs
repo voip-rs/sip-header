@@ -91,7 +91,7 @@ mod tests {
     use super::*;
     use crate::diagnostic::Field;
     use crate::error::ParseError;
-    use crate::{DialogIdEdit, HeaderParse};
+    use crate::{HeaderParse, UriHeaderParse};
 
     #[test]
     fn parse_basic() {

@@ -150,6 +150,18 @@ pub(crate) fn parse_scrubbed<T>(
     }
 }
 
+/// Run `parse` over `raw` percent-decoded as an RFC 3261 §25.1 `hvalue`,
+/// `+` literal, then scrubbed; error positions are dropped.
+pub(crate) fn parse_uri_header<T>(
+    raw: &str,
+    parse: impl FnOnce(&str) -> Result<Parsed<T>, ParseError>,
+) -> Result<Parsed<T>, ParseError> {
+    let decoded = percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .map_err(|_| ParseError::malformed(Field::Value, crate::error::FaultCode::NotUtf8, None))?;
+    parse_scrubbed(&decoded, parse).map_err(ParseError::without_position)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,8 +3,6 @@
 
 use std::fmt::{self, Write as _};
 
-use percent_encoding::percent_decode_str;
-
 use crate::call_id::SipCallId;
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
@@ -61,9 +59,8 @@ impl DialogId {
         first_tag: String,
         second_tag: String,
     ) -> Result<Self, ParseError> {
-        SipCallId::parse(&call_id)?;
         Ok(DialogId {
-            call_id,
+            call_id: SipCallId::new(call_id)?.into(),
             first_tag: checked_token(Field::Tag, first_tag)?,
             second_tag: checked_token(Field::Tag, second_tag)?,
             early_only: false,
@@ -89,8 +86,7 @@ impl DialogId {
 
     /// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
     pub(crate) fn set_call_id(&mut self, call_id: String) -> Result<(), ParseError> {
-        SipCallId::parse(&call_id)?;
-        self.call_id = call_id;
+        self.call_id = SipCallId::new(call_id)?.into();
         Ok(())
     }
 
@@ -363,12 +359,8 @@ pub(crate) fn parse<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, ParseError> 
 
 /// Error positions are dropped; warning positions point into the decoded text.
 pub(crate) fn parse_uri_header<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, ParseError> {
-    let decoded = percent_decode_str(raw)
-        .decode_utf8()
-        .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))?;
-    crate::scrub::parse_scrubbed(&decoded, parse_framed::<T>)
+    crate::scrub::parse_uri_header(raw, parse_framed::<T>)
         .map(|p| p.map(|f| T::build(f, DialogFraming::UriHeader)))
-        .map_err(ParseError::without_position)
 }
 
 /// `value` when parsing its wire form in its own framing gives it back.
@@ -408,16 +400,7 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
         ));
     }
     let mut warnings = Vec::new();
-    if let Err(e) = SipCallId::parse(call_id) {
-        let within = match e {
-            ParseError::Malformed(fault) => fault.position,
-            _ => None,
-        };
-        warnings.push(
-            ParseWarning::new(Field::CallId, WarningCode::InvalidToken)
-                .at(crate::offset_in(raw, call_id) + within.unwrap_or(0)),
-        );
-    }
+    crate::call_id::report_breach(call_id, crate::offset_in(raw, call_id), &mut warnings);
 
     let mut first_tag: Option<String> = None;
     let mut second_tag: Option<String> = None;
@@ -494,7 +477,7 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
     Ok(Parsed::new(fields, warnings))
 }
 
-/// HeaderParse and DialogIdEdit for a type implementing [`DialogBuild`].
+/// HeaderParse and UriHeaderParse for a type implementing [`DialogBuild`].
 macro_rules! dialog_id_parse {
     ($Type:ident) => {
         impl $crate::traits::sealed::Sealed for $Type {}
@@ -507,7 +490,10 @@ macro_rules! dialog_id_parse {
             }
         }
 
-        impl $crate::traits::DialogIdEdit for $Type {
+        /// [`Display`](std::fmt::Display) re-encodes a value parsed this way
+        /// to the canonical form (uppercase hex) [`sip_uri::SipUri::header`]
+        /// returns.
+        impl $crate::traits::UriHeaderParse for $Type {
             fn parse_uri_header_with_warnings(
                 raw: &str,
             ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {

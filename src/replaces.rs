@@ -121,7 +121,7 @@ dialog_id_parse!(SipReplaces);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DialogIdEdit, HeaderParse};
+    use crate::{HeaderParse, UriHeaderParse};
     use sip_uri::WarningKind;
 
     use crate::diagnostic::{Field, WarningCode};

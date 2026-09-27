@@ -2,7 +2,6 @@
 
 use std::fmt::{self, Write as _};
 
-use percent_encoding::percent_decode_str;
 use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
@@ -10,9 +9,9 @@ use crate::error::{Fault, FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
-use crate::reason::{parse_reason, SipReason};
+use crate::reason::SipReason;
 use crate::replaces::SipReplaces;
-use crate::traits::{sealed, AddrParts, DialogIdEdit, HeaderParse, Redact};
+use crate::traits::{sealed, AddrParts, HeaderParse, Redact, UriHeaderParse};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
@@ -294,39 +293,27 @@ impl HeaderParse for SipHeaderAddr {
     }
 }
 
-impl AddrParts for SipHeaderAddr {
-    fn parse_list(raw: &str) -> Result<Vec<SipHeaderAddr>, ParseError> {
-        AddrList::list_from_str(raw).map(|p| {
-            p.value
-                .0
-        })
+impl SipHeaderAddr {
+    /// The value of the URI header `name`, when the URI is a SIP/SIPS URI
+    /// carrying one.
+    fn uri_header(&self, name: &str) -> Option<&str> {
+        Some(
+            self.sip_uri()?
+                .header(name)?
+                .unwrap_or_default(),
+        )
     }
+}
 
+impl AddrParts for SipHeaderAddr {
     fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
-        let value = self
-            .sip_uri()?
-            .header("Replaces")?
-            .unwrap_or_default();
-        Some(SipReplaces::parse_uri_header(value))
+        self.uri_header("Replaces")
+            .map(SipReplaces::parse_uri_header)
     }
 
     fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>> {
-        let raw = self
-            .sip_uri()?
-            .header("Reason")?
-            .unwrap_or_default();
-        Some(
-            percent_decode_str(raw)
-                .decode_utf8()
-                .map_err(|_| ParseError::malformed(Field::Value, FaultCode::NotUtf8, None))
-                .and_then(|decoded| {
-                    crate::scrub::parse_scrubbed(&decoded, |s| {
-                        let mut warnings = Vec::new();
-                        let value = parse_reason(s, &mut warnings)?;
-                        Ok(Parsed::new(value, warnings))
-                    })
-                }),
-        )
+        self.uri_header("Reason")
+            .map(SipReason::parse_uri_header_with_warnings)
     }
 }
 
@@ -489,11 +476,31 @@ pub(crate) fn parse_list_addr(
     Ok(parsed.value)
 }
 
-/// A comma list of `name-addr / addr-spec` entries, as Route and
-/// P-Asserted-Identity carry; an empty value is the empty list.
-pub(crate) struct AddrList(pub(crate) Vec<SipHeaderAddr>);
+/// A comma list of `(name-addr / addr-spec) *(SEMI param)` entries, as
+/// Route, Record-Route, Path, Service-Route, P-Asserted-Identity,
+/// P-Preferred-Identity and Diversion carry; each grammar needs one entry.
+///
+/// ```
+/// use sip_header::{HeaderParse, ListParse, SipHeaderAddrList};
+///
+/// let route = SipHeaderAddrList::parse("<sip:p1.example.com;lr>, <sip:p2.example.com;lr>")?;
+/// assert_eq!(route.len(), 2);
+/// let pai = SipHeaderAddrList::from_entries([r#""EXAMPLE CO" <sip:+15551234567@example.com>"#])?;
+/// assert_eq!(pai.entries()[0].display_name(), Some("EXAMPLE CO"));
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+///
+/// # Equality
+///
+/// Entry by entry, in order, each as [`SipHeaderAddr`] compares. [`Hash`]
+/// follows the same rule.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct SipHeaderAddrList(Vec<SipHeaderAddr>);
 
-impl CommaList for AddrList {
+list_type!(SipHeaderAddrList, SipHeaderAddr, non_empty);
+
+impl CommaList for SipHeaderAddrList {
     type Entry = SipHeaderAddr;
     const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
 
@@ -505,13 +512,11 @@ impl CommaList for AddrList {
     }
 
     fn from_parsed(entries: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {
-        Ok(Self(entries))
-    }
-
-    fn blank() -> Result<Self, ParseError> {
-        Ok(Self(Vec::new()))
+        Self::new(entries)
     }
 }
+
+list_parse!(SipHeaderAddrList);
 
 #[cfg(test)]
 mod tests {
@@ -883,7 +888,9 @@ mod tests {
     #[test]
     fn parse_list_multiple_entries() {
         let input = r#""Alice" <sip:alice@example.com>;tag=a, <sip:bob@example.com>, sip:carol@example.com"#;
-        let addrs = SipHeaderAddr::parse_list(input).unwrap();
+        let addrs = SipHeaderAddrList::parse(input)
+            .unwrap()
+            .into_entries();
         assert_eq!(addrs.len(), 3);
         assert_eq!(addrs[0].display_name(), Some("Alice"));
         assert_eq!(addrs[0].tag(), Some("a"));
@@ -906,19 +913,25 @@ mod tests {
 
     #[test]
     fn parse_list_single_entry() {
-        let addrs = SipHeaderAddr::parse_list("<sip:alice@example.com>").unwrap();
+        let addrs = SipHeaderAddrList::parse("<sip:alice@example.com>")
+            .unwrap()
+            .into_entries();
         assert_eq!(addrs.len(), 1);
     }
 
     #[test]
-    fn parse_list_empty_returns_empty() {
-        let addrs = SipHeaderAddr::parse_list("").unwrap();
-        assert!(addrs.is_empty());
+    fn parse_list_empty_is_error() {
+        assert_eq!(
+            SipHeaderAddrList::parse(""),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     #[test]
     fn scheme_less_entry_is_lenient_but_not_strict() {
-        let addrs = SipHeaderAddr::parse_list("not-a-uri, <sip:ok@example.com>").unwrap();
+        let addrs = SipHeaderAddrList::parse("not-a-uri, <sip:ok@example.com>")
+            .unwrap()
+            .into_entries();
         assert_eq!(addrs.len(), 2);
         let parsed = SipHeaderAddr::parse_with_warnings("not-a-uri").unwrap();
         assert_eq!(
@@ -1078,7 +1091,9 @@ mod tests {
     fn parse_list_host_only_ipv4_with_feature_tag_param() {
         let input =
             "<sip:198.51.100.7:5060;transport=udp>;+urn%3Aemergency%3Amedia-feature.psap-call-control";
-        let addrs = SipHeaderAddr::parse_list(input).unwrap();
+        let addrs = SipHeaderAddrList::parse(input)
+            .unwrap()
+            .into_entries();
         assert_eq!(addrs.len(), 1);
         assert_eq!(
             addrs[0]

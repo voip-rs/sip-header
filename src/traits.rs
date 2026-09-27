@@ -72,30 +72,42 @@ pub trait ListParse: HeaderParse {
     fn from_entries<'a>(entries: impl IntoIterator<Item = &'a str>) -> Result<Self, ParseError> {
         Self::from_entries_with_warnings(entries).map(|parsed| parsed.value)
     }
+
+    /// Build from entries, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
+    fn from_entries_strict<'a>(
+        entries: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, ParseError> {
+        Self::from_entries_with_warnings(entries)?.into_strict()
+    }
 }
 
-/// The URI-header framing of a dialog identifier.
-pub trait DialogIdEdit: HeaderParse {
-    /// Parse the percent-encoded framing found in a URI header
-    /// (`<sip:…?Header=…>`), where `@`, `;` and `=` stay percent-encoded.
-    ///
-    /// Accepts the canonical value returned by [`sip_uri::SipUri::header`];
-    /// [`Display`](fmt::Display) re-encodes to that same canonical form
-    /// (uppercase hex). Error positions are dropped: they would point into
-    /// the decoded text.
+/// Parsing the percent-encoded form a value takes as a URI header
+/// (`<sip:…?Replaces=…>`), where `@`, `;` and `=` stay percent-encoded.
+///
+/// The value is percent-decoded as an RFC 3261 §25.1 `hvalue`, `+` staying
+/// a literal plus sign, then parsed as the header value. Error positions are
+/// dropped and warning positions point into the decoded text, since neither
+/// would point into `raw`.
+///
+/// ```
+/// use sip_header::{SipReason, UriHeaderParse};
+///
+/// let reason = SipReason::parse_uri_header("SIP%3Bcause%3D302")?;
+/// assert_eq!(reason.protocol(), "SIP");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub trait UriHeaderParse: HeaderParse {
+    /// Parse, reporting accepted grammar breaches beside the value.
+    fn parse_uri_header_with_warnings(raw: &str) -> Result<Parsed<Self>, ParseError>;
+
+    /// Parse leniently, discarding the warnings.
     fn parse_uri_header(raw: &str) -> Result<Self, ParseError> {
         Self::parse_uri_header_with_warnings(raw).map(|parsed| parsed.value)
     }
 
-    /// Parse as [`parse_uri_header`](Self::parse_uri_header) does, reporting
-    /// accepted grammar breaches beside the value.
-    ///
-    /// Warning positions point into the percent-decoded value, not `raw`.
-    fn parse_uri_header_with_warnings(raw: &str) -> Result<Parsed<Self>, ParseError>;
-
-    /// Parse as [`parse_uri_header`](Self::parse_uri_header) does, refusing
-    /// the first grammar breach as [`ParseError::NonConformant`], whose
-    /// position points into the percent-decoded value.
+    /// Parse, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
     fn parse_uri_header_strict(raw: &str) -> Result<Self, ParseError> {
         Self::parse_uri_header_with_warnings(raw)?.into_strict()
     }
@@ -126,28 +138,20 @@ pub trait Redact: sealed::Sealed {
     fn redacted<'a>(&'a self, how: sip_uri::Redaction<'a>) -> impl fmt::Display + 'a;
 }
 
-/// Parsing what an address carries inside its URI, and address lists.
+/// Parsing the headers an address carries inside its URI.
 pub trait AddrParts: Sized + sealed::Sealed {
-    /// Parse a comma-separated list of `name-addr` / `addr-spec` values.
-    ///
-    /// Splits on commas at bracket depth zero (via
-    /// [`split_comma_entries`](crate::split_comma_entries)). Returns an
-    /// empty `Vec` for empty input, and fails on the first entry that
-    /// yields no value.
-    fn parse_list(raw: &str) -> Result<Vec<Self>, ParseError>;
-
-    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present.
+    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present,
+    /// through [`UriHeaderParse`].
     ///
     /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
     /// `Replaces` header; `Some(Err)` when the value doesn't conform to
     /// RFC 3891 §6.1.
     fn replaces(&self) -> Option<Result<SipReplaces, ParseError>>;
 
-    /// Parse the RFC 3326 Reason carried as the URI's `?Reason=` header.
+    /// Parse the RFC 3326 Reason carried as the URI's `?Reason=` header,
+    /// through [`UriHeaderParse`].
     ///
-    /// The value is percent-decoded as an RFC 3261 `hvalue`; `+` is a
-    /// literal plus sign, not a space. Returns `None` if no Reason is
-    /// present, `Err` if percent-decoding produces invalid UTF-8.
+    /// Returns `None` if no Reason is present.
     fn reason(&self) -> Option<Result<SipReason, ParseError>> {
         self.reason_with_warnings()
             .map(|r| r.map(|parsed| parsed.value))
@@ -155,7 +159,5 @@ pub trait AddrParts: Sized + sealed::Sealed {
 
     /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
     /// breaches beside the value.
-    ///
-    /// Positions point into the percent-decoded Reason value, not the URI.
     fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>>;
 }
