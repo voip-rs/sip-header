@@ -243,14 +243,58 @@ mod tests {
     #[test]
     fn uri_error_keeps_source() {
         let e = ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4).in_entry(1);
+        let ParseError::Uri(fault) = &e else {
+            panic!("not Uri");
+        };
+        assert_eq!((fault.position(), fault.entry()), (Some(4), Some(1)));
+        let cause = Some(sip_uri::ParseError::SchemeMismatch.to_string());
+        assert_eq!(
+            fault
+                .source()
+                .map(ToString::to_string),
+            cause
+        );
         assert_eq!(
             e.source()
                 .map(ToString::to_string),
-            Some(sip_uri::ParseError::SchemeMismatch.to_string())
+            cause
+        );
+        assert_eq!(e.to_string(), "invalid URI at byte 4 in entry 1");
+        assert_eq!(fault.to_string(), e.to_string());
+        assert_eq!(
+            ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4)
+                .without_position()
+                .to_string(),
+            "invalid URI"
+        );
+    }
+
+    #[test]
+    fn row_error_display_names_the_layer() {
+        let row = RowError::malformed().in_entry(3);
+        let e = ParseError::from(row.clone());
+        assert_eq!(e.to_string(), "row error");
+        assert_eq!(
+            e.source()
+                .map(ToString::to_string),
+            Some(row.to_string())
+        );
+    }
+
+    #[test]
+    fn empty_is_a_fault() {
+        let e = ParseError::empty(Field::CallId).in_entry(2);
+        assert_eq!(
+            e,
+            ParseError::Malformed(Fault::new(Field::CallId, FaultCode::Empty).in_entry(2))
+        );
+        assert_eq!(
+            e.to_string(),
+            "malformed header value: call-id: empty in entry 2"
         );
         assert!(e
-            .to_string()
-            .ends_with("at byte 4 in entry 1"));
+            .source()
+            .is_none());
     }
 
     #[test]

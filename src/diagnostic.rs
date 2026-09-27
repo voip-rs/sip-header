@@ -297,25 +297,123 @@ mod tests {
 
     #[test]
     fn kind_follows_code() {
-        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent, Some(3));
+        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent).at(3);
         assert_eq!(w.kind, WarningKind::Lost);
-        let w = ParseWarning::new(Field::DisplayName, WarningCode::InvalidToken, None);
+        let w = ParseWarning::new(Field::DisplayName, WarningCode::InvalidToken);
         assert_eq!(w.kind, WarningKind::Recovered);
     }
 
     #[test]
     fn display_names_location_never_text() {
-        let w =
-            ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote, Some(12)).in_entry(2);
+        let w = ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote)
+            .at(12)
+            .in_entry(2);
         assert_eq!(
             w.to_string(),
             "param: unterminated-quote at byte 12 in entry 2"
         );
     }
 
+    /// Every code of this crate; a new variant fails to compile here.
+    fn own_codes() -> Vec<WarningCode> {
+        let all = vec![
+            WarningCode::TrailingContent,
+            WarningCode::InvalidToken,
+            WarningCode::UnterminatedQuote,
+            WarningCode::TrailingBackslash,
+            WarningCode::WildcardNotAlone,
+            WarningCode::MissingIndex,
+            WarningCode::NotNameAddr,
+            WarningCode::InvalidCause,
+            WarningCode::UnquotedText,
+            WarningCode::MissingBrackets,
+            WarningCode::SkippedEntry,
+            WarningCode::EmptyEntry,
+            WarningCode::MissingHost,
+            WarningCode::InvalidQvalue,
+        ];
+        for code in &all {
+            match code {
+                WarningCode::Uri(_)
+                | WarningCode::TrailingContent
+                | WarningCode::InvalidToken
+                | WarningCode::UnterminatedQuote
+                | WarningCode::TrailingBackslash
+                | WarningCode::WildcardNotAlone
+                | WarningCode::MissingIndex
+                | WarningCode::NotNameAddr
+                | WarningCode::InvalidCause
+                | WarningCode::UnquotedText
+                | WarningCode::MissingBrackets
+                | WarningCode::SkippedEntry
+                | WarningCode::EmptyEntry
+                | WarningCode::MissingHost
+                | WarningCode::InvalidQvalue => {}
+            }
+        }
+        all
+    }
+
+    fn uri_codes() -> Vec<sip_uri::WarningCode> {
+        use sip_uri::WarningCode as U;
+        vec![
+            U::InvalidChar,
+            U::MalformedEscape,
+            U::EmptyName,
+            U::EmptySegment,
+            U::PasswordWithoutUser,
+            U::SignedPort,
+            U::EmptyPort,
+            U::InvalidHostLabel,
+            U::NumericToplabel,
+            U::EscapedHost,
+            U::UnexpectedFragment,
+            U::EmptyFragment,
+            U::HeaderShapedUser,
+            U::MissingPhoneContext,
+            U::EmptyComponent,
+            U::InvalidScheme,
+            U::MissingScheme,
+            U::Wildcard,
+            U::MissingHost,
+            U::InvalidIpv6,
+            U::InvalidPort,
+            U::TrailingContent,
+            U::MissingValue,
+            U::EmptyUser,
+            U::EmptyUserinfo,
+            U::MissingNumber,
+            U::NoDigits,
+            U::MissingNid,
+            U::MissingNss,
+            U::InvalidNid,
+        ]
+    }
+
+    #[test]
+    fn code_names_are_injective() {
+        let mut seen = std::collections::HashSet::new();
+        for code in own_codes() {
+            assert!(seen.insert(code.as_str()), "{code:?}");
+        }
+        for code in uri_codes() {
+            let ours = WarningCode::Uri(code).as_str();
+            assert_eq!(ours, format!("uri-{}", code.as_str()), "{code:?}");
+            assert!(seen.insert(ours), "{code:?}");
+        }
+        assert_ne!(
+            WarningCode::Uri(sip_uri::WarningCode::TrailingContent).as_str(),
+            WarningCode::TrailingContent.as_str()
+        );
+        assert_ne!(
+            WarningCode::Uri(sip_uri::WarningCode::MissingHost).as_str(),
+            WarningCode::MissingHost.as_str()
+        );
+    }
+
     #[test]
     fn into_strict_returns_first_warning() {
-        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent, Some(1));
+        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent).at(1);
         let p = Parsed::new((), vec![w]);
         assert_eq!(p.into_strict(), Err(ParseError::NonConformant(w)));
         assert_eq!(Parsed::new(5, Vec::new()).into_strict(), Ok(5));

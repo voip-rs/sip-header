@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert_eq!(HistoryInfo::parse(""), Err(ParseError::Empty));
+        assert_eq!(HistoryInfo::parse(""), Err(ParseError::empty(Field::Value)));
     }
 
     // -- Index accessor tests --
@@ -656,7 +656,7 @@ mod tests {
     fn reason_without_protocol_is_error() {
         assert_eq!(
             entry_reason("").map(|r| r.err()),
-            Some(Some(ParseError::Empty))
+            Some(Some(ParseError::empty(Field::Value)))
         );
         assert_eq!(
             entry_reason("%20%3Bcause%3D16").map(|r| r.err()),

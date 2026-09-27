@@ -1119,17 +1119,25 @@ mod tests {
     }
 
     #[test]
+    fn blank_addr_is_empty() {
+        assert_eq!(
+            SipHeaderAddr::parse(" "),
+            Err(ParseError::empty(Field::Addr))
+        );
+    }
+
+    #[test]
     fn valueless_uri_header_is_error_not_absent() {
         let addr = SipHeaderAddr::parse("<sip:bob@203.0.113.9?Replaces&Reason>").unwrap();
         assert_eq!(
             addr.replaces()
                 .map(|r| r.err()),
-            Some(Some(ParseError::Empty))
+            Some(Some(ParseError::empty(Field::Value)))
         );
         assert_eq!(
             addr.reason()
                 .map(|r| r.err()),
-            Some(Some(ParseError::Empty))
+            Some(Some(ParseError::empty(Field::Value)))
         );
     }
 

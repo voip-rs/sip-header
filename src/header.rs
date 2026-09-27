@@ -940,7 +940,7 @@ mod multi_row_tests {
     #[test]
     fn via_blank_rows() {
         let h = rows(&[("Via", &[""])]);
-        assert_eq!(h.via(), Err(ParseError::Empty));
+        assert_eq!(h.via(), Err(ParseError::empty(Field::Value)));
         let h = rows(&[("Via", &["   "])]);
         assert_eq!(
             h.via(),

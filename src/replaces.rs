@@ -194,8 +194,11 @@ mod tests {
 
     #[test]
     fn empty_fails() {
-        assert_eq!(SipReplaces::parse(""), Err(ParseError::Empty));
-        assert_eq!(SipReplaces::parse("  "), Err(ParseError::Empty));
+        assert_eq!(SipReplaces::parse(""), Err(ParseError::empty(Field::Value)));
+        assert_eq!(
+            SipReplaces::parse("  "),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     #[test]

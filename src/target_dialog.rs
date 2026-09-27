@@ -104,7 +104,10 @@ mod tests {
 
     #[test]
     fn empty_fails() {
-        assert_eq!(SipTargetDialog::parse(""), Err(ParseError::Empty));
+        assert_eq!(
+            SipTargetDialog::parse(""),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     #[test]

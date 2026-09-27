@@ -1,31 +1,72 @@
 use std::collections::HashMap;
 
 use sip_header::{
-    Fault, FaultCode, Field, ParseError, RowError, RowErrorKind, SipHeader, SipHeaderLookup,
-    SipHeaderRows, SipHeaderRowsExt,
+    Fault, FaultCode, Field, ParseError, ParseWarning, Parsed, RowError, RowErrorKind, SipHeader,
+    SipHeaderLookup, SipHeaderRows, SipHeaderRowsExt, WarningCode,
 };
 
-fn too_many() -> ParseError {
+fn empty_entry() -> ParseError {
     ParseError::Malformed(
-        Fault::new(Field::Value, FaultCode::TooManyEntries)
+        Fault::new(Field::Value, FaultCode::Empty)
             .at(7)
-            .in_entry(4000),
+            .in_entry(3),
     )
 }
 
 #[test]
 fn fault_is_constructible_outside_the_crate() {
-    let ParseError::Malformed(fault) = too_many() else {
+    let ParseError::Malformed(fault) = empty_entry() else {
         panic!("not Malformed");
     };
     assert_eq!(
         (fault.field, fault.code, fault.position, fault.entry),
-        (Field::Value, FaultCode::TooManyEntries, Some(7), Some(4000))
+        (Field::Value, FaultCode::Empty, Some(7), Some(3))
     );
     assert_eq!(
-        too_many().to_string(),
-        "malformed header value: value: too-many-entries at byte 7 in entry 4000"
+        empty_entry().to_string(),
+        "malformed header value: value: empty at byte 7 in entry 3"
     );
+}
+
+#[test]
+fn warnings_are_constructible_outside_the_crate() {
+    let w = ParseWarning::new(Field::Param, WarningCode::TrailingContent)
+        .at(5)
+        .in_entry(1);
+    assert_eq!(
+        (w.field, w.code, w.position, w.entry, w.kind),
+        (
+            Field::Param,
+            WarningCode::TrailingContent,
+            Some(5),
+            Some(1),
+            sip_header::sip_uri::WarningKind::Lost
+        )
+    );
+    let parsed = Parsed::new("value", vec![w]);
+    assert!(parsed.has_warnings());
+    assert_eq!(parsed.into_strict(), Err(ParseError::NonConformant(w)));
+    assert_eq!(Parsed::new(1, Vec::new()).into_strict(), Ok(1));
+}
+
+#[test]
+fn uri_fault_names_the_layer_and_keeps_the_cause() {
+    use sip_header::{HeaderParse, SipVia, UriFault};
+
+    let e = SipVia::parse("SIP/2.0/UDP [zz]:5060").unwrap_err();
+    let ParseError::Uri(fault) = &e else {
+        panic!("not Uri");
+    };
+    let fault: &UriFault = fault;
+    assert_eq!((fault.position(), fault.entry()), (Some(12), Some(0)));
+    assert_eq!(e.to_string(), "invalid URI at byte 12 in entry 0");
+    let cause = std::error::Error::source(&e).expect("a source");
+    assert!(cause
+        .downcast_ref::<sip_header::sip_uri::ParseError>()
+        .is_some());
+    assert!(!e
+        .to_string()
+        .contains(&cause.to_string()));
 }
 
 fn row_error() -> RowError {
@@ -42,18 +83,10 @@ fn row_error_is_kept_as_the_source() {
     assert_eq!(e.to_string(), "too-many-entries: 4001, limit 4000");
     let parsed = ParseError::from(e.clone());
     assert_eq!(parsed, ParseError::Row(e.clone()));
-    assert_eq!(
-        parsed.to_string(),
-        "header rows: too-many-entries: 4001, limit 4000"
-    );
+    assert_eq!(parsed.to_string(), "row error");
     assert_eq!(
         std::error::Error::source(&parsed).map(ToString::to_string),
         Some(e.to_string())
-    );
-    let malformed = RowError::malformed().in_entry(3);
-    assert_eq!(
-        ParseError::from(malformed).to_string(),
-        "header rows: malformed in entry 3"
     );
 }
 

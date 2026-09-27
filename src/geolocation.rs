@@ -297,8 +297,14 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert_eq!(SipGeolocation::parse(""), Err(ParseError::Empty));
-        assert_eq!(SipGeolocation::parse(" \t"), Err(ParseError::Empty));
+        assert_eq!(
+            SipGeolocation::parse(""),
+            Err(ParseError::empty(Field::Value))
+        );
+        assert_eq!(
+            SipGeolocation::parse(" \t"),
+            Err(ParseError::empty(Field::Value))
+        );
         assert!(parse("junk").is_empty());
     }
 
@@ -500,7 +506,7 @@ mod tests {
             .is_empty());
         assert_eq!(
             SipGeolocation::parse_with_warnings(" "),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 }

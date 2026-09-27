@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn an_empty_word_is_not_a_call_id() {
-        assert_eq!(SipCallId::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipCallId::parse(""), Err(ParseError::empty(Field::CallId)));
         for (raw, pos) in [("abc@", 4), ("@example.com", 0)] {
             assert_eq!(
                 SipCallId::parse(raw),

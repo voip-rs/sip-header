@@ -389,10 +389,10 @@ mod tests {
     #[test]
     fn parse_empty_input() {
         let result = SipAuthValue::parse("");
-        assert_eq!(result, Err(ParseError::Empty));
+        assert_eq!(result, Err(ParseError::empty(Field::Value)));
 
         let result = SipAuthValue::parse("   ");
-        assert_eq!(result, Err(ParseError::Empty));
+        assert_eq!(result, Err(ParseError::empty(Field::Value)));
     }
 
     #[test]

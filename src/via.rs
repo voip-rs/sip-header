@@ -523,12 +523,12 @@ mod tests {
 
     #[test]
     fn test_empty_via() {
-        assert_eq!(SipVia::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipVia::parse(""), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]
     fn test_empty_via_whitespace() {
-        assert_eq!(SipVia::parse("   "), Err(ParseError::Empty));
+        assert_eq!(SipVia::parse("   "), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]
@@ -760,14 +760,10 @@ mod tests {
 
     #[test]
     fn unreadable_bracketed_host_is_uri_error() {
-        assert!(matches!(
-            SipVia::parse("SIP/2.0/UDP [zz]:5060"),
-            Err(ParseError::Uri {
-                position: Some(12),
-                entry: Some(0),
-                ..
-            })
-        ));
+        let Err(ParseError::Uri(fault)) = SipVia::parse("SIP/2.0/UDP [zz]:5060") else {
+            panic!("not a URI error");
+        };
+        assert_eq!((fault.position(), fault.entry()), (Some(12), Some(0)));
     }
 
     #[test]
@@ -852,7 +848,7 @@ mod tests {
     fn from_entries_empty_is_empty_error() {
         assert_eq!(
             SipVia::from_entries(std::iter::empty::<&str>()),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 
@@ -870,6 +866,9 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(SipVia::parse_with_warnings("  "), Err(ParseError::Empty));
+        assert_eq!(
+            SipVia::parse_with_warnings("  "),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 }

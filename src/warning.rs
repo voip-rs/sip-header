@@ -330,8 +330,11 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        assert_eq!(SipWarning::parse(""), Err(ParseError::Empty));
-        assert_eq!(SipWarning::parse("   "), Err(ParseError::Empty));
+        assert_eq!(SipWarning::parse(""), Err(ParseError::empty(Field::Value)));
+        assert_eq!(
+            SipWarning::parse("   "),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 
     fn fault(field: Field, code: FaultCode, position: Option<usize>) -> ParseError {
@@ -480,7 +483,7 @@ mod tests {
     fn from_entries_empty_is_empty_error() {
         assert_eq!(
             SipWarning::from_entries(std::iter::empty::<&str>()),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 

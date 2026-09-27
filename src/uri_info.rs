@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert_eq!(UriInfo::parse(""), Err(ParseError::Empty));
+        assert_eq!(UriInfo::parse(""), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn parse_fails_only_when_all_entries_bad() {
-        assert_eq!(UriInfo::parse(",,, "), Err(ParseError::Empty));
+        assert_eq!(UriInfo::parse(",,, "), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]
@@ -660,10 +660,13 @@ mod tests {
 
     #[test]
     fn nothing_valued_is_empty_error() {
-        assert_eq!(UriInfo::parse(",<>, ;x"), Err(ParseError::Empty));
+        assert_eq!(
+            UriInfo::parse(",<>, ;x"),
+            Err(ParseError::empty(Field::Value))
+        );
         assert_eq!(
             UriInfo::from_entries_with_warnings(["<>"]),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 
@@ -716,6 +719,9 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(UriInfo::parse_with_warnings(",,, "), Err(ParseError::Empty));
+        assert_eq!(
+            UriInfo::parse_with_warnings(",,, "),
+            Err(ParseError::empty(Field::Value))
+        );
     }
 }

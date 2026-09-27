@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        assert_eq!(SipSecurity::parse(""), Err(ParseError::Empty));
+        assert_eq!(SipSecurity::parse(""), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
     fn from_entries_empty_is_empty_error() {
         assert_eq!(
             SipSecurity::from_entries(std::iter::empty::<&str>()),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(SipSecurity::parse_strict(raw), Ok(parsed.value));
         assert_eq!(
             SipSecurity::from_entries_with_warnings(std::iter::empty::<&str>()),
-            Err(ParseError::Empty)
+            Err(ParseError::empty(Field::Value))
         );
     }
 }
