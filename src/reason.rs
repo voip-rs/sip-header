@@ -2,6 +2,7 @@
 //! header carries it.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
@@ -96,11 +97,11 @@ impl fmt::Display for SipReasonCause {
 ///
 /// # Equality
 ///
-/// Two reasons are equal when their wire forms are: the protocol compares
-/// byte for byte, the cause digit for digit, the text unescaped, and the
-/// extension parameters as [`HeaderParams`] does. [`Hash`] follows the same
-/// rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// The protocol compares case-insensitively (RFC 3261 §7.3.1) and keeps the
+/// case it was written in; the cause compares digit for digit, the text
+/// unescaped, and the extension parameters as [`HeaderParams`] does.
+/// [`Hash`] follows the same rule.
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -152,7 +153,8 @@ impl SipReason {
         Ok(self)
     }
 
-    /// The protocol (e.g. `"SIP"`, `"Q.850"`), case as sent.
+    /// The protocol (e.g. `"SIP"`, `"Q.850"`), case as sent; it compares
+    /// case-insensitively.
     pub fn protocol(&self) -> &str {
         &self.protocol
     }
@@ -167,6 +169,30 @@ impl SipReason {
     pub fn text(&self) -> Option<&str> {
         self.text
             .as_deref()
+    }
+}
+
+impl PartialEq for SipReason {
+    fn eq(&self, other: &Self) -> bool {
+        self.protocol
+            .eq_ignore_ascii_case(&other.protocol)
+            && self.cause == other.cause
+            && self.text == other.text
+            && self.params == other.params
+    }
+}
+
+impl Eq for SipReason {}
+
+impl Hash for SipReason {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        crate::hash_ignore_ascii_case(&self.protocol, state);
+        self.cause
+            .hash(state);
+        self.text
+            .hash(state);
+        self.params
+            .hash(state);
     }
 }
 

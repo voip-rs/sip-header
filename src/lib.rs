@@ -190,6 +190,15 @@ pub(crate) fn is_token(s: &str) -> bool {
             .all(is_token_char)
 }
 
+/// Hash `s` as [`str::eq_ignore_ascii_case`] compares it, terminated so
+/// adjacent fields cannot run together.
+pub(crate) fn hash_ignore_ascii_case<H: std::hash::Hasher>(s: &str, state: &mut H) {
+    for b in s.bytes() {
+        state.write_u8(b.to_ascii_lowercase());
+    }
+    state.write_u8(0xff);
+}
+
 /// Whether `value` opens a quoted-string that never closes.
 pub(crate) fn opens_unterminated_quote(value: &str) -> bool {
     value

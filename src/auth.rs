@@ -242,13 +242,7 @@ impl Eq for SipAuthValue {}
 
 impl Hash for SipAuthValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        for b in self
-            .scheme
-            .bytes()
-        {
-            state.write_u8(b.to_ascii_lowercase());
-        }
-        state.write_u8(0xff);
+        crate::hash_ignore_ascii_case(&self.scheme, state);
         self.params
             .hash(state);
         self.token68

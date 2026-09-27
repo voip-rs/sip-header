@@ -197,6 +197,7 @@ assert_eq!(all.headers[1].0, "f");  // not "From"
 | `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
+| Via `sent-protocol` parts and the Reason protocol compare byte for byte | case-insensitively, printed as sent |
 | Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
 | `param()` returns `Option<&str>` on Accept*, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>`; `Some(None)` is a flag |
 | `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |

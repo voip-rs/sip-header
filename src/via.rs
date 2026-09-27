@@ -4,6 +4,7 @@
 //! [`SkippedEntry`](crate::WarningCode::SkippedEntry).
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use sip_uri::{Host, UriParse};
 
@@ -31,10 +32,11 @@ use crate::{is_token, RawParam};
 ///
 /// # Equality
 ///
-/// Two entries are equal when their wire forms are: the `sent-protocol`
-/// parts byte for byte, the host as [`Host`] compares it, the port, and
-/// the parameters as [`HeaderParams`] does. [`Hash`] follows the same rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// The `sent-protocol` parts compare case-insensitively (RFC 3261 §7.3.1)
+/// and keep the case they were written in; the host compares as [`Host`]
+/// does, then the port, and the parameters as [`HeaderParams`] does.
+/// [`Hash`] follows the same rule.
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -128,17 +130,20 @@ impl SipViaEntry {
         self
     }
 
-    /// Returns the protocol name (e.g., "SIP"), case as sent.
+    /// Returns the protocol name (e.g., "SIP"), case as sent; it compares
+    /// case-insensitively.
     pub fn protocol(&self) -> &str {
         &self.protocol_name
     }
 
-    /// Returns the protocol version (e.g., "2.0").
+    /// Returns the protocol version (e.g., "2.0"), case as sent; it compares
+    /// case-insensitively.
     pub fn version(&self) -> &str {
         &self.protocol_version
     }
 
-    /// Returns the transport protocol (e.g., "UDP", "TCP", "TLS"), case as sent.
+    /// Returns the transport protocol (e.g., "UDP", "TCP", "TLS"), case as
+    /// sent; it compares case-insensitively.
     pub fn transport(&self) -> &str {
         &self.transport
     }
@@ -172,6 +177,41 @@ impl SipViaEntry {
     /// - `Some(Some(port))` if present with a value
     pub fn rport(&self) -> Option<Option<u16>> {
         self.rport
+    }
+}
+
+impl PartialEq for SipViaEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.protocol_name
+            .eq_ignore_ascii_case(&other.protocol_name)
+            && self
+                .protocol_version
+                .eq_ignore_ascii_case(&other.protocol_version)
+            && self
+                .transport
+                .eq_ignore_ascii_case(&other.transport)
+            && self.host == other.host
+            && self.port == other.port
+            && self.params == other.params
+            && self.rport == other.rport
+    }
+}
+
+impl Eq for SipViaEntry {}
+
+impl Hash for SipViaEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        crate::hash_ignore_ascii_case(&self.protocol_name, state);
+        crate::hash_ignore_ascii_case(&self.protocol_version, state);
+        crate::hash_ignore_ascii_case(&self.transport, state);
+        self.host
+            .hash(state);
+        self.port
+            .hash(state);
+        self.params
+            .hash(state);
+        self.rport
+            .hash(state);
     }
 }
 
