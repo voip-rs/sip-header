@@ -5,34 +5,51 @@
 //! stacks, handling the header-level grammar: display names, header parameters,
 //! and structured header values.
 //!
-//! # Modules
+//! Every type is at the crate root. Parsing, lookup and redaction are
+//! extension traits, gathered in [`prelude`] together with sip-uri's
+//! [`UriParse`](sip_uri::UriParse) and [`UriRedact`](sip_uri::UriRedact).
 //!
-//! - [`header_addr`] — RFC 3261 `name-addr` with header-level parameters
-//! - [`params`] — [`HeaderParams`], the parameters every value type holds
-//! - [`header`] — SIP header name catalog and [`SipHeaderLookup`] trait
-//! - [`call_id`] — RFC 3261 Call-ID value
-//! - [`message`] — Extract headers, Request-URI and body from raw SIP message text (feature: `message`)
-//! - [`via`] — RFC 3261 Via header parser
-//! - [`warning`] — RFC 3261 Warning header parser
-//! - [`auth`] — SIP authentication value parser (Authorization, WWW-Authenticate, etc.)
-//! - [`contact`] — RFC 3261 Contact header parser
-//! - [`diagnostic`] — [`Parsed`] results and [`ParseWarning`]s for accepted grammar breaches
-//! - [`error`] — [`ParseError`], returned by every header-value parser
-//! - [`accept`] — RFC 3261 Accept header parser
-//! - [`accept_encoding`] — RFC 3261 Accept-Encoding header parser
-//! - [`accept_language`] — RFC 3261 Accept-Language header parser
-//! - [`security`] — RFC 3329 Security mechanism parser
-//! - [`uri_info`] — `<absoluteURI> *(SEMI generic-param)` parser (Call-Info, Alert-Info, Error-Info)
-//! - [`history_info`] — RFC 7044 History-Info header parser
-//! - [`reason`] — RFC 3326 Reason value parser
-//! - [`geolocation`] — RFC 6442 Geolocation header parser
-//! - [`replaces`] — RFC 3891 Replaces header parser
-//! - [`join`] — RFC 3911 Join header parser
-//! - [`target_dialog`] — RFC 4538 Target-Dialog header parser
-//! - `conference_info` — RFC 4575 conference event package (feature: `conference-info`)
+//! # Imports
+//!
+//! Glob the prelude and name the types. Both crates define `ParseError`,
+//! `Parsed`, `ParseWarning` and `WarningCode` at their roots, so globbing
+//! both roots makes those names ambiguous; a named import wins over a glob,
+//! so beside `sip_uri::*` the named ones are this crate's.
+//!
+//! ```
+//! use sip_header::prelude::*;
+//! use sip_header::{ParseError, SipHeaderAddr, WarningCode};
+//!
+//! let parsed = SipHeaderAddr::parse_with_warnings("<sip:alice@example.com>junk")?;
+//! assert_eq!(parsed.warnings[0].code, WarningCode::TrailingContent);
+//! # Ok::<(), ParseError>(())
+//! ```
+//!
+//! # Headers
+//!
+//! - [`SipHeaderAddr`], [`SipHeaderAddrList`]: RFC 3261 `name-addr` with
+//!   header parameters (From, To, Refer-To, Route, P-Asserted-Identity, …)
+//! - [`ContactList`]: RFC 3261 Contact
+//! - [`SipVia`], [`SipWarning`], [`SipCallId`], [`SipAccept`],
+//!   [`SipAcceptEncoding`], [`SipAcceptLanguage`]: RFC 3261
+//! - [`SipAuthValue`]: Authorization, WWW-Authenticate and their proxy kin
+//! - [`UriInfo`]: Call-Info, Alert-Info, Error-Info
+//! - [`HistoryInfo`]: RFC 7044; [`SipReason`], [`SipReasonList`]: RFC 3326
+//! - [`SipGeolocation`]: RFC 6442; [`SipSecurity`]: RFC 3329
+//! - [`SipReplaces`], [`SipJoin`], [`SipTargetDialog`]: RFC 3891, 3911, 4538
+//! - [`TokenList`]: Allow, Supported, Require and the other token lists
+//! - `conference_info`: RFC 4575 conference event package (feature:
+//!   `conference-info`)
+//!
+//! [`SipHeaderLookup`] reads any of them from a [`SipHeaderRows`] store;
+//! [`SipMessageHeaders`] is one over raw message text (feature: `message`).
+//!
+//! ```compile_fail
+//! use sip_header::header_addr::SipHeaderAddr;
+//! ```
 
 #[macro_use]
-pub mod params;
+mod params;
 #[macro_use]
 mod list;
 #[macro_use]
@@ -49,37 +66,49 @@ pub use sip_header_catalog::{
 };
 pub use sip_uri;
 
-pub mod accept;
-pub mod accept_encoding;
-pub mod accept_language;
-pub mod auth;
-pub mod call_id;
+mod accept;
+mod accept_encoding;
+mod accept_language;
+mod auth;
+mod call_id;
 mod check;
 #[cfg(feature = "conference-info")]
 pub mod conference_info;
-pub mod contact;
-pub mod diagnostic;
-pub mod error;
-pub mod geolocation;
-pub mod header;
-pub mod header_addr;
-pub mod history_info;
-pub mod join;
+mod contact;
+mod diagnostic;
+mod error;
+mod geolocation;
+mod header;
+mod header_addr;
+mod history_info;
+mod join;
 #[cfg(feature = "message")]
-pub mod message;
-pub mod reason;
+mod message;
+mod reason;
 mod redact;
-pub mod replaces;
+mod replaces;
 mod scrub;
-pub mod security;
+mod security;
 #[cfg(feature = "serde")]
 pub mod serde_str;
-pub mod target_dialog;
+mod target_dialog;
 mod token_list;
 mod traits;
-pub mod uri_info;
-pub mod via;
-pub mod warning;
+mod uri_info;
+mod via;
+mod warning;
+
+/// The extension traits: parsing, lookup, extraction and redaction, ours
+/// and sip-uri's.
+pub mod prelude {
+    #[cfg(feature = "message")]
+    pub use crate::message::SipHeaderExtract;
+    pub use crate::{
+        AddrParts, HeaderParse, ListParse, Redact, SipHeaderLookup, SipHeaderRows,
+        SipHeaderRowsExt, UriHeaderParse,
+    };
+    pub use sip_uri::{UriParse, UriRedact};
+}
 
 pub use accept::{QValue, SipAccept, SipAcceptEntry};
 pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};
@@ -111,7 +140,6 @@ pub use traits::{AddrParts, HeaderParse, ListParse, Redact, UriHeaderParse};
 pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};
-
 /// Byte offset of `inner`, a subslice of `outer`, within `outer`.
 pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
     (inner.as_ptr() as usize).saturating_sub(outer.as_ptr() as usize)
@@ -417,6 +445,16 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
 /// when it closes; any other `"` is text, so a stray one affects its entry
 /// alone. The typed lists split by their own grammar, which admits fewer
 /// starts.
+///
+/// Entries are returned untrimmed. An empty entry between two commas is
+/// kept; the empty text after a final comma is not an entry.
+///
+/// ```
+/// assert_eq!(
+///     sip_header::split_comma_entries(r#""a, b" <sip:x@example.com>, ,<sip:y@example.com>,"#),
+///     [r#""a, b" <sip:x@example.com>"#, " ", "<sip:y@example.com>"]
+/// );
+/// ```
 pub fn split_comma_entries(raw: &str) -> Vec<&str> {
     split_entries(raw, QuoteStart::Anywhere)
 }
