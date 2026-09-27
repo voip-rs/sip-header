@@ -2,12 +2,118 @@
 
 use std::collections::HashMap;
 
+use sip_header::sip_uri::{Host, Uri, UriParse, WarningKind};
 use sip_header::{
-    AddrParts, Field, HeaderParse, ParseError, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason,
-    SipReasonCause, WarningCode,
+    AddrParts, Fault, FaultCode, Field, HeaderParse, ParseError, SipGeolocation,
+    SipGeolocationEntry, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason, SipReasonCause,
+    SipVia, SipViaEntry, UriInfo, UriInfoEntry, WarningCode,
 };
 
 type R = Result<(), ParseError>;
+
+fn empty() -> ParseError {
+    ParseError::Malformed(Fault::new(Field::Value, FaultCode::Empty))
+}
+
+fn uri(s: &str) -> Uri {
+    Uri::parse(s).unwrap()
+}
+
+#[test]
+fn uri_info_holds_a_uri() -> R {
+    let https = uri("https://example.com/a");
+    let entry = UriInfoEntry::new(https.clone())?.with_param("purpose", Some("icon"))?;
+    assert_eq!(entry.uri(), &https);
+    assert_eq!(entry.to_string(), "<https://example.com/a>;purpose=icon");
+    let info = UriInfo::parse_strict("<urn:example:call:1>;purpose=info")?;
+    assert!(info.entries()[0]
+        .uri()
+        .as_urn()
+        .is_some());
+
+    let data = UriInfo::parse_with_warnings("<data>")?;
+    assert_eq!(
+        data.value
+            .entries()[0]
+            .uri()
+            .to_string(),
+        "data"
+    );
+    assert_eq!(
+        data.warnings[0].code,
+        WarningCode::Uri(sip_header::sip_uri::WarningCode::MissingScheme)
+    );
+    assert!(UriInfoEntry::new(uri("data")).is_err());
+    Ok(())
+}
+
+#[test]
+fn geolocation_cid_comes_from_the_scheme() -> R {
+    let geo = SipGeolocation::parse("<CID:loc@example.com>, <https://lis.example.com/l>")?;
+    assert_eq!(geo.cid(), Some("loc@example.com"));
+    assert_eq!(geo.entries()[0].cid(), Some("loc@example.com"));
+    assert_eq!(geo.entries()[1].cid(), None);
+    assert_eq!(
+        geo.url()
+            .map(ToString::to_string),
+        Some("https://lis.example.com/l".to_string())
+    );
+    assert_eq!(
+        geo.to_string(),
+        "<cid:loc@example.com>, <https://lis.example.com/l>"
+    );
+    let entry = SipGeolocationEntry::new(uri("cid:a@example.com"))?;
+    assert_eq!(entry.cid(), Some("a@example.com"));
+    assert_eq!(entry.uri(), &uri("cid:a@example.com"));
+    Ok(())
+}
+
+#[test]
+fn via_sent_by_is_a_host() -> R {
+    let host = Host::IPv6(
+        "2001:db8::1"
+            .parse()
+            .unwrap(),
+    );
+    let via = SipViaEntry::new("SIP", "2.0", "UDP", host.clone())?.with_port(5060);
+    assert_eq!(via.host(), &host);
+    assert_eq!(via.to_string(), "SIP/2.0/UDP [2001:db8::1]:5060");
+    let parsed = SipVia::parse("SIP/2.0/UDP Example.COM")?;
+    assert_eq!(
+        parsed.entries()[0].host(),
+        &Host::Hostname("example.com".into())
+    );
+    for bad in ["a;b", "exa_mple.com", "a b"] {
+        assert!(
+            SipViaEntry::new("SIP", "2.0", "UDP", Host::Hostname(bad.into())).is_err(),
+            "{bad}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn via_entry_without_host_is_dropped() -> R {
+    let parsed = SipVia::parse_with_warnings("SIP/2.0/UDP :5060, SIP/2.0/TCP 198.51.100.1")?;
+    assert_eq!(
+        parsed
+            .value
+            .len(),
+        1
+    );
+    let w = parsed.warnings[0];
+    assert_eq!(
+        (w.field, w.code, w.kind, w.entry),
+        (
+            Field::Entry,
+            WarningCode::SkippedEntry,
+            WarningKind::Lost,
+            Some(0)
+        )
+    );
+    assert_eq!(SipVia::parse("SIP/2.0/UDP :5060"), Err(empty()));
+    Ok(())
+}
 
 #[test]
 fn join_has_no_early_only() -> R {
