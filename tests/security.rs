@@ -28,7 +28,7 @@ fn hostile() -> impl Strategy<Value = String> {
 /// What the lenient corpus injects: line breaks, NUL, folds and the
 /// delimiters a field could smuggle.
 const INJECTED: &[&str] = &[
-    "\r", "\n", "\r\n", "\0", "\r\n ", "\r\n\t", " \r\n ", ";", ",", ">", "%0D%0A", "%00",
+    "\r", "\n", "\r\n", "\0", "\r\n ", "\r\n\t", " \r\n ", ";", ",", ">", "\"", "%0D%0A", "%00",
 ];
 
 fn injected() -> impl Strategy<Value = String> {
@@ -609,19 +609,19 @@ fn warn_code_below_100_is_kept_warned_and_strictly_refused() {
 #[test]
 fn non_token_scheme_mechanism_and_sent_protocol_are_warned() {
     {
-        let (input, field) = ("Dig\"est realm=x", Field::Scheme);
+        let (input, field) = ("Dig@est realm=x", Field::Scheme);
         let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
         assert_eq!(
             (parsed.warnings[0].field, parsed.warnings[0].code),
             (field, WarningCode::InvalidToken)
         );
     }
-    let parsed = SipSecurity::parse_with_warnings("dig\"est;q=0.1").unwrap();
+    let parsed = SipSecurity::parse_with_warnings("dig@est;q=0.1").unwrap();
     assert_eq!(
         (parsed.warnings[0].field, parsed.warnings[0].code),
         (Field::Mechanism, WarningCode::InvalidToken)
     );
-    for input in ["SIP/2.0/ example.com", "SIP/2\"0/UDP example.com"] {
+    for input in ["SIP/2.0/ example.com", "SIP/2@0/UDP example.com"] {
         let parsed = SipVia::parse_with_warnings(input).unwrap();
         assert_eq!(
             (parsed.warnings[0].field, parsed.warnings[0].code),
@@ -721,4 +721,110 @@ fn auth_scheme_keeps_case_and_compares_without_it() {
         SipAuthValue::parse("Bearer abc").unwrap(),
         SipAuthValue::parse("Bearer ABC").unwrap()
     );
+}
+
+#[test]
+fn a_quote_that_never_closes_does_not_hold_commas() {
+    let input = r#""application/sdp;q=0.5, text/plain"#;
+    let parsed = SipAccept::parse_with_warnings(input).unwrap();
+    assert_eq!(
+        parsed
+            .value
+            .to_string(),
+        "application/sdp;q=0.5, text/plain"
+    );
+    assert_eq!(
+        seen(&parsed.warnings[0]),
+        (
+            Field::MediaRange,
+            WarningCode::StrayDelimiter,
+            WarningKind::Lost,
+            Some(0),
+            Some(0)
+        )
+    );
+    assert_eq!(
+        SipAccept::parse_strict(input),
+        Err(ParseError::NonConformant(parsed.warnings[0]))
+    );
+    assert_eq!(
+        sip_header::split_comma_entries(r#"a"b, c, "d, e""#),
+        vec![r#"a"b"#, " c", r#" "d, e""#]
+    );
+}
+
+#[test]
+fn a_quote_inside_a_token_is_dropped() {
+    let stray = |input: &str, field: Field| {
+        let at = input.find('"');
+        let w = SipAccept::parse_with_warnings(input)
+            .map(|p| p.warnings)
+            .or_else(|_| SipSecurity::parse_with_warnings(input).map(|p| p.warnings))
+            .unwrap();
+        assert_eq!(
+            w.iter()
+                .map(|w| (w.field, w.code, w.kind, w.position))
+                .next(),
+            Some((field, WarningCode::StrayDelimiter, WarningKind::Lost, at)),
+            "{input}"
+        );
+    };
+    stray(r#"text/pl"ain"#, Field::MediaRange);
+    stray(r#"text/plain;"q=0.5"#, Field::Param);
+    type Printed = fn(&str) -> Option<String>;
+    let checks: [(&str, Printed); 7] = [
+        (r#"gz"ip;q=1"#, |s| {
+            SipAcceptEncoding::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"f"r"#, |s| {
+            SipAcceptLanguage::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"tl"s;q=0.1"#, |s| {
+            SipSecurity::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"SIP/2.0/U"DP 198.51.100.1"#, |s| {
+            SipVia::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"Dig"est realm=x"#, |s| {
+            SipAuthValue::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"Digest re"alm=x"#, |s| {
+            SipAuthValue::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+        (r#"S"IP;cause=1"#, |s| {
+            SipReason::parse(s)
+                .ok()
+                .map(|v| v.to_string())
+        }),
+    ];
+    for (input, print) in checks {
+        let out = print(input).unwrap_or_else(|| panic!("{input}"));
+        assert!(!out.contains('"'), "{input} -> {out}");
+    }
+}
+
+#[test]
+fn a_bracket_or_comma_inside_a_token_is_dropped() {
+    let input = "<https://e\r\n xam;ple.com/,a>>;purpose=icon,<urn:example:call:1>;purpose=info";
+    let parsed = UriInfo::parse_with_warnings(input).unwrap();
+    assert!(parsed
+        .warnings
+        .iter()
+        .any(|w| w.code == WarningCode::StrayDelimiter && w.field == Field::Param));
+    let wire = parsed
+        .value
+        .to_string();
+    assert_eq!(UriInfo::parse(&wire), Ok(parsed.value), "{wire}");
 }
