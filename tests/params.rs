@@ -9,7 +9,7 @@ use sip_header::{
 use sip_uri::WarningKind;
 
 fn addr() -> SipHeaderAddr {
-    SipHeaderAddr::new(Uri::parse("sip:alice@example.com").unwrap())
+    SipHeaderAddr::new(Uri::parse("sip:alice@example.com").unwrap()).unwrap()
 }
 
 fn params_of(tail: &str) -> HeaderParams {
@@ -86,7 +86,9 @@ fn reserved_keys_refuse_the_generic_setter() {
     assert!(addr()
         .with_tag("a b")
         .is_err());
-    let via = SipViaEntry::new("SIP", "2.0", "UDP").with_host("198.51.100.1");
+    let via = SipViaEntry::new("SIP", "2.0", "UDP")
+        .and_then(|v| v.with_host("198.51.100.1"))
+        .unwrap();
     assert!(is_misplaced_param(
         via.clone()
             .with_param("rport", None::<&str>)
@@ -98,7 +100,7 @@ fn reserved_keys_refuse_the_generic_setter() {
     assert_eq!(via.rport(), Some(None));
     assert_eq!(via.to_string(), "SIP/2.0/UDP 198.51.100.1;rport");
 
-    let r = SipReplaces::new("a@example.com", "t", "f");
+    let r = SipReplaces::new("a@example.com", "t", "f").unwrap();
     for key in ["to-tag", "From-Tag", "early-only"] {
         assert!(
             is_misplaced_param(
@@ -117,7 +119,7 @@ fn reserved_keys_refuse_the_generic_setter() {
         .with_to_tag("a;b")
         .is_err());
 
-    let t = SipTargetDialog::new("a@example.com", "l", "r");
+    let t = SipTargetDialog::new("a@example.com", "l", "r").unwrap();
     assert!(is_misplaced_param(
         t.clone()
             .with_param("local-tag", Some("x"))
@@ -286,7 +288,7 @@ fn auth_flag_is_warned() {
 #[test]
 fn auth_params_separate_with_comma() {
     let auth = SipAuthValue::new("Digest")
-        .with_param("realm", "example.com")
+        .and_then(|a| a.with_param("realm", "example.com"))
         .and_then(|a| a.with_param("algorithm", "MD5"))
         .and_then(|a| a.with_quoted_param("qop", "auth"))
         .unwrap();
@@ -295,7 +297,7 @@ fn auth_params_separate_with_comma() {
         r#"Digest realm="example.com", algorithm=MD5, qop="auth""#
     );
     assert!(SipAuthValue::new("Digest")
-        .with_param("a b", "x")
+        .and_then(|a| a.with_param("a b", "x"))
         .is_err());
 }
 
@@ -350,26 +352,97 @@ mod serde_shape {
     }
 
     #[test]
-    fn params_deserialize_refuses_malformed() {
-        refused(json!([["x", "1", false], ["X", "2", false]]));
+    fn params_deserialize_refuses_what_no_parse_produces() {
         refused(json!([["lr", null, true]]));
-        refused(json!([["a b", "1", false]]));
         refused(json!([["", null, false]]));
+        refused(json!([["a;b", "1", false]]));
+        refused(json!([["a=b", null, false]]));
+        refused(json!([["x", "a\r\nb", true]]));
+        refused(json!([["x\0", "1", false]]));
         refused(json!([["x", "1"]]));
     }
 
     #[test]
-    fn owners_refuse_reserved_keys_in_params() {
+    fn params_deserialize_reads_back_what_the_parser_keeps() {
+        for tail in [";x=1;X=2", ";a b=1", ";x=\"\\\"p\""] {
+            let p = params_of(tail);
+            let json = serde_json::to_value(&p).unwrap();
+            assert_eq!(
+                serde_json::from_value::<HeaderParams>(json).unwrap(),
+                p,
+                "{tail}"
+            );
+        }
+    }
+
+    fn reads_back<T>(value: &T)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        let json = serde_json::to_value(value).unwrap();
+        assert_eq!(&serde_json::from_value::<T>(json).unwrap(), value);
+    }
+
+    #[test]
+    fn reserved_keys_the_parser_keeps_read_back() {
+        for tail in [
+            ";tag=a;tag=b",
+            r#";tag="a b""#,
+            r#";tag="a";tag=b"#,
+            ";tag;tag=a",
+        ] {
+            let a = SipHeaderAddr::parse(&format!("<sip:alice@example.com>{tail}")).unwrap();
+            reads_back(&a);
+        }
+        let a = SipHeaderAddr::parse("<sip:alice@example.com>;tag=a;tag=b").unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["tag"], json!("a"));
+        assert_eq!(v["params"], json!([["tag", "b", false]]));
+        let a = SipHeaderAddr::parse(r#"<sip:alice@example.com>;tag="a b""#).unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["tag"], json!(null));
+        assert_eq!(v["params"], json!([["tag", "a b", true]]));
+
+        for input in [
+            "SIP/2.0/UDP 198.51.100.1;rport;rport=5060",
+            "SIP/2.0/UDP 198.51.100.1;rport=05060",
+            r#"SIP/2.0/UDP 198.51.100.1;rport="5060""#,
+        ] {
+            reads_back(&sip_header::SipVia::parse(input).unwrap());
+        }
+        for input in [
+            "a@example.com;to-tag=t;from-tag=f;early-only;early-only",
+            "a@example.com;to-tag=t;from-tag=f;early-only=x",
+            "a@example.com;to-tag;to-tag=t;from-tag=f",
+            r#"a@example.com;to-tag="t";from-tag=f"#,
+            "a b@example.com;to-tag=t;from-tag=f",
+        ] {
+            reads_back(&SipReplaces::parse(input).unwrap());
+        }
+        reads_back(&SipAuthValue::parse(r#"Digest realm="a", stale, realm="b""#).unwrap());
+    }
+
+    #[test]
+    fn a_reserved_key_the_field_would_carry_is_refused_in_params() {
         let mut v = serde_json::to_value(addr()).unwrap();
         v["params"] = json!([["tag", "abc", false]]);
-        assert!(serde_json::from_value::<SipHeaderAddr>(v).is_err());
+        assert!(serde_json::from_value::<SipHeaderAddr>(v.clone()).is_err());
+        v["tag"] = json!("abc");
+        assert_eq!(
+            serde_json::from_value::<SipHeaderAddr>(v)
+                .unwrap()
+                .to_string(),
+            "<sip:alice@example.com>;tag=abc;tag=abc"
+        );
 
-        let mut r = serde_json::to_value(SipReplaces::new("a@example.com", "t", "f")).unwrap();
+        let mut r =
+            serde_json::to_value(SipReplaces::new("a@example.com", "t", "f").unwrap()).unwrap();
         r["params"] = json!([["early-only", null, false]]);
         assert!(serde_json::from_value::<SipReplaces>(r).is_err());
 
         let via = SipViaEntry::new("SIP", "2.0", "UDP")
-            .with_host("198.51.100.1")
+            .and_then(|v| v.with_host("198.51.100.1"))
+            .unwrap()
             .with_rport(None);
         let mut v = serde_json::to_value(&via).unwrap();
         assert_eq!(v["rport"], json!(null));
@@ -378,11 +451,10 @@ mod serde_shape {
             serde_json::from_value::<SipViaEntry>(v.clone()).unwrap(),
             via
         );
+        v.as_object_mut()
+            .unwrap()
+            .remove("rport");
         v["params"] = json!([["rport", "5060", false]]);
         assert!(serde_json::from_value::<SipViaEntry>(v).is_err());
-
-        let flagged =
-            json!({"scheme": "Digest", "params": [["stale", null, false]], "token68": null});
-        assert!(serde_json::from_value::<SipAuthValue>(flagged).is_err());
     }
 }
