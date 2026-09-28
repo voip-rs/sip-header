@@ -1136,10 +1136,114 @@ mod tests {
 
     #[test]
     fn auth_error_carries_the_row_index() {
-        let h = rows(&[("Authorization", &[r#"Digest realm="a""#, ""])]);
+        let h = rows(&[("Authorization", &[r#"Digest realm="a""#, ","])]);
         assert!(matches!(
             h.authorization(),
             Err(ParseError::Malformed(f)) if f.entry == Some(1)
         ));
+    }
+
+    /// Code and entry of each warning, after checking strict parsing
+    /// refuses the first.
+    fn row_warnings<'a, T: TypedHeader<'a> + std::fmt::Debug>(
+        h: &'a HashMap<String, Vec<String>>,
+        header: SipHeader,
+    ) -> (T, Vec<(crate::WarningCode, Option<usize>)>) {
+        let parsed = h
+            .parse_header::<T>(header)
+            .unwrap()
+            .unwrap();
+        let seen = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.code, w.entry))
+            .collect();
+        match parsed
+            .warnings
+            .first()
+        {
+            Some(&w) => assert_eq!(
+                h.parse_header_strict::<T>(header)
+                    .err(),
+                Some(ParseError::NonConformant(w))
+            ),
+            None => assert!(h
+                .parse_header_strict::<T>(header)
+                .is_ok()),
+        }
+        (parsed.value, seen)
+    }
+
+    #[test]
+    fn one_blank_row_is_the_empty_list_every_further_one_is_reported() {
+        let empty = crate::WarningCode::EmptyEntry;
+        for blank in ["", "  "] {
+            let h = rows(&[("Accept", &[blank]), ("Allow", &[blank])]);
+            let (accept, seen) = row_warnings::<SipAccept>(&h, SipHeader::Accept);
+            assert!(accept.is_empty() && seen.is_empty(), "{blank:?}");
+            let (allow, seen) = row_warnings::<TokenList>(&h, SipHeader::Allow);
+            assert!(allow.is_empty() && seen.is_empty(), "{blank:?}");
+        }
+        for blanks in [["", ""], ["  ", ""], ["", "  "]] {
+            let h = rows(&[("Accept", &blanks), ("Allow", &blanks)]);
+            let (accept, seen) = row_warnings::<SipAccept>(&h, SipHeader::Accept);
+            assert!(accept.is_empty(), "{blanks:?}");
+            assert_eq!(seen, [(empty, Some(1))], "{blanks:?}");
+            let (allow, seen) = row_warnings::<TokenList>(&h, SipHeader::Allow);
+            assert!(allow.is_empty(), "{blanks:?}");
+            assert_eq!(seen, [(empty, Some(1))], "{blanks:?}");
+        }
+    }
+
+    #[test]
+    fn a_blank_row_beside_real_ones_is_an_empty_entry() {
+        let empty = crate::WarningCode::EmptyEntry;
+        for blank in ["", "  "] {
+            let h = rows(&[
+                ("Accept", &["application/sdp", blank]),
+                ("Allow", &[blank, "INVITE"]),
+                ("Require", &["timer", blank]),
+                ("Via", &["SIP/2.0/UDP a.example.com", blank]),
+                ("Route", &[blank, "<sip:a@example.com>"]),
+                ("Authorization", &[r#"Digest realm="a""#, blank]),
+            ]);
+            let (accept, seen) = row_warnings::<SipAccept>(&h, SipHeader::Accept);
+            assert_eq!((accept.len(), seen), (1, vec![(empty, Some(1))]));
+            let (allow, seen) = row_warnings::<TokenList>(&h, SipHeader::Allow);
+            assert_eq!((allow.len(), seen), (1, vec![(empty, Some(0))]));
+            let (require, seen) = row_warnings::<TokenList>(&h, SipHeader::Require);
+            assert_eq!((require.len(), seen), (1, vec![(empty, Some(1))]));
+            let (via, seen) = row_warnings::<SipVia>(&h, SipHeader::Via);
+            assert_eq!((via.len(), seen), (1, vec![(empty, Some(1))]));
+            let (route, seen) = row_warnings::<SipHeaderAddrList>(&h, SipHeader::Route);
+            assert_eq!((route.len(), seen), (1, vec![(empty, Some(0))]));
+            let (auth, seen) = row_warnings::<Vec<SipAuthValue>>(&h, SipHeader::Authorization);
+            assert_eq!((auth.len(), seen), (1, vec![(empty, Some(1))]));
+        }
+    }
+
+    #[test]
+    fn blank_rows_where_an_entry_is_required_are_empty() {
+        let h = rows(&[
+            ("Require", &["", "  "]),
+            ("Via", &["", "  "]),
+            ("Authorization", &["", "  "]),
+        ]);
+        let empty = Err(ParseError::empty(Field::Value));
+        assert_eq!(
+            h.require()
+                .map(|_| ()),
+            empty
+        );
+        assert_eq!(
+            h.via()
+                .map(|_| ()),
+            empty
+        );
+        assert_eq!(
+            h.authorization()
+                .map(|_| ()),
+            empty
+        );
     }
 }
