@@ -253,10 +253,16 @@ fn flag_invalid_token(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QValue(u16);
 
+/// `qvalue` `1`, the highest, in thousandths.
+const QVALUE_ONE: u16 = 1000;
+/// `0*3DIGIT`: most fraction digits a `qvalue` carries.
+const QVALUE_FRACTION_DIGITS: usize = 3;
+const DECIMAL_RADIX: u16 = 10;
+
 impl QValue {
     /// A qvalue of `thousandths`; errors above 1000.
     pub fn new(thousandths: u16) -> Result<Self, ParseError> {
-        if thousandths > 1000 {
+        if thousandths > QVALUE_ONE {
             return Err(ParseError::malformed(
                 Field::Qvalue,
                 FaultCode::InvalidNumber,
@@ -287,12 +293,12 @@ impl std::str::FromStr for QValue {
         let (int, frac) = s
             .split_once('.')
             .unwrap_or((s, ""));
-        let whole = if int == "1" { 1000 } else { 0 };
+        let whole = if int == "1" { QVALUE_ONE } else { 0 };
         let frac = frac
             .bytes()
             .chain(std::iter::repeat(b'0'))
-            .take(3)
-            .fold(0, |n, b| n * 10 + u16::from(b - b'0'));
+            .take(QVALUE_FRACTION_DIGITS)
+            .fold(0, |n, b| n * DECIMAL_RADIX + u16::from(b - b'0'));
         QValue::new(whole + frac)
     }
 }
@@ -301,9 +307,9 @@ impl fmt::Display for QValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             0 => f.write_str("0"),
-            1000 => f.write_str("1"),
+            QVALUE_ONE => f.write_str("1"),
             n => {
-                let digits = format!("{n:03}");
+                let digits = format!("{n:0QVALUE_FRACTION_DIGITS$}");
                 write!(f, "0.{}", digits.trim_end_matches('0'))
             }
         }
@@ -327,7 +333,7 @@ fn is_qvalue(v: &str) -> bool {
         None => (v, ""),
     };
     let frac_of = |digit: fn(&u8) -> bool| {
-        frac.len() <= 3
+        frac.len() <= QVALUE_FRACTION_DIGITS
             && frac
                 .as_bytes()
                 .iter()

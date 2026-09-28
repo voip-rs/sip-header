@@ -224,6 +224,9 @@ impl MapValue for Vec<String> {
     }
 }
 
+/// Longest UTF-8 encoding of one `char`, which `encode_utf8` needs room for.
+const MAX_UTF8_CHAR_LEN: usize = 4;
+
 /// Rows of every key the name matches, in the order the impls document.
 fn map_rows<'a, V: MapValue, S: BuildHasher>(
     map: &'a HashMap<String, V, S>,
@@ -231,7 +234,7 @@ fn map_rows<'a, V: MapValue, S: BuildHasher>(
 ) -> Vec<&'a str> {
     let header = SipHeader::parse_name(name).ok();
     let canonical = header.map_or(name, |h| h.as_str());
-    let mut compact_buf = [0u8; 4];
+    let mut compact_buf = [0u8; MAX_UTF8_CHAR_LEN];
     let compact = header
         .and_then(|h| h.compact_form())
         .map(|c| &*c.encode_utf8(&mut compact_buf));

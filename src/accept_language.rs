@@ -135,12 +135,15 @@ fn parse_entry(
     })
 }
 
+/// `1*8ALPHA`: longest subtag of a `language-range`.
+const LANGUAGE_SUBTAG_MAX_LEN: usize = 8;
+
 /// RFC 3261 §20.3 `language-range = ( 1*8ALPHA *( "-" 1*8ALPHA ) ) / "*"`.
 fn is_language_range(s: &str) -> bool {
     s == "*"
         || s.split('-')
             .all(|tag| {
-                (1..=8).contains(&tag.len())
+                (1..=LANGUAGE_SUBTAG_MAX_LEN).contains(&tag.len())
                     && tag
                         .bytes()
                         .all(|b| b.is_ascii_alphabetic())

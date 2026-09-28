@@ -9,6 +9,13 @@ use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
 
+/// `warn-code = 3DIGIT` (RFC 3261 §20.43).
+const WARN_CODE_DIGITS: usize = 3;
+/// Lowest three-digit `warn-code` without a leading zero.
+const WARN_CODE_MIN: u16 = 100;
+/// Highest `warn-code`.
+const WARN_CODE_MAX: u16 = 999;
+
 /// A single Warning header entry.
 ///
 /// RFC 3261 §20.43:
@@ -46,7 +53,7 @@ impl SipWarningEntry {
         agent: impl Into<String>,
         text: impl Into<String>,
     ) -> Result<Self, ParseError> {
-        if !(100..=999).contains(&code) {
+        if !(WARN_CODE_MIN..=WARN_CODE_MAX).contains(&code) {
             return Err(ParseError::malformed(
                 Field::Code,
                 FaultCode::InvalidNumber,
@@ -158,7 +165,7 @@ fn parse_warning_entry(
         .ok_or_else(|| ParseError::malformed(Field::Agent, FaultCode::Missing, None))?;
 
     let code_str = &s[..space_pos];
-    if code_str.len() != 3
+    if code_str.len() != WARN_CODE_DIGITS
         || !code_str
             .chars()
             .all(|c| c.is_ascii_digit())
@@ -169,7 +176,7 @@ fn parse_warning_entry(
     let code = code_str
         .parse::<u16>()
         .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
-    if code < 100 {
+    if code < WARN_CODE_MIN {
         warnings.push(
             ParseWarning::new(Field::Code, WarningCode::WarnCodeLeadingZero)
                 .at(crate::offset_in(entry, code_str)),
