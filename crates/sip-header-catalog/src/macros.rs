@@ -247,6 +247,22 @@ macro_rules! define_header_enum {
     };
 }
 
+/// A gated invocation whose cfg holds needs this crate's `serde` feature.
+#[cfg(doctest)]
+#[cfg_attr(not(feature = "serde"), doc = "```compile_fail")]
+#[cfg_attr(feature = "serde", doc = "```")]
+#[doc = r#"sip_header_catalog::define_header_enum! {
+    serde(cfg(all())),
+    error_type: ParseGatedError => "unknown gated value",
+    /// Gated serde whose cfg holds.
+    pub enum Gated {
+        /// `gated`.
+        Gated => "gated",
+    }
+}"#]
+#[doc = "```"]
+struct GatedSerdeNeedsTheCatalogFeature;
+
 #[cfg(test)]
 mod tests {
     use crate::HeaderName;
@@ -300,6 +316,38 @@ mod tests {
     }
 
     define_header_enum! {
+        serde(cfg(any())),
+        error_type: ParseGatedOffEnumError => "unknown gated-off value",
+        /// Asks for serde under a false cfg.
+        pub(crate) enum GatedOffEnum {
+            /// `Off-Wire`.
+            Off => "Off-Wire",
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    define_header_enum! {
+        tests_mod: gated_on_enum_generated,
+        serde(cfg(all())),
+        error_type: ParseGatedOnEnumError => "unknown gated-on value",
+        /// Asks for serde under a true cfg.
+        pub(crate) enum GatedOnEnum {
+            /// `On-Wire`.
+            On => "On-Wire",
+        }
+    }
+
+    define_header_enum! {
+        serde(cfg(feature = "serde")),
+        error_type: ParseGatedFeatureEnumError => "unknown gated-feature value",
+        /// Asks for serde under the caller's own feature.
+        pub(crate) enum GatedFeatureEnum {
+            /// `Feature-Wire`.
+            Feature => "Feature-Wire",
+        }
+    }
+
+    define_header_enum! {
         error_type: ParseDerivedEnumError => "unknown derived value",
         /// Serde by the caller's own derive.
         #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -338,6 +386,8 @@ mod tests {
         assert_eq!(wire_names::<TestEnum>(), ["Foo-Wire", "Bar-Wire"]);
         assert_eq!(wire_names::<OldEnum>(), ["Old-Wire"]);
         assert_eq!(wire_names::<DerivedEnum>(), ["Gamma-Wire"]);
+        assert_eq!(wire_names::<GatedOffEnum>(), ["Off-Wire"]);
+        assert_eq!(wire_names::<GatedFeatureEnum>(), ["Feature-Wire"]);
         assert_eq!(<TestEnum as HeaderName>::ALL, TestEnum::ALL);
         assert_eq!(
             wire_names::<crate::SipHeader>().len(),
@@ -365,6 +415,9 @@ mod tests {
             assert!(!Probe::<OldEnum>::SERIALIZE);
             assert!(Probe::<crate::SipHeader>::SERIALIZE);
             assert!(Probe::<DerivedEnum>::SERIALIZE);
+            assert!(Probe::<GatedOnEnum>::SERIALIZE);
+            assert!(Probe::<GatedFeatureEnum>::SERIALIZE);
+            assert!(!Probe::<GatedOffEnum>::SERIALIZE);
         };
 
         #[test]
@@ -393,6 +446,29 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(msg.contains("unknown SerdeEnum name"), "{msg}");
+            assert!(!msg.contains("Secret"), "{msg}");
+        }
+
+        #[test]
+        fn gated_serde_uses_the_wire_name() {
+            assert_eq!(
+                serde_json::to_string(&GatedOnEnum::On).unwrap(),
+                r#""On-Wire""#
+            );
+            for spelling in [r#""on-wire""#, r#""ON-WIRE""#, r#""On-Wire""#] {
+                assert_eq!(
+                    serde_json::from_str::<GatedOnEnum>(spelling).unwrap(),
+                    GatedOnEnum::On
+                );
+            }
+            assert_eq!(
+                serde_json::to_string(&GatedFeatureEnum::Feature).unwrap(),
+                r#""Feature-Wire""#
+            );
+            let msg = serde_json::from_str::<GatedOnEnum>(r#""Secret-Wire""#)
+                .unwrap_err()
+                .to_string();
+            assert!(msg.contains("unknown GatedOnEnum name"), "{msg}");
             assert!(!msg.contains("Secret"), "{msg}");
         }
     }
