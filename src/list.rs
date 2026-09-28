@@ -202,14 +202,17 @@ pub(crate) trait CommaList: Sized {
                         .is_empty()
                 })
         {
+            let lone = matches!(entries.as_slice(), [(_, None)]);
             for (i, (entry, comma)) in entries
                 .into_iter()
                 .enumerate()
             {
+                let empty = (!lone).then(|| crate::empty_entry(Field::Entry, 0));
                 warnings.extend(
                     entry
                         .warnings
                         .into_iter()
+                        .chain(empty)
                         .chain(comma)
                         .map(|w| w.in_entry(i)),
                 );

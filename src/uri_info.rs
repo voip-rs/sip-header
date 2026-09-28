@@ -140,7 +140,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
     let raw = entry.trim();
     let at = crate::offset_in(entry, raw);
     if raw.is_empty() {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
+        warnings.push(crate::empty_entry(Field::Entry, 0));
         return None;
     }
 

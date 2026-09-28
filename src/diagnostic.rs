@@ -271,7 +271,8 @@ pub enum WarningCode {
     MissingBrackets,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
-    /// An empty list entry between commas, dropped.
+    /// A blank list element, which RFC 3261 §25.1 `x *(COMMA x)` never
+    /// leaves empty; ignored.
     EmptyEntry,
     /// An accept-param `q` outside RFC 3261 §25.1 `qvalue`, kept as sent.
     InvalidQvalue,
@@ -312,7 +313,6 @@ impl WarningCode {
             | WarningCode::WildcardNotAlone
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
-            | WarningCode::EmptyEntry
             | WarningCode::ControlChar
             | WarningCode::StrayDelimiter => WarningKind::Lost,
             _ => WarningKind::Recovered,

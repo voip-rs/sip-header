@@ -505,6 +505,11 @@ pub(crate) fn trailing_comma(entry: &str) -> ParseWarning {
     ParseWarning::new(Field::Entry, WarningCode::TrailingComma).at(entry.len())
 }
 
+/// [`WarningCode::EmptyEntry`] for a blank element of `field` starting at `at`.
+pub(crate) fn empty_entry(field: Field, at: usize) -> ParseWarning {
+    ParseWarning::new(field, WarningCode::EmptyEntry).at(at)
+}
+
 /// A list split at its top-level commas.
 pub(crate) struct Split<'a> {
     /// The entries, untrimmed.

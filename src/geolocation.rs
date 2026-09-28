@@ -237,7 +237,7 @@ impl From<SipGeolocationEntry> for SipGeolocationEntryParts {
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeolocationEntry> {
     let raw = entry.trim();
     if raw.is_empty() {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
+        warnings.push(crate::empty_entry(Field::Entry, 0));
         return None;
     }
     let skipped = |warnings: &mut Vec<ParseWarning>| {

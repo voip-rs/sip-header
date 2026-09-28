@@ -110,12 +110,19 @@ impl<'a> TokenList<'a> {
         {
             return match header {
                 SipHeader::Allow | SipHeader::Supported => {
-                    warnings.extend(
-                        entries
-                            .into_iter()
-                            .enumerate()
-                            .filter_map(|(i, e)| comma(i, e)),
-                    );
+                    let lone = matches!(entries.as_slice(), [(_, false)]);
+                    for (i, e) in entries
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let empty =
+                            (!lone).then(|| crate::empty_entry(Field::Entry, 0).in_entry(i));
+                        warnings.extend(
+                            empty
+                                .into_iter()
+                                .chain(comma(i, e)),
+                        );
+                    }
                     Ok(Parsed::new(list, warnings))
                 }
                 _ => Err(ParseError::empty(Field::Value)),
@@ -167,7 +174,7 @@ fn read_token<'a>(
         }
     };
     if token.is_empty() {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::EmptyEntry));
+        warnings.push(crate::empty_entry(Field::Entry, 0));
         return None;
     }
     let at = crate::offset_in(
