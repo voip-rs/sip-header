@@ -46,13 +46,13 @@ pub(super) fn strip_namespace_prefixes(xml: &str) -> Result<String, ConferenceIn
             Event::Start(e) => {
                 root_ns.get_or_insert(bound);
                 writer
-                    .write_event(Event::Start(strip_start_element(&e)))
+                    .write_event(Event::Start(strip_start_element(&e)?))
                     .map_err(write_err)?;
             }
             Event::Empty(e) => {
                 root_ns.get_or_insert(bound);
                 writer
-                    .write_event(Event::Empty(strip_start_element(&e)))
+                    .write_event(Event::Empty(strip_start_element(&e)?))
                     .map_err(write_err)?;
             }
             Event::End(e) => {
@@ -74,15 +74,16 @@ pub(super) fn strip_namespace_prefixes(xml: &str) -> Result<String, ConferenceIn
         .map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::NotUtf8, e))
 }
 
-/// Strip the namespace prefix from an element name and filter out xmlns attributes.
-fn strip_start_element(e: &BytesStart<'_>) -> BytesStart<'static> {
+/// Strip the namespace prefix from an element name and filter out xmlns
+/// attributes; an attribute that does not read is a [`Read`] error.
+///
+/// [`Read`]: ConferenceInfoErrorKind::Read
+fn strip_start_element(e: &BytesStart<'_>) -> Result<BytesStart<'static>, ConferenceInfoError> {
     let local = local_name_owned(e.name());
     let mut stripped = BytesStart::new(local);
 
-    for attr in e
-        .attributes()
-        .filter_map(Result::ok)
-    {
+    for attr in e.attributes() {
+        let attr = attr.map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::Read, e))?;
         if is_xmlns_attr(&attr) {
             continue;
         }
@@ -93,12 +94,11 @@ fn strip_start_element(e: &BytesStart<'_>) -> BytesStart<'static> {
         .into_owned();
         let value = attr
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-            .unwrap_or_default()
-            .into_owned();
-        stripped.push_attribute((key.as_str(), value.as_str()));
+            .map_err(|e| ConferenceInfoError::new(ConferenceInfoErrorKind::Read, e))?;
+        stripped.push_attribute((key.as_str(), value.as_ref()));
     }
 
-    stripped
+    Ok(stripped)
 }
 
 /// Extract the local name (after the colon) from a QName, returning an owned String.
