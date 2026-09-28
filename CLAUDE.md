@@ -76,7 +76,7 @@ test checks `SipHeader::ALL` filtered by `registry()` against
    classified single and unverified until someone checks that spec.
 
 `define_header_enum!` callers get wire-name serde only through the macro's
-`serde,` arm plus the catalog's `serde` feature; an invocation without it has
+`serde,` or `serde(cfg(..)),` arm plus the catalog's `serde` feature; an invocation without it has
 no serde, and a caller keeps variant-name serde with its own derive on the
 enum inside the invocation.
 
