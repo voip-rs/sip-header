@@ -76,7 +76,11 @@ Without angle brackets, every parameter after the URI is a header parameter (RFC
 
 ## Only the header catalog is a stable crate
 
-The header-name catalog and the raw row trait are a crate of their own that aims for 1.0, because a consumer that puts a header store or header names in its public API would otherwise take a major version with every parser minor. Value types stay in sip-header with their parsers: their shapes are still being settled against real traffic, and a frozen value crate would freeze each open question with it.
+The header-name catalog and the raw row trait are a crate of their own that aims for 1.0, because a consumer that puts a header store or header names in its public API would otherwise take a major version with every parser minor. Value types stay in sip-header with their parsers: their shapes are still being settled against real traffic, and a frozen value crate would freeze each open question with it. What every header shares, a name and one row of wire text per occurrence, is frozen in the catalog as a holder that implements the row trait, so a consumer can hand headers across its API and let the caller type them with its own sip-header.
+
+## A header holder stores received text unchecked
+
+The catalog's holders keep names and values exactly as received, control characters and non-token names included. Cleaning received text is the parser's job, where a breach becomes a warning inside a still-usable value; a holder that refused a byte would turn one injected character into a missing header and push every consumer into scrubbing hostile input itself. The holders therefore offer no way to write their text as a header block, and anything sent goes through a typed value, whose constructors refuse what would print as a different value.
 
 ## Parsing is spelled through extension traits
 
