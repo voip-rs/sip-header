@@ -6,6 +6,7 @@ SIP header names and the raw lookup a header store implements. Depend on it when
 
 - `SipHeader`: every name in the [IANA SIP header field registry](https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml#sip-parameters-2) and deployed headers from expired drafts (Diversion, Remote-Party-ID), with canonical wire casing, RFC 3261 §7.3.3 compact forms, `registry()` saying which list a name comes from, and `is_list()` / `may_repeat()` from each header's ABNF.
 - `SipHeaderRows`, `SipHeaderRowsExt` and `RowError`: the raw row lookup.
+- `SipHeaderFields` and `SipHeaderField`: received header rows held as sent, as a store.
 - `define_header_enum!` and `HeaderName`: the same name-enum shape for a caller's own catalogs.
 
 ```rust
@@ -73,6 +74,39 @@ assert_eq!(
     headers.sip_header_rows(SipHeader::Via),
     Ok(vec!["SIP/2.0/UDP 198.51.100.1", "SIP/2.0/UDP 198.51.100.2"])
 );
+```
+
+## Holding received headers
+
+`SipHeaderFields` holds a message's rows as `(name as sent, value)` pairs in wire order, and `SipHeaderField` one header's name as sent with its rows; both borrow or own their text (`into_owned()`) and are stores. The text is kept exactly as received, control characters and names that are no token included, and nothing is checked: type a row through sip-header's accessors before acting on it, and parse or check a received row before copying it onto an outgoing header. Neither writes itself as a header block.
+
+For a name the catalog does not register, `header()` is `None` and whether the header repeats or is a list is unknown; the caller decides, for instance with `header().map_or(false, |h| h.may_repeat())`.
+
+```rust
+use std::borrow::Cow;
+use sip_header_catalog::{SipHeader, SipHeaderField, SipHeaderFields, SipHeaderRows, SipHeaderRowsExt};
+
+let mut fields = SipHeaderFields::from(vec![
+    ("Via", "SIP/2.0/UDP 198.51.100.1"),
+    ("f", "<sip:+15551234567@example.com>;tag=a"),
+    ("v", "SIP/2.0/TCP 203.0.113.5"),
+]);
+fields.push("Content-Length", "0");
+assert_eq!(
+    fields.sip_header_rows(SipHeader::Via),
+    Ok(vec!["SIP/2.0/UDP 198.51.100.1", "SIP/2.0/TCP 203.0.113.5"])
+);
+fields.map_values(|name, value| {
+    if SipHeader::From.matches(name) { Cow::Borrowed("<sip:***@example.com>;tag=a") } else { value }
+});
+fields.remove("Via");
+assert_eq!(fields.len(), 2);
+let owned: SipHeaderFields<'static> = fields.into_owned();
+assert_eq!(owned.sip_header(SipHeader::From), Ok(Some("<sip:***@example.com>;tag=a")));
+
+let field = SipHeaderField::new("X-Custom", vec!["a", "b"]);
+assert_eq!(field.header(), None);
+assert_eq!(field.sip_header_rows_str("x-custom"), Ok(vec!["a", "b"]));
 ```
 
 ## Name enums of your own

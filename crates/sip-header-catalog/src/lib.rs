@@ -5,8 +5,10 @@
 //! headers from expired drafts, with compact forms (RFC 3261 §7.3.3) and
 //! each header's list and repetition rules. [`SipHeaderRows`] is the lookup
 //! a key-value store implements; the parsing accessors over it live in
-//! [sip-header](https://docs.rs/sip-header).
+//! [sip-header](https://docs.rs/sip-header). [`SipHeaderFields`] and
+//! [`SipHeaderField`] hold received rows as sent, and are such stores.
 
+mod fields;
 #[macro_use]
 mod macros;
 mod rows;
@@ -17,6 +19,7 @@ mod serde_name;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
+pub use fields::{SipHeaderField, SipHeaderFields};
 pub use macros::HeaderName;
 pub use rows::{RowError, RowErrorKind, SipHeaderRows, SipHeaderRowsExt};
 
