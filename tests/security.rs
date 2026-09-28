@@ -953,6 +953,46 @@ fn a_blank_entry_in_a_list_that_may_be_empty_is_warned_and_strictly_refused() {
 }
 
 #[test]
+fn an_empty_auth_param_is_warned_and_strictly_refused() {
+    let input = "Digest a=1, , b=2,,c=3";
+    let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
+    assert_eq!(
+        parsed.value,
+        SipAuthValue::parse_strict("Digest a=1, b=2, c=3").unwrap()
+    );
+    assert_eq!(SipAuthValue::parse(input), Ok(parsed.value));
+    let empty = |at| {
+        (
+            Field::Credentials,
+            WarningCode::EmptyEntry,
+            WarningKind::Recovered,
+            Some(at),
+            None,
+        )
+    };
+    let first = input
+        .find(", ,")
+        .unwrap()
+        + 1;
+    let second = input
+        .find(",,")
+        .unwrap()
+        + 1;
+    assert_eq!(
+        parsed
+            .warnings
+            .iter()
+            .map(seen)
+            .collect::<Vec<_>>(),
+        [empty(first), empty(second)]
+    );
+    assert_eq!(
+        SipAuthValue::parse_strict(input),
+        Err(ParseError::NonConformant(parsed.warnings[0]))
+    );
+}
+
+#[test]
 fn a_quote_inside_a_token_is_dropped() {
     let stray = |input: &str, field: Field| {
         let at = input.find('"');
