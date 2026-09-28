@@ -108,4 +108,4 @@ An error renders a label, the field or position at fault, and the length of the 
 
 ## List-valued types take pre-split entries
 
-Every comma-list type has a `from_entries` constructor beside `parse`, and a problem in one entry surfaces as a warning carrying that entry's index. A caller holding entries a transport already delimited never re-joins them for `parse`: the second split is a guess over boundaries already drawn, and it hides which layer produced a bad entry.
+Every comma-list type has a `from_entries` constructor beside `parse`, and a problem in one entry surfaces as a warning carrying that entry's index. A caller holding entries a transport already delimited never re-joins them for `parse`: the second split is a guess over boundaries already drawn, and it hides which layer produced a bad entry. Beside it, `from_rows` takes header occurrences and splits each through the path the typed accessors use, so a caller holding rows and a store accessor never disagree on entries or their indexes.
