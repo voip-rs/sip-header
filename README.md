@@ -246,7 +246,7 @@ assert_eq!(
 | message | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`; `SipMessageHeaders` is a `SipHeaderRows` store over the message |
 | message | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them |
 | serde | `SipHeader` as its Rust variant name (`"CallId"`) | its canonical wire name (`"Call-ID"`); deserialize accepts any spelling `parse_name` does |
-| serde | `define_header_enum!` derives serde when the invoking crate has a `serde` feature | opt in per invocation with the `serde,` arm and the catalog's `serde` feature; wire names |
+| serde | `define_header_enum!` derives serde when the invoking crate has a `serde` feature | opt in per invocation with the `serde,` arm and the catalog's `serde` feature: wire names, any spelling accepted; an invocation without it gets no serde, and the invocation itself still compiles; to keep 0.3's variant-name JSON, put `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` on the enum inside the invocation |
 | serde | no serde on value types | structured serde; parameters as `[[name, value, quoted]]`, the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce; `serde_str` adapters for the wire text |
 | dependencies | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
 

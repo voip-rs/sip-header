@@ -77,7 +77,22 @@ assert_eq!(
 
 ## Name enums of your own
 
-`define_header_enum!` generates a `#[non_exhaustive]` fieldless enum with inherent `ALL` and `as_str`, a `HeaderName` impl, `Display`, `AsRef<str>` and a case-insensitive `FromStr`. The `serde,` arm adds serde through the wire name; it needs this crate's `serde` feature, and an invocation without it gets no serde impls.
+`define_header_enum!` generates a `#[non_exhaustive]` fieldless enum with inherent `ALL` and `as_str`, a `HeaderName` impl, `Display`, `AsRef<str>` and a case-insensitive `FromStr`. The `serde,` arm adds serde through the wire name, deserializing any spelling `FromStr` accepts; it needs this crate's `serde` feature, and an invocation without it gets no serde impls, whatever features the calling crate enables. Attributes on the enum pass through, so an enum that serializes as its variant name carries its own derive inside the invocation:
+
+```rust
+sip_header_catalog::define_header_enum! {
+    error_type: ParseKindError => "unknown kind",
+    /// Serialized as the variant name.
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub enum Kind {
+        /// `call-id`.
+        CallId => "call-id",
+    }
+}
+
+# #[cfg(feature = "serde")]
+assert_eq!(serde_json::to_string(&Kind::CallId).unwrap(), r#""CallId""#);
+```
 
 ```rust
 # #[cfg(feature = "serde")]

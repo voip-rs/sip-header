@@ -30,8 +30,9 @@ pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr 
 ///   `std::error::Error`. With `error_type: E,` the caller defines
 ///   `E(String)` and keeps its `Display` free of the input.
 /// - With `serde,`: `Serialize` as the wire name and `Deserialize` through
-///   `FromStr`, whose error never quotes the input. Needs this crate's
-///   `serde` feature; an invocation without it gets no serde impls.
+///   `FromStr`, accepting any spelling it does, whose error never quotes
+///   the input. Needs this crate's `serde` feature; an invocation without
+///   it gets no serde impls, whatever features the caller enables.
 /// - With `tests_mod: m,`: a `#[cfg(test)] mod m` testing round trip, case
 ///   insensitivity, `Display` and unknown input over `ALL` (needs
 ///   `PartialEq` on the error).
@@ -57,6 +58,24 @@ pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr 
 ///
 /// assert_eq!("FOO-WIRE".parse::<MyEnum>(), Ok(MyEnum::Foo));
 /// assert_eq!(MyEnum::Bar.to_string(), "bar-wire");
+/// ```
+///
+/// Attributes on the enum pass through, so a caller's own derive gives
+/// serde as the variant name instead of the wire name:
+///
+/// ```
+/// sip_header_catalog::define_header_enum! {
+///     error_type: ParseKindError => "unknown kind",
+///     /// Serialized as the variant name.
+///     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+///     pub enum Kind {
+///         /// `call-id`.
+///         CallId => "call-id",
+///     }
+/// }
+///
+/// # #[cfg(feature = "serde")]
+/// assert_eq!(serde_json::to_string(&Kind::CallId).unwrap(), r#""CallId""#);
 /// ```
 #[macro_export]
 macro_rules! define_header_enum {
@@ -280,6 +299,16 @@ mod tests {
         }
     }
 
+    define_header_enum! {
+        error_type: ParseDerivedEnumError => "unknown derived value",
+        /// Serde by the caller's own derive.
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub(crate) enum DerivedEnum {
+            /// `Gamma-Wire`.
+            GammaRay => "Gamma-Wire",
+        }
+    }
+
     #[test]
     fn generated_error_display() {
         let e = ParseTestEnumError("nope".to_string());
@@ -308,6 +337,7 @@ mod tests {
     fn header_name_trait_mirrors_the_inherent_items() {
         assert_eq!(wire_names::<TestEnum>(), ["Foo-Wire", "Bar-Wire"]);
         assert_eq!(wire_names::<OldEnum>(), ["Old-Wire"]);
+        assert_eq!(wire_names::<DerivedEnum>(), ["Gamma-Wire"]);
         assert_eq!(<TestEnum as HeaderName>::ALL, TestEnum::ALL);
         assert_eq!(
             wire_names::<crate::SipHeader>().len(),
@@ -334,7 +364,20 @@ mod tests {
             assert!(!Probe::<TestEnum>::SERIALIZE);
             assert!(!Probe::<OldEnum>::SERIALIZE);
             assert!(Probe::<crate::SipHeader>::SERIALIZE);
+            assert!(Probe::<DerivedEnum>::SERIALIZE);
         };
+
+        #[test]
+        fn enum_attributes_pass_through() {
+            assert_eq!(
+                serde_json::to_string(&DerivedEnum::GammaRay).unwrap(),
+                r#""GammaRay""#
+            );
+            assert_eq!(
+                serde_json::from_str::<DerivedEnum>(r#""GammaRay""#).unwrap(),
+                DerivedEnum::GammaRay
+            );
+        }
 
         #[test]
         fn serde_uses_the_wire_name() {
