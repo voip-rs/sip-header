@@ -122,7 +122,7 @@ pub use dialog_id::{DialogFraming, DialogKind};
 pub use error::{Fault, FaultCode, ParseError, UriFault};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry};
 pub use header::{SipHeaderLookup, TypedHeader};
-pub use header_addr::{SipHeaderAddr, SipHeaderAddrList};
+pub use header_addr::{AddrParts, SipHeaderAddr, SipHeaderAddrList};
 pub use history_info::{HistoryInfo, HistoryInfoEntry};
 pub use join::SipJoin;
 #[cfg(feature = "message")]
@@ -133,12 +133,12 @@ pub use message::{
 };
 pub use params::HeaderParams;
 pub use reason::{SipReason, SipReasonCause, SipReasonList};
-pub use redact::HeaderRedaction;
+pub use redact::{HeaderRedaction, Redact};
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
 pub use target_dialog::SipTargetDialog;
 pub use token_list::TokenList;
-pub use traits::{AddrParts, HeaderParse, ListParse, Redact, UriHeaderParse};
+pub use traits::{HeaderParse, ListParse, UriHeaderParse};
 pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};

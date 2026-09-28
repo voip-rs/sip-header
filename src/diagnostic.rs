@@ -4,8 +4,6 @@ use std::fmt;
 
 use sip_uri::WarningKind;
 
-use crate::error::ParseError;
-
 /// A parse result together with the non-conformance found on the way.
 ///
 /// Returned by the `parse_with_warnings` constructors; `value` is what
@@ -30,17 +28,6 @@ impl<T> Parsed<T> {
         !self
             .warnings
             .is_empty()
-    }
-
-    /// The value, or the first warning as [`ParseError::NonConformant`].
-    pub fn into_strict(self) -> Result<T, ParseError> {
-        match self
-            .warnings
-            .first()
-        {
-            Some(w) => Err(ParseError::NonConformant(*w)),
-            None => Ok(self.value),
-        }
     }
 
     /// Transform the value, keeping the warnings.
@@ -493,13 +480,5 @@ mod tests {
             );
             assert!(seen.insert(ours.to_string()), "{code:?}");
         }
-    }
-
-    #[test]
-    fn into_strict_returns_first_warning() {
-        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent).at(1);
-        let p = Parsed::new((), vec![w]);
-        assert_eq!(p.into_strict(), Err(ParseError::NonConformant(w)));
-        assert_eq!(Parsed::new(5, Vec::new()).into_strict(), Ok(5));
     }
 }

@@ -10,7 +10,8 @@ use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
 use crate::params::HeaderParams;
-use crate::traits::{sealed, HeaderParse, Redact};
+use crate::redact::Redact;
+use crate::traits::{sealed, HeaderParse};
 
 /// SIP authentication value.
 ///

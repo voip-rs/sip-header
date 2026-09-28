@@ -14,8 +14,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
-use crate::redact::HeaderRedaction;
-use crate::traits::Redact;
+use crate::redact::{HeaderRedaction, Redact};
 use crate::uri_info::read_uri;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`

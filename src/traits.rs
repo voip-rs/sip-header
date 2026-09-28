@@ -1,12 +1,7 @@
-//! Parsing and redaction, spelled as extension traits over the value types.
-
-use std::fmt;
+//! Parsing, spelled as extension traits over the value types.
 
 use crate::diagnostic::Parsed;
 use crate::error::ParseError;
-use crate::reason::SipReason;
-use crate::redact::HeaderRedaction;
-use crate::replaces::SipReplaces;
 
 pub(crate) mod sealed {
     pub trait Sealed {}
@@ -138,54 +133,4 @@ pub trait UriHeaderParse: HeaderParse {
     fn parse_uri_header_strict(raw: &str) -> Result<Self, ParseError> {
         Self::parse_uri_header_with_warnings(raw)?.into_strict()
     }
-}
-
-/// Rendering for logs.
-pub trait Redact: sealed::Sealed {
-    /// Render for logs as `how` says: URIs through sip-uri's
-    /// [`redacted`](sip_uri::UriRedact::redacted), a display name as `***`
-    /// unless the URI redaction shows the user part, and the parameters
-    /// [`HeaderRedaction`] masks as `***`. Other parameters render as
-    /// [`Display`](fmt::Display) writes them.
-    ///
-    /// ```
-    /// use sip_header::{HeaderParse, Redact, SipHeaderAddr};
-    /// use sip_uri::{Redaction, UserMask};
-    ///
-    /// let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
-    /// assert_eq!(
-    ///     addr.redacted(Redaction::default()).to_string(),
-    ///     "*** <sip:***@example.com>;tag=abc"
-    /// );
-    /// assert_eq!(
-    ///     addr.redacted(Redaction::default().user(UserMask::KeepLast(4))).to_string(),
-    ///     "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
-    /// );
-    /// # Ok::<(), sip_header::ParseError>(())
-    /// ```
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a;
-}
-
-/// Parsing the headers an address carries inside its URI.
-pub trait AddrParts: Sized + sealed::Sealed {
-    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present,
-    /// through [`UriHeaderParse`].
-    ///
-    /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
-    /// `Replaces` header; `Some(Err)` when the value doesn't conform to
-    /// RFC 3891 §6.1.
-    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>>;
-
-    /// Parse the RFC 3326 Reason carried as the URI's `?Reason=` header,
-    /// through [`UriHeaderParse`].
-    ///
-    /// Returns `None` if no Reason is present.
-    fn reason(&self) -> Option<Result<SipReason, ParseError>> {
-        self.reason_with_warnings()
-            .map(|r| r.map(|parsed| parsed.value))
-    }
-
-    /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
-    /// breaches beside the value.
-    fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>>;
 }

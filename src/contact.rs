@@ -11,8 +11,7 @@ use crate::error::ParseError;
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
-use crate::redact::{HeaderRedaction, RedactedList};
-use crate::traits::Redact;
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 
 /// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
 /// (RFC 3261 §20.10), either the `*` wildcard or one address or more.

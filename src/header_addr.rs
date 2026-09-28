@@ -10,9 +10,9 @@ use crate::is_token_char;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 use crate::reason::SipReason;
-use crate::redact::{HeaderRedaction, RedactedList};
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::replaces::SipReplaces;
-use crate::traits::{sealed, AddrParts, HeaderParse, Redact, UriHeaderParse};
+use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
@@ -298,6 +298,30 @@ impl SipHeaderAddr {
                 .unwrap_or_default(),
         )
     }
+}
+
+/// Parsing the headers an address carries inside its URI.
+pub trait AddrParts: Sized + sealed::Sealed {
+    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present,
+    /// through [`UriHeaderParse`].
+    ///
+    /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
+    /// `Replaces` header; `Some(Err)` when the value doesn't conform to
+    /// RFC 3891 §6.1.
+    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>>;
+
+    /// Parse the RFC 3326 Reason carried as the URI's `?Reason=` header,
+    /// through [`UriHeaderParse`].
+    ///
+    /// Returns `None` if no Reason is present.
+    fn reason(&self) -> Option<Result<SipReason, ParseError>> {
+        self.reason_with_warnings()
+            .map(|r| r.map(|parsed| parsed.value))
+    }
+
+    /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
+    /// breaches beside the value.
+    fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>>;
 }
 
 impl AddrParts for SipHeaderAddr {

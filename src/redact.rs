@@ -4,7 +4,33 @@ use std::fmt;
 
 use sip_uri::Redaction;
 
-use crate::traits::Redact;
+use crate::traits::sealed;
+
+/// Rendering for logs.
+pub trait Redact: sealed::Sealed {
+    /// Render for logs as `how` says: URIs through sip-uri's
+    /// [`redacted`](sip_uri::UriRedact::redacted), a display name as `***`
+    /// unless the URI redaction shows the user part, and the parameters
+    /// [`HeaderRedaction`] masks as `***`. Other parameters render as
+    /// [`Display`](fmt::Display) writes them.
+    ///
+    /// ```
+    /// use sip_header::{HeaderParse, Redact, SipHeaderAddr};
+    /// use sip_uri::{Redaction, UserMask};
+    ///
+    /// let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
+    /// assert_eq!(
+    ///     addr.redacted(Redaction::default()).to_string(),
+    ///     "*** <sip:***@example.com>;tag=abc"
+    /// );
+    /// assert_eq!(
+    ///     addr.redacted(Redaction::default().user(UserMask::KeepLast(4))).to_string(),
+    ///     "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
+    /// );
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a;
+}
 
 /// Header parameters whose value names a device or a user: RFC 5626
 /// `+sip.instance`, RFC 5627 `pub-gruu` and `temp-gruu`.

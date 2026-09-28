@@ -2,8 +2,21 @@
 
 use std::fmt;
 
-use crate::diagnostic::{write_location, Field, ParseWarning};
+use crate::diagnostic::{write_location, Field, ParseWarning, Parsed};
 use sip_header_catalog::RowError;
+
+impl<T> Parsed<T> {
+    /// The value, or the first warning as [`ParseError::NonConformant`].
+    pub fn into_strict(self) -> Result<T, ParseError> {
+        match self
+            .warnings
+            .first()
+        {
+            Some(w) => Err(ParseError::NonConformant(*w)),
+            None => Ok(self.value),
+        }
+    }
+}
 
 /// Error returned by every header-value parser in this crate.
 ///
@@ -291,6 +304,15 @@ mod tests {
     use std::error::Error;
 
     use super::*;
+    use crate::diagnostic::WarningCode;
+
+    #[test]
+    fn into_strict_returns_first_warning() {
+        let w = ParseWarning::new(Field::Addr, WarningCode::TrailingContent).at(1);
+        let p = Parsed::new((), vec![w]);
+        assert_eq!(p.into_strict(), Err(ParseError::NonConformant(w)));
+        assert_eq!(Parsed::new(5, Vec::new()).into_strict(), Ok(5));
+    }
 
     #[test]
     fn uri_error_keeps_source() {
