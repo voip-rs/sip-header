@@ -5,9 +5,7 @@
 
 use std::fmt;
 
-use crate::accept::{
-    check_accept_param, flag_invalid_token, missing_entry, q_of, read_accept_params, QValue,
-};
+use crate::accept::{check_accept_param, flag_invalid_token, q_of, read_accept_params, QValue};
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
@@ -121,10 +119,6 @@ fn parse_entry(
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipAcceptEncodingEntry, ParseError> {
     let raw = entry.trim();
-    if raw.is_empty() {
-        return Err(missing_entry());
-    }
-
     let (raw_encoding, params_part) = crate::split_at_params(raw);
     let raw_encoding = raw_encoding.trim();
     let encoding = crate::token_field(entry, raw_encoding, Field::Coding, warnings);
@@ -163,10 +157,6 @@ impl CommaList for SipAcceptEncoding {
 
     fn from_parsed(entries: Vec<SipAcceptEncodingEntry>) -> Result<Self, ParseError> {
         Ok(Self::new(entries))
-    }
-
-    fn blank() -> Result<Self, ParseError> {
-        Ok(Self::new(Vec::new()))
     }
 }
 

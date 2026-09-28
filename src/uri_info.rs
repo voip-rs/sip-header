@@ -139,10 +139,6 @@ impl From<UriInfoEntry> for UriInfoEntryParts {
 fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEntry> {
     let raw = entry.trim();
     let at = crate::offset_in(entry, raw);
-    if raw.is_empty() {
-        warnings.push(crate::empty_entry(Field::Entry, 0));
-        return None;
-    }
 
     let bracketed = raw
         .strip_prefix('<')

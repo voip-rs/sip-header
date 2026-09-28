@@ -160,10 +160,6 @@ fn parse_accept_entry(
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipAcceptEntry, ParseError> {
     let raw = entry.trim();
-    if raw.is_empty() {
-        return Err(missing_entry());
-    }
-
     let (media_part, params_part) = crate::split_at_params(raw);
     let media_part = media_part.trim();
     let bad_range = || {
@@ -193,11 +189,6 @@ fn parse_accept_entry(
         params: read_accept_params(entry, params_part, warnings),
         ..SipAcceptEntry::unchecked(&type_str, &subtype_str)
     })
-}
-
-/// A blank entry beside a real one, shared by the Accept-* headers.
-pub(crate) fn missing_entry() -> ParseError {
-    ParseError::malformed(Field::Entry, FaultCode::Missing, None)
 }
 
 /// Raise [`WarningCode::InvalidToken`] on `field` at `part`'s position in
@@ -362,10 +353,6 @@ impl CommaList for SipAccept {
 
     fn from_parsed(entries: Vec<SipAcceptEntry>) -> Result<Self, ParseError> {
         Ok(Self::new(entries))
-    }
-
-    fn blank() -> Result<Self, ParseError> {
-        Ok(Self::new(Vec::new()))
     }
 }
 

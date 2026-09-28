@@ -128,8 +128,9 @@ macro_rules! list_type {
 pub(crate) trait CommaList: Sized {
     type Entry;
 
-    /// Whether entries that are all blank are the empty list, for grammars
-    /// of the form `[ entry *(COMMA entry) ]`.
+    /// Whether a lone blank entry is the empty list, for grammars of the
+    /// form `[ entry *(COMMA entry) ]`; every other blank entry is
+    /// [`EmptyEntry`](crate::WarningCode::EmptyEntry).
     const BLANK_ENTRIES_ARE_EMPTY: bool = false;
 
     /// Where this grammar lets a `quoted-string` start, which decides the
@@ -153,11 +154,6 @@ pub(crate) trait CommaList: Sized {
         Self::from_parsed(entries)
     }
 
-    /// What a whitespace-only value parses to.
-    fn blank() -> Result<Self, ParseError> {
-        Err(ParseError::empty(Field::Value))
-    }
-
     /// Split `raw` at top-level commas and parse every entry.
     fn list_from_str(raw: &str) -> Result<Parsed<Self>, ParseError> {
         let whole = scrub(raw);
@@ -166,7 +162,7 @@ pub(crate) trait CommaList: Sized {
             .trim()
             .is_empty()
         {
-            return Self::blank().map(|v| Parsed::new(v, whole.warnings));
+            return Self::from_parsed(Vec::new()).map(|v| Parsed::new(v, whole.warnings));
         }
         Self::list_from_marked(crate::split_entries(raw, Self::QUOTE_START).marked())
     }
@@ -192,22 +188,21 @@ pub(crate) trait CommaList: Sized {
             .into_iter()
             .map(|(e, comma)| (scrub(e), comma.then(|| crate::trailing_comma(e))))
             .collect();
+        let is_blank = |e: &Scrubbed<'_>| {
+            e.text
+                .trim()
+                .is_empty()
+        };
+        let empty_list = Self::BLANK_ENTRIES_ARE_EMPTY
+            && matches!(entries.as_slice(), [(e, None)] if is_blank(e));
         let mut warnings = Vec::new();
-        if Self::BLANK_ENTRIES_ARE_EMPTY
-            && entries
-                .iter()
-                .all(|(e, _)| {
-                    e.text
-                        .trim()
-                        .is_empty()
-                })
+        let mut kept = Vec::with_capacity(entries.len());
+        for (i, (entry, comma)) in entries
+            .into_iter()
+            .enumerate()
         {
-            let lone = matches!(entries.as_slice(), [(_, None)]);
-            for (i, (entry, comma)) in entries
-                .into_iter()
-                .enumerate()
-            {
-                let empty = (!lone).then(|| crate::empty_entry(Field::Entry, 0));
+            if is_blank(&entry) {
+                let empty = (!empty_list).then(|| crate::empty_entry(Field::Entry, 0));
                 warnings.extend(
                     entry
                         .warnings
@@ -216,14 +211,8 @@ pub(crate) trait CommaList: Sized {
                         .chain(comma)
                         .map(|w| w.in_entry(i)),
                 );
+                continue;
             }
-            return Self::blank().map(|v| Parsed::new(v, warnings));
-        }
-        let mut kept = Vec::with_capacity(entries.len());
-        for (i, (entry, comma)) in entries
-            .into_iter()
-            .enumerate()
-        {
             let map = |p: usize| entry.original(p);
             let mut found = Vec::new();
             let value = Self::parse_entry(&entry.text, &mut found).map_err(|e| {

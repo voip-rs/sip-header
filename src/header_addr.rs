@@ -5,7 +5,7 @@ use std::fmt::{self, Write as _};
 use sip_uri::{UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::{Fault, FaultCode, ParseError};
+use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
@@ -492,19 +492,12 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     Ok(Parsed::new(addr, warnings))
 }
 
-/// Parse one list entry as an address, forwarding its warnings; a blank
-/// entry is a missing one rather than an empty value.
+/// Parse one list entry as an address, forwarding its warnings.
 pub(crate) fn parse_list_addr(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipHeaderAddr, ParseError> {
-    let parsed = parse_addr(entry).map_err(|e| match e {
-        ParseError::Malformed(Fault {
-            code: FaultCode::Empty,
-            ..
-        }) => ParseError::malformed(Field::Entry, FaultCode::Missing, None),
-        other => other,
-    })?;
+    let parsed = parse_addr(entry)?;
     warnings.extend(parsed.warnings);
     Ok(parsed.value)
 }

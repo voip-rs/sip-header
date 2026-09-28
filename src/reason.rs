@@ -258,16 +258,6 @@ impl CommaList for SipReasonList {
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipReason>, ParseError> {
-        if entry
-            .trim()
-            .is_empty()
-        {
-            return Err(ParseError::malformed(
-                Field::Entry,
-                FaultCode::Missing,
-                None,
-            ));
-        }
         parse_reason(entry, warnings).map(Some)
     }
 
