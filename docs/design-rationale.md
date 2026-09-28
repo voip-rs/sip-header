@@ -12,7 +12,7 @@ A `"`, `<`, `>` or `,` inside a token field is dropped by the lenient parser und
 
 ## Header parameters parse through one quote-aware reader
 
-Every `*(SEMI generic-param)` tail is read by the shared parameter reader in `lib.rs`, so a fix to parameter grammar (SWS around `;` and `=`, a `;` inside a quoted `gen-value`) reaches every header at once.
+Every `*(SEMI generic-param)` tail is read by the shared parameter reader in `lib.rs`, so a fix to parameter grammar (SWS around `;` and `=`, a `;` inside a quoted `gen-value`) reaches every header at once. The reader starts at the opening `;`, so a `;` with no parameter after it is reported wherever it appears.
 
 A quote that never closes is not a quoted-string, and the reader falls back to splitting at the next `;`. Treating it as open would let one stray quote erase the mandatory parameters after it.
 
@@ -66,7 +66,7 @@ Every header-value parser returns the crate's `ParseError`, so nested parsers co
 
 ## Stores return one row per occurrence, borrowed and fallible
 
-`extract_header` and every lookup store return one row per header occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers; splitting a row into list entries is the accessor's job, and each row is split untrimmed. A store has one required method, the fallible rows lookup, and everything else, the single-value lookup included, derives from it, so two views of one store cannot disagree and a store's decoding failure reaches every caller instead of a value parsed from undecoded text. Rows are borrowed from the store: a store that must unfold or unescape does it once when it is built, never per lookup. A present row that is only whitespace reaches the entry parser as an empty entry instead of vanishing, except where the header's grammar admits an empty value.
+`extract_header` and every lookup store return one row per header occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers; splitting a row into list entries is the accessor's job, and each row is split untrimmed. A store has one required method, the fallible rows lookup, and everything else, the single-value lookup included, derives from it, so two views of one store cannot disagree and a store's decoding failure reaches every caller instead of a value parsed from undecoded text. Rows are borrowed from the store: a store that must unfold or unescape does it once when it is built, never per lookup. A present row that is only whitespace reaches the entry parser as an empty entry instead of vanishing. Where the header's grammar admits an empty value, one blank value is the empty list; every further blank row or entry is reported.
 
 Callers pass the canonical name. A store keyed by wire name matches it case-insensitively and through the compact alias, using the catalog's predicate, and returns both spellings in wire order; a store keyed another way translates the name and looks it up directly.
 
