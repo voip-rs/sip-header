@@ -477,6 +477,7 @@ impl<T: SipHeaderRows + ?Sized> SipHeaderLookup for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ListParse;
     use std::collections::HashMap;
 
     fn headers_with(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -1228,6 +1229,87 @@ mod tests {
             let (auth, seen) = row_warnings::<Vec<SipAuthValue>>(&h, SipHeader::Authorization);
             assert_eq!((auth.len(), seen), (1, vec![(empty, Some(1))]));
         }
+    }
+
+    fn same_as_accessor<L>(header: SipHeader, wire: &[&str])
+    where
+        L: crate::ListParse + for<'a> TypedHeader<'a> + PartialEq + std::fmt::Debug,
+    {
+        let h = rows(&[(header.as_str(), wire)]);
+        assert_eq!(
+            L::from_rows_with_warnings(
+                wire.iter()
+                    .copied()
+            ),
+            h.parse_header::<L>(header)
+                .map(|p| p.unwrap()),
+            "{wire:?}"
+        );
+    }
+
+    #[test]
+    fn list_parse_from_rows_is_the_accessor_path() {
+        let rows_cases: &[&[&str]] = &[
+            &[
+                "<sip:a@example.com>, <sip:b@example.com>",
+                "<sip:c@example.com>",
+            ],
+            &["<sip:a@example.com>,", "<sip:b@example.com>"],
+            &[
+                "<sip:a@example.com>, <sip:b@example.com>",
+                "<sip:c@example.com",
+            ],
+            &["", "<sip:a@example.com>"],
+            &["   "],
+        ];
+        for wire in rows_cases {
+            same_as_accessor::<SipHeaderAddrList>(SipHeader::Route, wire);
+            same_as_accessor::<ContactList>(SipHeader::Contact, wire);
+        }
+        let accept_cases: &[&[&str]] = &[&[""], &["", "  "], &["application/sdp, text/plain", " "]];
+        for wire in accept_cases {
+            same_as_accessor::<SipAccept>(SipHeader::Accept, wire);
+        }
+    }
+
+    #[test]
+    fn list_parse_from_rows_counts_entries_across_rows() {
+        let wire = [
+            "<sip:a@example.com>, <sip:b@example.com>",
+            "<sip:c@example.com>",
+        ];
+        let list = SipHeaderAddrList::from_rows(wire).unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(
+            SipHeaderAddrList::from_entries(wire).map(|l| l.len()),
+            Ok(2)
+        );
+        let bad = [
+            "<sip:a@example.com>, <sip:b@example.com>",
+            "<sip:c@example.com",
+        ];
+        assert!(matches!(
+            SipHeaderAddrList::from_rows(bad),
+            Err(ParseError::Malformed(f)) if f.entry == Some(2)
+        ));
+        let comma = ["<sip:a@example.com>,", "<sip:b@example.com>"];
+        assert!(SipHeaderAddrList::from_rows(comma).is_ok());
+        assert!(matches!(
+            SipHeaderAddrList::from_rows_strict(comma),
+            Err(ParseError::NonConformant(w)) if w.entry == Some(0)
+        ));
+    }
+
+    #[test]
+    fn contact_list_len_counts_addresses() {
+        let h = rows(&[("Contact", &["<sip:a@example.com>, <sip:b@example.com>"])]);
+        let list = h
+            .contact()
+            .unwrap()
+            .unwrap();
+        assert_eq!((list.len(), list.is_empty()), (2, false));
+        let wildcard = ContactList::wildcard();
+        assert_eq!((wildcard.len(), wildcard.is_empty()), (0, true));
     }
 
     #[test]
