@@ -26,7 +26,10 @@ use crate::via::SipVia;
 use crate::warning::SipWarning;
 
 pub(crate) mod rows {
-    use super::*;
+    use sip_header_catalog::SipHeader;
+
+    use crate::diagnostic::Parsed;
+    use crate::error::ParseError;
 
     /// Building a value from every row of one header.
     pub trait FromRows<'a>: Sized {
