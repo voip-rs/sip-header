@@ -102,6 +102,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
   `sip_uri::Uri`, and sip-uri's warning
   types inside ours (`Component`, `WarningCode`, `WarningKind`, `ParseError`
   as a source) are intentional (same author, narrow scope, stable).
+- **Catalog types in sip-header's API** (`SipHeader`, `SipHeaderRows`,
+  `RowError`, `SipHeaderFields` in `ExtractedHeaders`/`SipMessageHeaders`)
+  are intentional: the catalog is the stable layer below.
 - **Never expose other dependency types in public signatures.** Wrap them
   or return `impl Trait`.
 - **`FromStr` uses `eq_ignore_ascii_case`** for case-insensitive matching.
