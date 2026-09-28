@@ -1,7 +1,6 @@
 # sip-header
 
-SIP header field parsers for Rust. Via, Warning, Auth, Accept, Contact,
-Call-Info, History-Info, Geolocation, Security, and full IANA header catalog.
+SIP header field parsers for Rust: name-addr, Contact, Via, Warning, Call-ID, authentication, the Accept family, Call-Info, History-Info, Reason, Geolocation, Security, Replaces, Join, Target-Dialog and the token lists, over the full IANA header catalog.
 
 [![CI](https://github.com/ticpu/sip-header/actions/workflows/ci.yml/badge.svg)](https://github.com/ticpu/sip-header/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/sip-header.svg)](https://crates.io/crates/sip-header)
@@ -10,9 +9,7 @@ Call-Info, History-Info, Geolocation, Security, and full IANA header catalog.
 ![SipHeader](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/9f50aa47ea72d91eb2033a1c48f40246/raw/sip-header-count.json)
 ![SipHeaderLookup](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/9f50aa47ea72d91eb2033a1c48f40246/raw/lookup-count.json)
 
-Sits between URI parsing ([sip-uri](https://crates.io/crates/sip-uri))
-and full SIP stacks, handling the header-level grammar: display names,
-header parameters, and structured header values.
+Sits between URI parsing ([sip-uri](https://crates.io/crates/sip-uri)) and full SIP stacks, handling the header-level grammar: display names, header parameters, and structured header values.
 
 ```toml
 [dependencies]
@@ -21,12 +18,12 @@ sip-header = "0.4"
 
 ## Crates
 
-| Crate | Holds | Depend on it for |
+| Crate | Holds | Stability |
 |---|---|---|
-| [sip-header-catalog](crates/sip-header-catalog) | `SipHeader`, `define_header_enum!`, `SipHeaderRows` | header names, and a header store's public trait |
-| **sip-header** | value types, parsing, warnings, `ParseError`, validated builders, redaction, `SipHeaderLookup` | reading headers off the wire |
+| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`) and the raw store trait (`SipHeaderRows`, `RowError`) | aims for 1.0 |
+| **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` | 0.x |
 
-sip-header re-exports the catalog. A store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
+A crate whose public API names header names or a header store depends on sip-header-catalog alone. sip-header re-exports it; a store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
 
 ## Imports
 
@@ -59,10 +56,27 @@ assert!(matches!(
 ));
 ```
 
+## Validated constructors
+
+Constructors, builders and deserializers return `Result`, and refuse what would print as a different value: a built value parses back strictly as itself.
+
+```rust
+use sip_header::prelude::*;
+use sip_header::sip_uri::Uri;
+use sip_header::SipHeaderAddr;
+
+let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
+    .with_display_name("Alice Smith")?
+    .with_tag("abc")?;
+assert_eq!(addr.to_string(), r#""Alice Smith" <sip:alice@example.com>;tag=abc"#);
+assert!(addr.clone().with_display_name("a\r\nb").is_err());
+assert!(addr.with_param("tag", Some("x")).is_err());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## SipHeaderAddr — RFC 3261 name-addr
 
-Parses `[display-name] <URI> ;param=value` with header-level parameters
-(tag, expires, etc.):
+Parses `[display-name] <URI> ;param=value` with header-level parameters (tag, expires, etc.):
 
 ```rust
 use sip_header::{HeaderParse, SipHeaderAddr};
@@ -103,7 +117,7 @@ assert_eq!(hi.entries()[0].index(), Some("1"));
 
 ## SipHeaderLookup trait
 
-Typed accessors for any key-value store holding SIP headers. Each returns `Ok(None)` for an absent header; `parse_header` returns any typed header with its warnings, and the catalog's `is_list` and `may_repeat` decide how the rows become one value:
+Typed accessors for any `SipHeaderRows` store. Each returns `Ok(None)` for an absent header; `parse_header` returns any typed header with its warnings, and the catalog's `is_list` and `may_repeat` decide how the rows become one value:
 
 ```rust
 use std::collections::HashMap;
@@ -126,16 +140,9 @@ assert!(parsed.warnings.is_empty());
 
 ## SipHeader enum — full IANA registry
 
-The `SipHeader` enum covers all registered SIP header field names from
-the [IANA SIP Parameters](https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml#sip-parameters-2)
-registry, plus deployed headers from expired drafts (Diversion,
-Remote-Party-ID), which `registry()` reports as `Registry::Draft`. Use it
-for typed lookups, or fall back to `sip_header_str()` for unregistered
-headers.
+The `SipHeader` enum covers all registered SIP header field names from the [IANA SIP Parameters](https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml#sip-parameters-2) registry, plus deployed headers from expired drafts (Diversion, Remote-Party-ID), which `registry()` reports as `Registry::Draft`. Use it for typed lookups, or fall back to `sip_header_str()` for unregistered headers.
 
-### Compact header forms (RFC 3261 §7.3.3)
-
-All IANA-registered compact forms are supported:
+All IANA-registered compact forms (RFC 3261 §7.3.3) are supported:
 
 ```rust
 use sip_header::SipHeader;
@@ -145,10 +152,9 @@ assert_eq!(SipHeader::From.compact_form(), Some('f'));
 assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
 ```
 
-`extract_header()` matches both forms transparently — searching for
-`"From"` also matches `f:` lines, and vice versa.
+## Raw messages
 
-### Bulk extraction
+`extract_header()` matches both forms of a name: searching for `"From"` also matches `f:` lines, and vice versa.
 
 `SipMessageHeaders` reads a raw message's header block into rows in wire order, unfolded per RFC 3261 §7.3.1, and is a `SipHeaderRows` store, so every typed accessor reads it. Names stay as sent (compact forms are not expanded), and the byte offset of every line it could not read is reported. `extract_all_headers()` returns the same rows as owned strings:
 
@@ -167,68 +173,82 @@ assert_eq!(all.headers[1].0, "f");  // not "From"
 # Ok::<(), sip_header::ParseError>(())
 ```
 
+## Redaction
+
+`Redact::redacted` renders a value for logs through a `HeaderRedaction`, which wraps sip-uri's `Redaction`. An address masks its display name along with the user part, and the identity parameters (`+sip.instance`, `pub-gruu`, `temp-gruu`) unless shown; a Geolocation masks each reference after its scheme unless shown; `SipAuthValue` masks its credentials, and the username with the user part.
+
+```rust
+use sip_header::prelude::*;
+use sip_header::sip_uri::Redaction;
+use sip_header::SipHeaderAddr;
+
+let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
+assert_eq!(
+    addr.redacted(Redaction::default()).to_string(),
+    "*** <sip:***@example.com>;tag=abc"
+);
+# Ok::<(), sip_header::ParseError>(())
+```
+
 ## Migrating from 0.3
 
-| 0.3 | 0.4 |
-|---|---|
-| `"…".parse::<T>()`, `T::from_str` | `T::parse` with `use sip_header::HeaderParse`; `from_entries` needs `ListParse` |
-| `sip_header::header_addr::SipHeaderAddr` and the other module paths | every type at the crate root; `use sip_header::prelude::*` for the traits |
-| inherent `redacted(Redaction)` | `Redact::redacted(impl Into<HeaderRedaction>)`, which also masks `+sip.instance`, `pub-gruu`, `temp-gruu` and Geolocation references unless shown; `ContactList`, `SipHeaderAddrList` and `SipGeolocation` implement it |
-| `SipHeaderAddr::parse_list` → `Vec<SipHeaderAddr>` | `SipHeaderAddrList::parse` / `from_entries`, `Err` when empty |
-| `DialogIdEdit::parse_uri_header*` | `UriHeaderParse`, also on `SipReason`; its errors carry no position |
-| `SipCallId<'a>` borrowing its input, inherent `parse` | owned `SipCallId`, parsed through `HeaderParse`; `new()` refuses a breach of `word ["@" word]` |
-| `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
-| `impl SipHeaderLookup for Store` | `impl SipHeaderRows for Store` (from sip-header-catalog); `SipHeaderLookup` comes by blanket impl |
-| header-name consumers depend on sip-header | sip-header-catalog |
-| `HistoryInfoEntry::reason()` | `entry.addr().reason()` via `AddrParts` |
-| `SipViaError`, `SipAuthError`, `UriInfoError`, `HistoryInfoError`, `ParseSipHeaderAddrError`, … | one `ParseError`; a URI failure keeps `sip_uri::ParseError` as its `source()` |
-| `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` for transport framing | a lookup store implements `SipHeaderRows::sip_header_rows_str` and returns `RowError::too_many_entries(count, limit)` or `RowError::malformed().in_entry(i)`, which accessors return as `ParseError::Row` |
-| token-list accessors (`allow()`, `supported()`, …) return `Vec<&str>` | `Result<Option<TokenList>, ParseError>`; `contains()` follows the header's case rule; empty entries, stray framing and non-token text are reported |
-| `require_header()` | `require()` |
-| address-list accessors (`route()`, `p_asserted_identity()`, …) return `Vec<SipHeaderAddr>`, auth accessors `Vec<SipAuthValue>` | every accessor returns `Result<Option<T>, ParseError>`: `SipHeaderAddrList`, `Vec<SipAuthValue>`; Remote-Party-ID rows are not split at commas |
-| no warnings through `SipHeaderLookup` | `parse_header::<T>(SipHeader)` returns `Parsed<T>`, `parse_header_strict` refuses; a header `T` does not hold is `FaultCode::WrongHeader` |
-| `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`; `SipMessageHeaders` is a `SipHeaderRows` store over the message |
-| `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them |
-| `WarningCode::as_str()` of a sip-uri code is `uri-…` | `as_str()` is sip-uri's name; `Display` prefixes `uri-` |
-| `serde_str::{replaces, join, target_dialog}` write the value's framing | header framing |
-| parsers reject some non-conformant input | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
-| `from_entries` only | also `from_entries_with_warnings` and `from_entries_strict` on every list type |
-| `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
-| `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
-| the `;params` after a bare addr-spec (`sip:a@example.com;tag=x`) are URI parameters | header parameters (RFC 3261 §20.10), so `tag()` reads them and Display brackets the URI; a bare addr-spec holding `,`, `;` or `?` raises `MissingBrackets` |
-| a comma ending a list or an auth-param list is ignored | ignored with a `TrailingComma` warning; `split_comma_entries_with_warnings` reports it for a caller splitting before `from_entries` |
-| a blank entry of an Accept, Accept-Encoding, Accept-Language, Allow or Supported list, a blank auth-param, or an empty header parameter (`;;`, a final `;`) is ignored | ignored with an `EmptyEntry` warning; a list value that is only whitespace is the empty list |
-| a blank entry beside real ones in an address, Contact, History-Info, Via, Warning, Security or Reason list is `Err` | dropped with an `EmptyEntry` warning, as in every other list; `Err(Empty)` only when no entry remains |
-| an empty row a store returns is skipped | a blank row, empty or whitespace, is a blank entry: one alone is the empty list where the grammar admits it, any other raises `EmptyEntry`, authentication rows included |
-| a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
-| `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
-| Via `sent-protocol` parts and the Reason protocol compare byte for byte | case-insensitively, printed as sent |
-| Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
-| `param()` returns `Option<&str>` on Accept*, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>`; `Some(None)` is a flag |
-| `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |
-| `params()` returns pairs with values as sent, quotes included | `params() -> &HeaderParams`: `iter()`, `get()`, `is_quoted()`; values unescaped |
-| `with_param` appends; a quoted value is passed with its quotes | `with_param` replaces the same name in place and takes the text, `with_quoted_param` forces quotes |
-| `with_param("tag" / "rport" / "to-tag" / "early-only" …)` | refused; `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `HistoryInfoEntry::with_index` |
-| an auth-param without `=` is `Err` | kept as a flag with an `AuthParamFlag` warning |
-| parameter serde as `[[name, value]]` or `{key, value, quoted}` | `[[name, value, quoted]]`; the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce |
-| `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
-| `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]` | `Result`, `Err` when no entry yields a URI; `SipGeolocationEntry::new(Uri)` with geoloc-params, `uri()`; `cid()` comes from a `cid:` scheme, `url()`/`urls()` yield the other URIs; `SipGeolocationRef` removed |
-| `SipViaEntry::host() -> &str`, `with_host(String)` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`; `WarningCode::MissingHost` removed |
-| Reason yields `Utf8Error` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
-| `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, parsed by `HeaderParse`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
-| `join()` returns `SipReplaces` | `SipJoin`, which has no `early-only` |
-| `ContactList` of `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries`, `contact() -> Vec<ContactValue>` | opaque `ContactList`: `wildcard()`, `new(addrs) -> Result` (non-empty), `is_wildcard()`, `addrs()`; `ContactList::parse` / `from_entries`; `contact() -> Option<ContactList>`; an empty Contact is `Err` |
-| list `new` returns `Option` (Via, Warning, Security, URI-info, History-Info) or `Self` | `Result`, `Err(Empty)` for an empty list, where the grammar needs an entry (those and Geolocation); `Self` for the Accept family |
-| `HistoryInfoEntry::new(addr)` | `new(addr, index) -> Result`; `with_index` replaces it |
-| `q() -> Option<&str>` on the Accept family and `SipSecurityMechanism` | `Option<QValue>` (thousandths, canonical `Display`); the text stays in `param("q")`; Security refuses and warns a `q` outside `qvalue` as Accept does |
-| History-Info and URI-info Display joins entries with `,` | every list joins with `, ` |
-| `DialogFraming` serde `"uriheader"` | `"uri-header"` |
-| a `"` that never closes swallows the rest of a list, a `"` inside a token is kept | a `"` opens a quoted string only where the header's grammar lets one start and only when it closes; a `"`, `<`, `>` or `,` inside a token field is dropped with `StrayDelimiter`; text after a Warning's warn-text is dropped with `TrailingContent` |
-| value types without `Hash` | every value type is `Hash`, consistent with its `Eq` (wire-form identity) |
-| `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
-| sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
-
-`SipHeaderAddr::redacted` renders an address for logs through a `HeaderRedaction`, which wraps sip-uri's `Redaction`: the display name is masked along with the user part, and identity parameters (`+sip.instance`, `pub-gruu`, `temp-gruu`) unless shown. `SipGeolocation::redacted` masks each reference after its scheme unless shown; `SipAuthValue::redacted` masks the credentials, and the username with the user part.
+| Area | 0.3 | 0.4 |
+|---|---|---|
+| parsing | `"…".parse::<T>()`, inherent `T::parse` | `HeaderParse::parse`, `parse_with_warnings`, `parse_strict`; `use sip_header::prelude::*` |
+| parsing | inherent `from_entries` on list types | `ListParse::from_entries`, `from_entries_with_warnings`, `from_entries_strict` |
+| parsing | inherent `parse_uri_header` on `SipReplaces`, `SipTargetDialog` | `UriHeaderParse`, also on `SipJoin` and `SipReason` |
+| parsing | inherent `SipHeaderAddr::replaces()`, `HistoryInfoEntry::reason()` | `AddrParts`: `addr.replaces()`, `addr.reason()`, `entry.addr().reason()` |
+| parsing | `sip_header::header_addr::SipHeaderAddr` and the other module paths | every type at the crate root; `conference_info` and `serde_str` stay modules |
+| parsing | non-conformant input rejected, or accepted without notice | `parse` accepts it; `parse_with_warnings` reports it, `parse_strict` refuses it |
+| parsing | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
+| parsing | a `"` that never closes swallows the rest of a list; a `"` inside a token is kept | a `"` opens a quoted string only where the grammar lets one start and only when it closes; a `"`, `<`, `>` or `,` inside a token field is dropped with `StrayDelimiter`; text after a Warning's warn-text is dropped with `TrailingContent` |
+| errors | `SipViaError`, `SipAuthError`, `ParseSipHeaderAddrError`, `UriInfoError`, `HistoryInfoError`, … | one `ParseError`: `Malformed(Fault)`, `Uri(UriFault)` with sip-uri's error as `source()`, `Row(RowError)`, `NonConformant(ParseWarning)` |
+| errors | `Utf8Error` from `SipHeaderAddr::param()` and `HistoryInfoEntry::reason()` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
+| errors | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
+| constructors | `SipHeaderAddr::new(uri) -> Self`; `with_display_name`, `with_param` unchecked, `try_with_*` validate | every `new` and `with_*` returns `Result`, `try_with_*` removed: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
+| params | `params()` as `&[(String, String)]`, `&[(String, Option<String>)]` or an iterator, values as sent with their quotes | `params() -> &HeaderParams`: `iter()`, `get()`, `is_quoted()`; values unescaped |
+| params | `param()` returns `Option<&str>` on the Accept family, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>` everywhere; `Some(None)` is a flag |
+| params | `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |
+| params | `with_param` appends; a quoted value is passed with its quotes | `with_param` replaces the same name in place and takes the text; `with_quoted_param` forces quotes |
+| params | `with_param("tag", …)` | refused for a key the type sets itself: `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `HistoryInfoEntry::with_index` |
+| params | the `;params` after a bare addr-spec (`sip:a@example.com;tag=x`) are URI parameters | header parameters (RFC 3261 §20.10), so `tag()` reads them and Display brackets the URI; a bare addr-spec holding `,`, `;` or `?` raises `MissingBrackets` |
+| params | an auth-param without `=` is `Err` | kept as a flag with an `AuthParamFlag` warning |
+| params | a repeated parameter is kept silently | kept, with a `DuplicateParam` warning; `get()` returns the first |
+| params | `q() -> Option<&str>` on the Accept family and `SipSecurityMechanism` | `Option<QValue>` (thousandths, canonical `Display`); the text stays in `param("q")` |
+| shapes | `SipHeaderAddr::parse_list -> Vec<SipHeaderAddr>` | `SipHeaderAddrList`, `Err` when empty |
+| shapes | `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries` | opaque `ContactList`: `wildcard()`, `new(addrs)` (non-empty), `is_wildcard()`, `addrs()`; `ContactList::parse` / `from_entries`; an empty Contact is `Err` |
+| shapes | Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
+| shapes | `SipCallId<'a>` borrowing its input | owned `SipCallId`; `new()` refuses a breach of `word ["@" word]` |
+| shapes | `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
+| shapes | `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]`, `url()`/`urls()` yield `&str` | `Err` when no entry yields a URI; `SipGeolocationEntry` with `new(Uri)`, `uri()`, `cid()`; `url()`/`urls()` yield `&Uri`; `SipGeolocationRef` removed |
+| shapes | `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry` |
+| shapes | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
+| shapes | `SipAuthValue` `Debug` shows credentials; the scheme compares exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively |
+| shapes | Via `sent-protocol` parts and the Reason protocol compare byte for byte | case-insensitively, printed as sent |
+| shapes | value types without `Hash`, `SipCallId` aside | every value type is `Hash`, consistent with its `Eq` |
+| shapes | History-Info and URI-info Display join entries with `,` | every list joins with `, ` |
+| shapes | a blank entry beside real ones is `Err`; token-list accessors skip it | dropped with an `EmptyEntry` warning in every list, authentication rows included; `Err` only when no entry remains where the grammar needs one; a lone blank value is the empty list where the grammar admits it |
+| shapes | a comma ending a list is ignored | ignored with a `TrailingComma` warning; `split_comma_entries_with_warnings` reports it for a caller splitting before `from_entries` |
+| lookup | `impl SipHeaderLookup for Store` with `sip_header_str -> Option<&str>` and `sip_header_all_str` | `impl SipHeaderRows for Store` (sip-header-catalog) with `sip_header_rows_str -> Result<Vec<&str>, RowError>`, one row per occurrence; `SipHeaderLookup` comes by blanket impl |
+| lookup | `sip_header()`, `sip_header_str()` return `Option<&str>`, `sip_header_all()` a `Vec` | `SipHeaderRowsExt`: `sip_header()`, `sip_header_str()` return `Result<Option<&str>, RowError>`, `sip_header_rows()` a `Result<Vec<&str>, RowError>` |
+| lookup | `HashMap` stores match the key exactly | case-insensitively and through the compact form; rows of the canonical key first, then the compact one |
+| lookup | store framing faults as `UriInfoError::Malformed(String)`, `HistoryInfoError::Malformed(String)` | `RowError::too_many_entries(count, limit)` or `RowError::malformed().in_entry(i)`, returned as `ParseError::Row` |
+| lookup | one error type per accessor; address-list and auth accessors return a `Vec`, `geolocation()` an `Option` | every accessor returns `Result<Option<T>, ParseError>`: `SipHeaderAddrList`, `Vec<SipAuthValue>`, `SipGeolocation`; Remote-Party-ID rows are not split at commas |
+| lookup | token-list accessors (`allow()`, `supported()`, …) return `Vec<&str>` | `TokenList`; `contains()` follows the header's case rule |
+| lookup | `require_header()` | `require()` |
+| lookup | `contact() -> Vec<ContactValue>` | `ContactList` |
+| lookup | `join()` returns `SipReplaces` | `SipJoin`, which has no `early-only` |
+| lookup | no warnings through `SipHeaderLookup` | `parse_header::<T>(SipHeader)` returns `Parsed<T>`, `parse_header_strict` refuses; a header `T` does not hold is `FaultCode::WrongHeader` |
+| catalog | `sip_header::header::{SipHeader, ParseSipHeaderError}`, `define_header_enum!` in sip-header | sip-header-catalog, re-exported at the sip-header root; a header-name consumer depends on the catalog alone |
+| catalog | `SipHeader::is_multi_valued()` | `is_list()` (a comma list, safe to split) and `may_repeat()`; the authentication headers repeat but are never split |
+| catalog | `draft` feature for Diversion and Remote-Party-ID | always present; `registry()` returns `Registry::Iana` or `Registry::Draft` |
+| message | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
+| message | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`; `SipMessageHeaders` is a `SipHeaderRows` store over the message |
+| message | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them |
+| serde | `SipHeader` as its Rust variant name (`"CallId"`) | its canonical wire name (`"Call-ID"`); deserialize accepts any spelling `parse_name` does |
+| serde | `define_header_enum!` derives serde when the invoking crate has a `serde` feature | opt in per invocation with the `serde,` arm and the catalog's `serde` feature; wire names |
+| serde | no serde on value types | structured serde; parameters as `[[name, value, quoted]]`, the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce; `serde_str` adapters for the wire text |
+| dependencies | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
 
 ## Modules
 
@@ -244,7 +264,7 @@ Every type is at the crate root. The public modules carry what the root does not
 
 | Feature | Dependencies | Description |
 |---|---|---|
-| `message` | — | Raw SIP message extraction (`extract_header`, `extract_body`, …); on by default |
+| `message` | — | Raw SIP message extraction (`extract_header`, `extract_body`, `SipMessageHeaders`, …); on by default |
 | `serde` | serde | `SipHeader` as its canonical wire name; structured serde on the value types; `serde_str` adapters for the wire text |
 | `conference-info` | quick-xml, serde | RFC 4575 XML parsing |
 
@@ -253,16 +273,17 @@ Every type is at the crate root. The public modules carry what the root does not
 This crate is part of a Rust SIP/NG9-1-1 ecosystem:
 
 - [sip-uri](https://crates.io/crates/sip-uri) — RFC 3261/3966/8141 URI parser
-- **sip-header** — SIP header field parsers (this crate), over sip-header-catalog
+- [sip-header-catalog](https://crates.io/crates/sip-header-catalog) — SIP header names and the raw store trait
+- **sip-header** — SIP header field parsers (this crate)
 - [eido](https://crates.io/crates/eido) — NENA NG9-1-1 emergency data types
-- [freeswitch-types](https://crates.io/crates/freeswitch-types) — FreeSWITCH ESL protocol types (re-exports sip-header)
+- [freeswitch-types](https://crates.io/crates/freeswitch-types) — FreeSWITCH ESL protocol types
 
 ## RFC coverage
 
-- **RFC 3261** — Via, Warning, Contact, Accept, Accept-Encoding, Accept-Language, name-addr, Call-Info, core header catalog
+- **RFC 3261** — name-addr, Contact, Via, Warning, Call-ID, Accept, Accept-Encoding, Accept-Language, Call-Info, the token lists, core header catalog
 - **RFC 2617** — Digest authentication (Authorization, WWW-Authenticate)
 - **RFC 3325** — P-Asserted-Identity, P-Preferred-Identity
-- **RFC 3326** — Reason header (embedded in History-Info)
+- **RFC 3326** — Reason, top-level and embedded in History-Info
 - **RFC 3329** — Security mechanism (Security-Client/Server/Verify)
 - **RFC 3891** — Replaces header (top-level and URI-header framings)
 - **RFC 3911** — Join header
@@ -274,15 +295,11 @@ This crate is part of a Rust SIP/NG9-1-1 ecosystem:
 ## Development
 
 ```sh
-cargo fmt --all
-cargo clippy --message-format=short
-RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no-deps
-cargo test
+cargo clippy --workspace --fix --allow-dirty --message-format=short && cargo fmt --all
+cargo test --workspace --all-features
 ```
 
-A catalog test checks the `SipHeader` enum against the IANA and draft
-lists (`crates/sip-header-catalog/iana-sip-headers.txt` and
-`draft-sip-headers.txt`).
+`hooks/pre-commit` runs formatting, clippy, documentation coverage and tests, plain and with `serde`. A catalog test checks the `SipHeader` enum against the IANA and draft lists (`crates/sip-header-catalog/iana-sip-headers.txt` and `draft-sip-headers.txt`).
 
 ## License
 
