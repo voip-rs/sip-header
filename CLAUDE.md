@@ -124,12 +124,16 @@ become indistinguishable from absent values.
 
 ## Release Workflow
 
-`.claude/commands/release.md` (`/release`) is the canonical process:
-`scripts/release-check.sh`, changelog to `scratch/`, `scripts/release-tag.sh`
-(Cargo.lock pinned on the detached tag commit only — never on master), push
+`.claude/commands/release.md` (`/release`) is the canonical process, per
+package (catalog first; tags `sip-header-catalog-vX.Y.Z` and `vX.Y.Z`):
+`scripts/release-check.sh <package>=<bump>`, changelog to `scratch/`,
+`scripts/release-tag.sh <package> vX.Y.Z <changelog>` (Cargo.lock pinned
+on the detached tag commit only — never on master), push
 and wait for CI green, then `cargo publish` run directly — publish is
 irrevocable and is never wrapped in a script. Never publish without the tag
-pushed and CI green on master.
+pushed and CI green on master. The catalog's semver baseline is its last
+release tag; `scripts/catalog-msrv.sh` checks the packaged catalog at its
+own rust-version.
 
 ## Documentation Style
 
