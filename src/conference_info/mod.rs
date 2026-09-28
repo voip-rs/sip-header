@@ -2,8 +2,7 @@
 //!
 //! Models the conference event package defined in
 //! [RFC 4575](https://www.rfc-editor.org/rfc/rfc4575) for SIP NOTIFY bodies.
-//! Used by FreeSWITCH mod_conference, NG911 BCF systems, and any SIP
-//! conference focus that publishes participant state.
+//! Published by any SIP conference focus that reports participant state.
 //!
 //! # Parsing
 //!
