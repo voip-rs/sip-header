@@ -460,9 +460,13 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
     }
 
     let split = crate::split_entries(rest, crate::QuoteStart::AuthParam);
-    for param_str in split.entries {
-        let param_str = param_str.trim();
+    for raw_param in split.entries {
+        let param_str = raw_param.trim();
         if param_str.is_empty() {
+            warnings.push(crate::empty_entry(
+                Field::Credentials,
+                crate::offset_in(input, raw_param),
+            ));
             continue;
         }
         let key_at = crate::offset_in(input, param_str);
