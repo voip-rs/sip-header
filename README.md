@@ -20,7 +20,7 @@ sip-header = "0.4"
 
 | Crate | Holds | Stability |
 |---|---|---|
-| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`) and the raw store trait (`SipHeaderRows`, `RowError`) | aims for 1.0 |
+| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) | aims for 1.0 |
 | **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` | 0.x |
 
 A crate whose public API names header names or a header store depends on sip-header-catalog alone. sip-header re-exports it; a store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
@@ -169,7 +169,26 @@ let headers = SipMessageHeaders::new(msg);
 assert_eq!(headers.sip_from()?.unwrap().tag(), Some("a"));
 assert!(headers.skipped().is_empty());
 let all = extract_all_headers(msg);
-assert_eq!(all.headers[1].0, "f");  // not "From"
+assert_eq!(all.headers.iter().nth(1).unwrap().0, "f");  // not "From"
+# Ok::<(), sip_header::ParseError>(())
+```
+
+## Received headers across an API
+
+The catalog's `SipHeaderFields` (a message's rows, names as sent, wire order) and `SipHeaderField` (one header's rows) are stores too, re-exported here. `SipMessageHeaders::fields()` and `ExtractedHeaders::headers` hand one out. They hold received text unchecked; the accessors clean what they parse and report it, and `parse_header_strict` refuses it:
+
+```rust
+use sip_header::{SipHeader, SipHeaderAddr, SipHeaderFields, SipHeaderLookup, WarningCode};
+
+let fields = SipHeaderFields::from(vec![
+    ("f", "Alice <sip:alice@example.com>;tag=a\r\nInjected: x"),
+    ("v", "SIP/2.0/UDP 198.51.100.1"),
+]);
+let parsed = fields.parse_header::<SipHeaderAddr>(SipHeader::From)?.unwrap();
+assert!(!parsed.value.to_string().contains(['\r', '\n']));
+assert!(parsed.warnings.iter().any(|w| w.code == WarningCode::ControlChar));
+assert!(fields.parse_header_strict::<SipHeaderAddr>(SipHeader::From).is_err());
+assert_eq!(fields.via()?.unwrap().len(), 1);
 # Ok::<(), sip_header::ParseError>(())
 ```
 
@@ -243,7 +262,8 @@ assert_eq!(
 | catalog | `SipHeader::is_multi_valued()` | `is_list()` (a comma list, safe to split) and `may_repeat()`; the authentication headers repeat but are never split |
 | catalog | `draft` feature for Diversion and Remote-Party-ID | always present; `registry()` returns `Registry::Iana` or `Registry::Draft` |
 | message | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
-| message | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`; `SipMessageHeaders` is a `SipHeaderRows` store over the message |
+| message | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` (`iter()` for the pairs); `SipMessageHeaders` is a `SipHeaderRows` store over the message, its rows a `SipHeaderFields` through `fields()` / `into_fields()` |
+| message | a private `Vec<(String, String)>` store with its own name matching | sip-header-catalog's `SipHeaderFields` (`From<Vec<(String, String)>>`, `push`, `map_values`, `remove`), or `SipHeaderField` for one header |
 | message | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them |
 | serde | `SipHeader` as its Rust variant name (`"CallId"`) | its canonical wire name (`"Call-ID"`); deserialize accepts any spelling `parse_name` does |
 | serde | `define_header_enum!` derives serde when the invoking crate has a `serde` feature | opt in per invocation with the `serde,` arm and the catalog's `serde` feature: wire names, any spelling accepted; an invocation without it gets no serde, and the invocation itself still compiles; to keep 0.3's variant-name JSON, put `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` on the enum inside the invocation |

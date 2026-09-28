@@ -41,7 +41,8 @@
 //! - `conference_info`: RFC 4575 conference event package (feature:
 //!   `conference-info`)
 //!
-//! [`SipHeaderLookup`] reads any of them from a [`SipHeaderRows`] store;
+//! [`SipHeaderLookup`] reads any of them from a [`SipHeaderRows`] store,
+//! such as the catalog's [`SipHeaderFields`] of received rows;
 //! [`SipMessageHeaders`] is one over raw message text (feature: `message`).
 //!
 //! ```compile_fail
@@ -62,7 +63,7 @@ struct ReadmeDoctests;
 pub use sip_header_catalog;
 pub use sip_header_catalog::{
     define_header_enum, HeaderName, ParseSipHeaderError, Registry, RowError, RowErrorKind,
-    SipHeader, SipHeaderRows, SipHeaderRowsExt,
+    SipHeader, SipHeaderField, SipHeaderFields, SipHeaderRows, SipHeaderRowsExt,
 };
 pub use sip_uri;
 

@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use sip_header_catalog::{RowError, SipHeader, SipHeaderRows};
+use sip_header_catalog::{RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
@@ -83,6 +83,9 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// line is skipped, and its byte offset reported by
 /// [`skipped`](Self::skipped).
 ///
+/// The rows are a [`SipHeaderFields`], which [`fields`](Self::fields) and
+/// [`into_fields`](Self::into_fields) hand out.
+///
 /// ```
 /// use sip_header::{SipHeaderLookup, SipMessageHeaders};
 ///
@@ -93,11 +96,12 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// let headers = SipMessageHeaders::new(msg);
 /// assert_eq!(headers.via()?.unwrap().len(), 2);
 /// assert!(headers.skipped().is_empty());
+/// assert_eq!(headers.fields().iter().nth(1), Some(("v", "SIP/2.0/TCP 203.0.113.5")));
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipMessageHeaders<'a> {
-    rows: Vec<(&'a str, Cow<'a, str>)>,
+    fields: SipHeaderFields<'a>,
     skipped: Vec<usize>,
 }
 
@@ -105,10 +109,10 @@ impl<'a> SipMessageHeaders<'a> {
     /// Read the header block of `message`.
     pub fn new(message: &'a str) -> Self {
         let (block, _) = split_at_blank_line(message);
-        let mut rows: Vec<(&'a str, Cow<'a, str>)> = Vec::new();
+        let mut fields = SipHeaderFields::new();
         let mut skipped = Vec::new();
-        // A continuation folds into the line above it only when that line was a header.
-        let mut folding = false;
+        // The last header row, still open to continuation lines.
+        let mut open: Option<(&'a str, Cow<'a, str>)> = None;
         let mut offset = 0;
         for (i, raw_line) in block
             .split('\n')
@@ -123,45 +127,53 @@ impl<'a> SipMessageHeaders<'a> {
                 continue;
             }
             if line.starts_with([' ', '\t']) {
-                match rows
-                    .last_mut()
-                    .filter(|_| folding)
-                {
+                match &mut open {
                     Some((_, value)) => append_folded(value, line),
                     None => skipped.push(at),
                 }
                 continue;
             }
-            folding = false;
+            if let Some((name, value)) = open.take() {
+                fields.push(name, value);
+            }
             match header_line(line) {
-                Some((name, value)) => {
-                    folding = true;
-                    rows.push((name, Cow::Borrowed(value)));
-                }
+                Some((name, value)) => open = Some((name, Cow::Borrowed(value))),
                 None if i == 0 => {}
                 None => skipped.push(at),
             }
         }
-        SipMessageHeaders { rows, skipped }
+        if let Some((name, value)) = open {
+            fields.push(name, value);
+        }
+        SipMessageHeaders { fields, skipped }
     }
 
     /// Every row as `(name as sent, value)`, in wire order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &str)> + '_ {
-        self.rows
+        self.fields
             .iter()
-            .map(|(name, value)| (*name, value.as_ref()))
     }
 
     /// Number of rows.
     pub fn len(&self) -> usize {
-        self.rows
+        self.fields
             .len()
     }
 
     /// Whether the message holds no header row.
     pub fn is_empty(&self) -> bool {
-        self.rows
+        self.fields
             .is_empty()
+    }
+
+    /// The rows.
+    pub fn fields(&self) -> &SipHeaderFields<'a> {
+        &self.fields
+    }
+
+    /// The rows, without the skipped offsets.
+    pub fn into_fields(self) -> SipHeaderFields<'a> {
+        self.fields
     }
 
     /// Byte offsets into the message of the lines that were skipped, in
@@ -174,11 +186,8 @@ impl<'a> SipMessageHeaders<'a> {
 
 impl SipHeaderRows for SipMessageHeaders<'_> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
-        Ok(self
-            .iter()
-            .filter(|(wire, _)| SipHeader::name_matches(name, wire))
-            .map(|(_, value)| value)
-            .collect())
+        self.fields
+            .sip_header_rows_str(name)
     }
 }
 
@@ -227,7 +236,7 @@ pub fn extract_header(message: &str, name: &str) -> Vec<String> {
 #[non_exhaustive]
 pub struct ExtractedHeaders {
     /// `(name as sent, value)` in wire order; compact names stay compact.
-    pub headers: Vec<(String, String)>,
+    pub headers: SipHeaderFields<'static>,
     /// Byte offsets of the skipped lines, as
     /// [`SipMessageHeaders::skipped`] reports them.
     pub skipped: Vec<usize>,
@@ -244,17 +253,14 @@ pub struct ExtractedHeaders {
 ///            not a header\r\n\
 ///            \r\n";
 /// let all = extract_all_headers(msg);
-/// assert_eq!(all.headers[0].0, "f");
+/// assert_eq!(all.headers.iter().next(), Some(("f", "Alice <sip:alice@example.com>")));
 /// assert_eq!(all.skipped, [msg.find("not").unwrap()]);
 /// ```
 pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
-    let headers = SipMessageHeaders::new(message);
+    let SipMessageHeaders { fields, skipped } = SipMessageHeaders::new(message);
     ExtractedHeaders {
-        headers: headers
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
-            .collect(),
-        skipped: headers.skipped,
+        headers: fields.into_owned(),
+        skipped,
     }
 }
 
@@ -831,6 +837,14 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
 
     // -- extract_all_headers tests --
 
+    fn all_pairs(msg: &str) -> Vec<(String, String)> {
+        extract_all_headers(msg)
+            .headers
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+
     #[test]
     fn extract_all_headers_basic() {
         let msg = concat!(
@@ -840,7 +854,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "To: Bob <sip:bob@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 3);
         assert_eq!(headers[0], ("Via".into(), "SIP/2.0/UDP host".into()));
         assert_eq!(
@@ -863,7 +877,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 2);
         assert_eq!(
             headers[0].1,
@@ -880,7 +894,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "i: call-1@host\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 3);
         assert_eq!(headers[0].0, "f");
         assert_eq!(headers[1].0, "t");
@@ -896,7 +910,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "v=0\r\n",
             "o=alice 123 456 IN IP4 198.51.100.1\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -909,7 +923,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "Via: SIP/2.0/UDP second.example.com\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 2);
         assert_eq!(
             headers[0],
@@ -935,7 +949,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -947,7 +961,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "From");
     }
@@ -960,7 +974,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "\tworld\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].1, "hello world");
     }
@@ -973,7 +987,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "From: Alice <sip:alice@example.com>\r\n",
             "\r\n",
         );
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0], ("Subject".into(), "".into()));
     }
@@ -982,7 +996,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     fn value_trailing_whitespace_trimmed() {
         let msg = "SIP/2.0 200 OK\r\nSubject: hi   \r\nFrom: <sip:a@example.com>\t\r\n\r\n";
         assert_eq!(extract_header(msg, "Subject"), vec!["hi"]);
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers[0].1, "hi");
         assert_eq!(headers[1].1, "<sip:a@example.com>");
     }
@@ -996,7 +1010,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             "\r\n",
         );
         assert_eq!(extract_header(msg, "Subject"), vec!["hello world"]);
-        assert_eq!(extract_all_headers(msg).headers[0].1, "hello world");
+        assert_eq!(all_pairs(msg)[0].1, "hello world");
     }
 
     // -- extract_body tests --
@@ -1093,7 +1107,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                    From: Alice <sip:alice@example.com>\n\
                    \n\
                    body\n";
-        let headers = extract_all_headers(msg).headers;
+        let headers = all_pairs(msg);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers[0],
@@ -1111,7 +1125,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         let all = extract_all_headers(msg);
         assert_eq!(
             all.headers,
-            vec![("From".into(), "<sip:alice@example.com>".into())]
+            SipHeaderFields::from(vec![("From", "<sip:alice@example.com>")])
         );
         let at = |s: &str| {
             msg.find(s)
@@ -1124,9 +1138,19 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     #[test]
     fn folded_rows_alone_are_owned() {
         let msg = "SIP/2.0 200 OK\r\nSubject: a\r\n b\r\nFrom: <sip:a@example.com>\r\n\r\n";
+        let borrowed = |value: &str| {
+            msg.as_bytes()
+                .as_ptr_range()
+                .contains(&value.as_ptr())
+        };
         let headers = SipMessageHeaders::new(msg);
-        assert!(matches!(headers.rows[0].1, Cow::Owned(_)));
-        assert!(matches!(headers.rows[1].1, Cow::Borrowed(_)));
+        let values: Vec<&str> = headers
+            .iter()
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(values, ["a b", "<sip:a@example.com>"]);
+        assert!(!borrowed(values[0]));
+        assert!(borrowed(values[1]));
     }
 
     #[test]
