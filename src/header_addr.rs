@@ -281,8 +281,8 @@ impl fmt::Display for SipHeaderAddr {
 impl sealed::Sealed for SipHeaderAddr {}
 
 impl HeaderParse for SipHeaderAddr {
-    /// Parse leniently; an addr-spec without angle brackets keeps any `;params`
-    /// as URI parameters (RFC 3261 §20.10).
+    /// Parse leniently; the `;params` after an addr-spec without angle
+    /// brackets are header parameters (RFC 3261 §20.10).
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
         crate::scrub::parse_scrubbed(input, parse_addr)
     }
@@ -399,6 +399,27 @@ fn parse_uri(
     Ok(parsed.value)
 }
 
+/// Where the header parameters of a bare addr-spec start: the first `;`
+/// (RFC 3261 §20), past a SIP userinfo, whose `user` may hold `;`.
+fn bare_params_at(s: &str) -> usize {
+    let scheme = s
+        .split_once(':')
+        .map_or("", |(scheme, _)| scheme);
+    let from = if scheme.eq_ignore_ascii_case("sip") || scheme.eq_ignore_ascii_case("sips") {
+        let quote = s
+            .find('"')
+            .unwrap_or(s.len());
+        s[..quote]
+            .find('@')
+            .map_or(0, |at| at + 1)
+    } else {
+        0
+    };
+    s[from..]
+        .find(';')
+        .map_or(s.len(), |i| from + i)
+}
+
 fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let lead = input.len()
         - input
@@ -433,11 +454,16 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     };
 
     let Some(open) = open else {
-        let uri = parse_uri(s, lead, &mut warnings)?;
+        let (text, params) = s.split_at(bare_params_at(s));
+        let uri = parse_uri(text, lead, &mut warnings)?;
+        if let Some(i) = text.find([',', ';', '?']) {
+            warnings
+                .push(ParseWarning::new(Field::Addr, WarningCode::MissingBrackets).at(lead + i));
+        }
         let addr = SipHeaderAddr {
             display_name: None,
             uri,
-            params: HeaderParams::default(),
+            params: HeaderParams::read(input, params, &mut warnings),
         };
         return Ok(Parsed::new(addr, warnings));
     };
@@ -723,10 +749,13 @@ mod tests {
         }
         let addr = SipHeaderAddr::parse("sip:+15551234567;cpc=emergency@example.com").unwrap();
         assert_eq!(
-            addr.sip_uri()
-                .and_then(|u| u.user()),
-            Some("+15551234567;cpc=emergency")
+            addr.uri()
+                .to_string(),
+            "sip:+15551234567;cpc=emergency@example.com"
         );
+        assert!(addr
+            .params()
+            .is_empty());
     }
 
     #[test]

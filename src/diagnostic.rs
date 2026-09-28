@@ -267,7 +267,8 @@ pub enum WarningCode {
     InvalidCause,
     /// A Reason `text` without the quotes RFC 3326 requires, kept.
     UnquotedText,
-    /// A URI-info entry without the angle brackets RFC 3261 §20.9 requires.
+    /// A URI without the angle brackets RFC 3261 requires: a URI-info entry
+    /// (§20.9), or an addr-spec holding a comma, semicolon or question mark (§20).
     MissingBrackets,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
