@@ -224,8 +224,7 @@ impl MapValue for Vec<String> {
     }
 }
 
-/// Rows under the canonical key, then the compact key; a case-insensitive
-/// scan only when neither key is present.
+/// Rows of every key the name matches, in the order the impls document.
 fn map_rows<'a, V: MapValue, S: BuildHasher>(
     map: &'a HashMap<String, V, S>,
     name: &str,
@@ -236,47 +235,46 @@ fn map_rows<'a, V: MapValue, S: BuildHasher>(
     let compact = header
         .and_then(|h| h.compact_form())
         .map(|c| &*c.encode_utf8(&mut compact_buf));
-
-    let mut rows = Vec::new();
-    let exact: Vec<&V> = [Some(canonical), compact]
-        .into_iter()
-        .flatten()
-        .filter_map(|key| map.get(key))
-        .collect();
-    if !exact.is_empty() {
-        for value in exact {
-            value.push_rows(&mut rows);
-        }
-        return rows;
-    }
+    let exact = [Some(canonical), compact];
 
     let matches = |key: &str| match header {
         Some(h) => h.matches(key),
         None => key.eq_ignore_ascii_case(name),
     };
-    let (full, short): (Vec<_>, Vec<_>) = map
+    let mut others: Vec<(&String, &V)> = map
         .iter()
-        .filter(|(key, _)| matches(key))
-        .partition(|(key, _)| key.len() > 1);
-    for (_, value) in full
+        .filter(|(key, _)| !exact.contains(&Some(key.as_str())) && matches(key))
+        .collect();
+    others.sort_unstable_by_key(|(key, _)| (key.len() == 1, *key));
+
+    let mut rows = Vec::new();
+    for value in exact
         .into_iter()
-        .chain(short)
+        .flatten()
+        .filter_map(|key| map.get(key))
+        .chain(
+            others
+                .into_iter()
+                .map(|(_, value)| value),
+        )
     {
         value.push_rows(&mut rows);
     }
     rows
 }
 
-/// Rows come in key order, canonical then compact, not wire order: the map
-/// does not keep it. Keys match exactly first; on a miss, case-insensitively.
+/// Rows come in key order, not wire order, which the map does not keep: the
+/// canonical key, the compact key, then every other key the name matches,
+/// full names before compact ones, each group in byte order.
 impl<S: BuildHasher> SipHeaderRows for HashMap<String, String, S> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
         Ok(map_rows(self, name))
     }
 }
 
-/// Rows come in key order, canonical then compact, not wire order: the map
-/// does not keep it. Keys match exactly first; on a miss, case-insensitively.
+/// Rows come in key order, not wire order, which the map does not keep: the
+/// canonical key, the compact key, then every other key the name matches,
+/// full names before compact ones, each group in byte order.
 impl<S: BuildHasher> SipHeaderRows for HashMap<String, Vec<String>, S> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
         Ok(map_rows(self, name))
