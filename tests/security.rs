@@ -15,6 +15,15 @@ use sip_uri::WarningKind;
 
 const CASES: u32 = 256;
 
+/// [`CASES`] cases unless PROPTEST_CASES asks for another count.
+fn config() -> ProptestConfig {
+    let mut config = ProptestConfig::default();
+    if std::env::var_os("PROPTEST_CASES").is_none() {
+        config.cases = CASES;
+    }
+    config
+}
+
 /// Characters that end a field, open a structure or break a line.
 const HOSTILE: &[&str] = &[
     "\r", "\n", "\r\n", "\0", "\r\n ", "\r\n\t", ";", ",", ">", "<", "\"", "\\", "@", "=", " ",
@@ -100,7 +109,7 @@ macro_rules! with_params {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(CASES))]
+    #![proptest_config(config())]
 
     #[test]
     fn constructed_addr_reads_back(
@@ -414,7 +423,7 @@ fn check_kind(kind: &str, input: &str) -> Result<(), TestCaseError> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(CASES))]
+    #![proptest_config(config())]
 
     #[test]
     fn lenient_parse_is_stable_and_clean(
