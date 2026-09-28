@@ -536,4 +536,15 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn endpoint_joining_and_call_info() {
+        let joined = ExecutionInfo::new().with_by("sip:bob@example.com");
+        let dialog = SipDialogId::new("call-123", "from-abc", "to-xyz");
+        let ep = Endpoint::new("sip:alice@example.com")
+            .with_joining_info(joined.clone())
+            .with_call_info(CallInfo::with_sip(dialog.clone()));
+        assert_eq!(ep.joining_info, Some(joined));
+        assert_eq!(ep.call_info, Some(CallInfo { sip: Some(dialog) }));
+    }
 }

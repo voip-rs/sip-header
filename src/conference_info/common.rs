@@ -172,4 +172,15 @@ mod tests {
             .reason
             .is_none());
     }
+
+    #[test]
+    fn execution_info_with_reason() {
+        let info = ExecutionInfo::new().with_reason("booted by moderator");
+        assert_eq!(
+            info.reason
+                .as_deref(),
+            Some("booted by moderator")
+        );
+        assert_eq!((info.when, info.by), (None, None));
+    }
 }

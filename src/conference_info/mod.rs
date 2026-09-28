@@ -218,6 +218,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn builder_sets_host_info_and_conference_state() {
+        let host = HostInfo {
+            display_text: Some("EXAMPLE CO".into()),
+            ..HostInfo::default()
+        };
+        let state = ConferenceState {
+            user_count: Some(2),
+            locked: Some(false),
+            ..ConferenceState::default()
+        };
+        let doc = ConferenceInfo::new("sip:conf@example.com")
+            .with_host_info(host.clone())
+            .with_conference_state(state.clone());
+        assert_eq!(doc.host_info, Some(host));
+        assert_eq!(doc.conference_state, Some(state));
+    }
+
     #[cfg(feature = "conference-info")]
     mod xml {
         use super::*;
@@ -463,6 +481,39 @@ mod tests {
                 .unwrap();
             let doc2 = ConferenceInfo::from_xml(&xml_out).unwrap();
             assert_eq!(doc, doc2);
+        }
+
+        #[test]
+        fn built_document_round_trips() {
+            let endpoint = Endpoint::new("sip:alice@example.com")
+                .with_joining_info(
+                    ExecutionInfo::new()
+                        .with_when("2026-02-24T14:26:16Z")
+                        .with_reason("invited")
+                        .with_by("sip:bob@example.com"),
+                )
+                .with_call_info(CallInfo::with_sip(SipDialogId::new(
+                    "call-1@example.com",
+                    "from-1",
+                    "to-1",
+                )));
+            let doc = ConferenceInfo::new("sip:conf@example.com")
+                .with_host_info(HostInfo {
+                    display_text: Some("EXAMPLE CO".into()),
+                    ..HostInfo::default()
+                })
+                .with_conference_state(ConferenceState {
+                    user_count: Some(1),
+                    ..ConferenceState::default()
+                })
+                .with_users(
+                    Users::new()
+                        .with_user(User::new("sip:alice@example.com").with_endpoint(endpoint)),
+                );
+            let xml = doc
+                .to_xml()
+                .unwrap();
+            assert_eq!(ConferenceInfo::from_xml(&xml).unwrap(), doc);
         }
     }
 }
