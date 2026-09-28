@@ -621,7 +621,13 @@ mod tests {
                 Some(1)
             )
         );
-        assert_eq!(parsed.warnings[1].code, WarningCode::MissingIndex);
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert_eq!(hi.entries()[1].index(), Some("2"));
         assert_eq!(
             HistoryInfo::parse_strict(input),
             Err(ParseError::NonConformant(w))

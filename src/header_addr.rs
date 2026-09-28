@@ -664,6 +664,72 @@ mod tests {
     }
 
     #[test]
+    fn bare_addr_spec_params_are_header_params() {
+        for (input, uri) in [
+            ("sip:a@example.com;tag=x;expires=60", "sip:a@example.com"),
+            ("tel:+15551234567;tag=x;expires=60", "tel:+15551234567"),
+            ("sip:[2001:db8::1];tag=x;expires=60", "sip:[2001:db8::1]"),
+        ] {
+            let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
+            assert!(
+                parsed
+                    .warnings
+                    .is_empty(),
+                "{input}"
+            );
+            let addr = parsed.value;
+            assert_eq!(addr.tag(), Some("x"), "{input}");
+            assert_eq!(addr.param("expires"), Some(Some("60")), "{input}");
+            assert_eq!(
+                addr.uri()
+                    .to_string(),
+                uri
+            );
+            let wire = format!("<{uri}>;tag=x;expires=60");
+            assert_eq!(addr.to_string(), wire);
+            assert_eq!(SipHeaderAddr::parse_strict(&wire), Ok(addr));
+        }
+    }
+
+    #[test]
+    fn bare_addr_spec_holding_semicolon_or_question_mark_needs_brackets() {
+        for (input, at) in [
+            (
+                "sip:+15551234567;cpc=emergency@example.com;tag=x",
+                "sip:+15551234567".len(),
+            ),
+            (
+                "sip:a@example.com?Subject=hi;tag=x",
+                "sip:a@example.com".len(),
+            ),
+        ] {
+            let addr = SipHeaderAddr::parse(input).unwrap();
+            assert_eq!(addr.tag(), Some("x"), "{input}");
+            assert_eq!(
+                addr.params()
+                    .len(),
+                1
+            );
+            assert_eq!(
+                warning_of(input),
+                (
+                    Field::Addr,
+                    WarningCode::MissingBrackets,
+                    sip_uri::WarningKind::Recovered,
+                    Some(at)
+                )
+            );
+            assert_eq!(SipHeaderAddr::parse(&addr.to_string()), Ok(addr));
+        }
+        let addr = SipHeaderAddr::parse("sip:+15551234567;cpc=emergency@example.com").unwrap();
+        assert_eq!(
+            addr.sip_uri()
+                .and_then(|u| u.user()),
+            Some("+15551234567;cpc=emergency")
+        );
+    }
+
+    #[test]
     fn display_roundtrip_flag_param() {
         let input = "<sip:user@host>;lr;tag=abc";
         let addr = SipHeaderAddr::parse(input).unwrap();
