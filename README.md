@@ -198,6 +198,7 @@ assert_eq!(all.headers[1].0, "f");  // not "From"
 | a comma ending a list or an auth-param list is ignored | ignored with a `TrailingComma` warning; `split_comma_entries_with_warnings` reports it for a caller splitting before `from_entries` |
 | a blank entry of an Accept, Accept-Encoding, Accept-Language, Allow or Supported list, a blank auth-param, or an empty header parameter (`;;`, a final `;`) is ignored | ignored with an `EmptyEntry` warning; a list value that is only whitespace is the empty list |
 | a blank entry beside real ones in an address, Contact, History-Info, Via, Warning, Security or Reason list is `Err` | dropped with an `EmptyEntry` warning, as in every other list; `Err(Empty)` only when no entry remains |
+| an empty row a store returns is skipped | a blank row, empty or whitespace, is a blank entry: one alone is the empty list where the grammar admits it, any other raises `EmptyEntry`, authentication rows included |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
 | Via `sent-protocol` parts and the Reason protocol compare byte for byte | case-insensitively, printed as sent |

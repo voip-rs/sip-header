@@ -49,10 +49,7 @@ pub trait TypedHeader<'a>: rows::FromRows<'a> {
 /// Every entry of every row, entry indexes counted across rows.
 fn list_rows<L: CommaList>(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<L>, ParseError> {
     if header.is_list() {
-        L::list_from_marked(
-            rows.into_iter()
-                .flat_map(|row| crate::split_entries(row, L::QUOTE_START).marked()),
-        )
+        L::list_from_marked(crate::row_entries(rows, L::QUOTE_START))
     } else {
         L::list_from_entries(rows)
     }
@@ -119,7 +116,8 @@ typed_header! { single:
 }
 
 /// One value per row, as the authentication headers carry them (RFC 3261
-/// §7.3.1); a warning's or error's entry index is the row.
+/// §7.3.1); a warning's or error's entry index is the row, and a blank row
+/// is an empty entry.
 impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
     fn from_rows(_: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
         let mut values = Vec::with_capacity(rows.len());
@@ -128,6 +126,13 @@ impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
             .into_iter()
             .enumerate()
         {
+            if row
+                .trim()
+                .is_empty()
+            {
+                warnings.push(crate::empty_entry(Field::Entry, 0).in_entry(i));
+                continue;
+            }
             let parsed = SipAuthValue::parse_with_warnings(row).map_err(|e| e.in_entry(i))?;
             values.push(parsed.value);
             warnings.extend(
@@ -136,6 +141,9 @@ impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
                     .into_iter()
                     .map(|w| w.in_entry(i)),
             );
+        }
+        if values.is_empty() {
+            return Err(ParseError::empty(Field::Value));
         }
         Ok(Parsed::new(values, warnings))
     }
@@ -1175,7 +1183,7 @@ mod tests {
     }
 
     #[test]
-    fn one_blank_row_is_the_empty_list_every_further_one_is_reported() {
+    fn one_blank_row_is_the_empty_list_several_are_each_reported() {
         let empty = crate::WarningCode::EmptyEntry;
         for blank in ["", "  "] {
             let h = rows(&[("Accept", &[blank]), ("Allow", &[blank])]);
@@ -1188,10 +1196,10 @@ mod tests {
             let h = rows(&[("Accept", &blanks), ("Allow", &blanks)]);
             let (accept, seen) = row_warnings::<SipAccept>(&h, SipHeader::Accept);
             assert!(accept.is_empty(), "{blanks:?}");
-            assert_eq!(seen, [(empty, Some(1))], "{blanks:?}");
+            assert_eq!(seen, [(empty, Some(0)), (empty, Some(1))], "{blanks:?}");
             let (allow, seen) = row_warnings::<TokenList>(&h, SipHeader::Allow);
             assert!(allow.is_empty(), "{blanks:?}");
-            assert_eq!(seen, [(empty, Some(1))], "{blanks:?}");
+            assert_eq!(seen, [(empty, Some(0)), (empty, Some(1))], "{blanks:?}");
         }
     }
 

@@ -555,6 +555,22 @@ impl<'a> Split<'a> {
     }
 }
 
+/// Every entry of every row, each with whether a final comma follows it;
+/// an empty row is one blank entry.
+pub(crate) fn row_entries(rows: Vec<&str>, rule: QuoteStart) -> impl Iterator<Item = (&str, bool)> {
+    rows.into_iter()
+        .flat_map(move |row| {
+            let split = split_entries(row, rule);
+            let blank = split
+                .entries
+                .is_empty()
+                .then_some((row, false));
+            split
+                .marked()
+                .chain(blank)
+        })
+}
+
 /// Where a list grammar lets a `quoted-string` start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuoteStart {

@@ -86,10 +86,8 @@ impl<'a> TokenList<'a> {
         header: SipHeader,
         rows: Vec<&'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<(&'a str, bool)> = rows
-            .into_iter()
-            .flat_map(|row| crate::split_entries(row, crate::QuoteStart::Param).marked())
-            .collect();
+        let entries: Vec<(&'a str, bool)> =
+            crate::row_entries(rows, crate::QuoteStart::Param).collect();
         let comma = |i: usize, (entry, comma): (&str, bool)| {
             comma.then(|| crate::trailing_comma(entry).in_entry(i))
         };
