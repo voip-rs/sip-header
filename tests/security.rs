@@ -9,10 +9,10 @@ use sip_header::{
     ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse,
     ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
     SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason,
-    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
-    SipVia, SipViaEntry, SipWarning, SipWarningEntry, TokenList, UriHeaderParse, UriInfo,
-    UriInfoEntry, WarningCode,
+    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields, SipHeaderLookup, SipJoin,
+    SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism,
+    SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, TokenList, TypedHeader,
+    UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -438,10 +438,115 @@ proptest! {
     }
 }
 
+/// Parse `input` as the one row of `header`, handed in through a holder
+/// under the header's lowercased name.
+fn through_holder<T>(header: SipHeader) -> impl Fn(&str) -> Result<T, ParseError>
+where
+    T: for<'a> TypedHeader<'a>,
+{
+    move |input| {
+        let fields = SipHeaderFields::from(vec![(
+            header
+                .as_str()
+                .to_ascii_lowercase(),
+            input.to_string(),
+        )]);
+        fields
+            .parse_header::<T>(header)
+            .map(|parsed| {
+                parsed
+                    .expect("the row is present")
+                    .value
+            })
+    }
+}
+
+fn check_kind_through_holder(kind: &str, input: &str) -> Result<(), TestCaseError> {
+    let one_auth = |input: &str| {
+        through_holder::<Vec<SipAuthValue>>(SipHeader::Authorization)(input).map(|values| {
+            values
+                .into_iter()
+                .next()
+                .expect("one row holds one value")
+        })
+    };
+    match kind {
+        "addr" => {
+            lenient_is_stable(input, through_holder::<SipHeaderAddr>(SipHeader::From)).map(drop)
+        }
+        "contact" => {
+            lenient_is_stable(input, through_holder::<ContactList>(SipHeader::Contact)).map(drop)
+        }
+        "via" => lenient_is_stable(input, through_holder::<SipVia>(SipHeader::Via)).map(drop),
+        "warning" => {
+            lenient_is_stable(input, through_holder::<SipWarning>(SipHeader::Warning)).map(drop)
+        }
+        "auth" => lenient_is_stable(input, one_auth).map(drop),
+        "accept" => {
+            lenient_is_stable(input, through_holder::<SipAccept>(SipHeader::Accept)).map(drop)
+        }
+        "accept-encoding" => lenient_is_stable(
+            input,
+            through_holder::<SipAcceptEncoding>(SipHeader::AcceptEncoding),
+        )
+        .map(drop),
+        "accept-language" => lenient_is_stable(
+            input,
+            through_holder::<SipAcceptLanguage>(SipHeader::AcceptLanguage),
+        )
+        .map(drop),
+        "security" => lenient_is_stable(
+            input,
+            through_holder::<SipSecurity>(SipHeader::SecurityClient),
+        )
+        .map(drop),
+        "uri-info" => {
+            lenient_is_stable(input, through_holder::<UriInfo>(SipHeader::CallInfo)).map(drop)
+        }
+        "geolocation" => lenient_is_stable(
+            input,
+            through_holder::<SipGeolocation>(SipHeader::Geolocation),
+        )
+        .map(drop),
+        "history-info" => {
+            lenient_is_stable(input, through_holder::<HistoryInfo>(SipHeader::HistoryInfo))
+                .map(drop)
+        }
+        "replaces" => {
+            lenient_is_stable(input, through_holder::<SipReplaces>(SipHeader::Replaces)).map(drop)
+        }
+        "replaces-uri" => Ok(()),
+        "target-dialog" => lenient_is_stable(
+            input,
+            through_holder::<SipTargetDialog>(SipHeader::TargetDialog),
+        )
+        .map(drop),
+        "join" => lenient_is_stable(input, through_holder::<SipJoin>(SipHeader::Join)).map(drop),
+        "reason" => {
+            lenient_is_stable(input, through_holder::<SipReasonList>(SipHeader::Reason)).map(drop)
+        }
+        other => panic!("{other}"),
+    }
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn lenient_parse_through_a_holder_is_stable_and_clean(
+        base in prop::sample::select(CORPUS),
+        snippets in prop::collection::vec((0.0..=1.0f64, injected()), 1..4),
+    ) {
+        let input = inject(base.1, &snippets);
+        check_kind_through_holder(base.0, &input)?;
+    }
+}
+
 #[test]
 fn corpus_is_stable_and_clean() {
     for (kind, input) in CORPUS {
         check_kind(kind, input).unwrap();
+        check_kind_through_holder(kind, input).unwrap();
     }
 }
 

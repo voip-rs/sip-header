@@ -3,7 +3,7 @@
 
 use sip_header::{
     extract_all_headers, extract_header, extract_request_uri, ParseError, SipHeader,
-    SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders,
 };
 
 const MSG: &str = concat!(
@@ -77,15 +77,46 @@ fn skipped_lines_are_reported_by_position() {
         5
     );
     assert_eq!(
-        all.headers[1],
-        (
-            "v".to_string(),
-            "SIP/2.0/TCP 203.0.113.5 ;branch=z9hG4bK2".to_string()
-        )
+        all.headers
+            .iter()
+            .nth(1),
+        Some(("v", "SIP/2.0/TCP 203.0.113.5 ;branch=z9hG4bK2"))
     );
     assert!(SipMessageHeaders::new("SIP/2.0 200 OK\r\n\r\n")
         .skipped()
         .is_empty());
+}
+
+fn rows() -> SipHeaderFields<'static> {
+    SipHeaderFields::from(vec![
+        ("Via", "SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1"),
+        ("v", "SIP/2.0/TCP 203.0.113.5 ;branch=z9hG4bK2"),
+        ("f", "Alice <sip:alice@example.com>;tag=a"),
+        ("VIA", "SIP/2.0/UDP 198.51.100.3;branch=z9hG4bK3"),
+        ("Supported", "timer"),
+    ])
+}
+
+fn outlives_the_message(fields: SipHeaderFields<'static>) -> SipHeaderFields<'static> {
+    fields
+}
+
+#[test]
+fn message_headers_hold_their_rows_as_fields() {
+    let headers = SipMessageHeaders::new(MSG);
+    assert_eq!(headers.fields(), &rows());
+    let skipped = headers
+        .skipped()
+        .to_vec();
+    assert_eq!(
+        headers
+            .clone()
+            .into_fields(),
+        rows()
+    );
+    let all = extract_all_headers(MSG);
+    assert_eq!(all.skipped, skipped);
+    assert_eq!(outlives_the_message(all.headers), rows());
 }
 
 #[test]
