@@ -678,8 +678,20 @@ mod tests {
     }
 
     #[test]
-    fn params_without_leading_semicolon_and_empty_segments() {
-        assert_eq!(params("tag=x;;lr;"), vec![("tag", Some("x")), ("lr", None)]);
+    fn params_empty_segment_is_an_empty_key_at_its_semicolon() {
+        let s = ";tag=x; ;lr;";
+        let p = parse_params(s);
+        assert_eq!(
+            p.iter()
+                .map(|p| (p.key, p.value, offset_in(s, p.key)))
+                .collect::<Vec<_>>(),
+            vec![
+                ("tag", Some("x"), 1),
+                ("", None, 6),
+                ("lr", None, 9),
+                ("", None, 11)
+            ]
+        );
     }
 
     #[test]

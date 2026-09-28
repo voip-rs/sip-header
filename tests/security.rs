@@ -993,6 +993,75 @@ fn an_empty_auth_param_is_warned_and_strictly_refused() {
 }
 
 #[test]
+fn an_empty_header_param_is_warned_and_strictly_refused() {
+    fn check<T: HeaderParse + PartialEq + std::fmt::Debug>(
+        input: &str,
+        at: usize,
+        entry: Option<usize>,
+    ) {
+        let clean = format!("{}{}", &input[..at], &input[at + 1..]);
+        let parsed = T::parse_with_warnings(input).unwrap();
+        assert_eq!(parsed.value, T::parse_strict(&clean).unwrap(), "{input}");
+        assert_eq!(T::parse(input), Ok(parsed.value), "{input}");
+        assert_eq!(
+            parsed
+                .warnings
+                .iter()
+                .map(seen)
+                .collect::<Vec<_>>(),
+            [(
+                Field::Param,
+                WarningCode::EmptyEntry,
+                WarningKind::Recovered,
+                Some(at),
+                entry
+            )],
+            "{input}"
+        );
+        assert_eq!(
+            T::parse_strict(input),
+            Err(ParseError::NonConformant(parsed.warnings[0])),
+            "{input}"
+        );
+    }
+    let doubled = |s: &str| {
+        s.find(";;")
+            .unwrap()
+    };
+    let last = |s: &str| s.len() - 1;
+    let addr = "<sip:a@example.com>;;tag=x";
+    check::<SipHeaderAddr>(addr, doubled(addr), None);
+    let addr = "<sip:a@example.com>;tag=x; ";
+    check::<SipHeaderAddr>(addr, addr.len() - 2, None);
+    let contact = "<sip:a@example.com>;expires=60;";
+    check::<ContactList>(contact, last(contact), Some(0));
+    let via = "SIP/2.0/UDP 198.51.100.2;;branch=z9hG4bK1";
+    check::<SipVia>(via, doubled(via), Some(0));
+    let reason = "SIP;;cause=200";
+    check::<SipReason>(reason, doubled(reason), None);
+    let replaces = "a@example.com;;to-tag=t;from-tag=f";
+    check::<SipReplaces>(replaces, doubled(replaces), None);
+    let accept = "text/plain;;q=0.5";
+    check::<SipAccept>(accept, doubled(accept), Some(0));
+    let encoding = "gzip;";
+    check::<SipAcceptEncoding>(encoding, last(encoding), Some(0));
+    let language = "fr;;q=1";
+    check::<SipAcceptLanguage>(language, doubled(language), Some(0));
+    let security = "tls;;q=0.1";
+    check::<SipSecurity>(security, doubled(security), Some(0));
+    let info = "<https://example.com/a>;;purpose=icon";
+    check::<UriInfo>(info, doubled(info), Some(0));
+    let info = "https://example.com/a;;purpose=icon";
+    let parsed = UriInfo::parse_with_warnings(info).unwrap();
+    assert!(parsed
+        .warnings
+        .iter()
+        .any(|w| w.code == WarningCode::EmptyEntry && w.position == Some(doubled(info))));
+    let geo = "<cid:a@example.com>;";
+    check::<SipGeolocation>(geo, last(geo), Some(0));
+}
+
+#[test]
 fn a_quote_inside_a_token_is_dropped() {
     let stray = |input: &str, field: Field| {
         let at = input.find('"');
