@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use crate::accept::{check_accept_param, flag_invalid_token, q_of, read_accept_params, QValue};
+use crate::accept::{check_accept_param, q_of, read_named_accept_entry, QValue};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
@@ -127,29 +127,11 @@ fn parse_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipAcceptLanguageEntry, ParseError> {
-    let raw = entry.trim();
-    let (raw_lang, params_part) = crate::split_at_params(raw);
-    let raw_lang = raw_lang.trim();
-    let lang = crate::token_field(entry, raw_lang, Field::Language, warnings);
-
-    if lang.is_empty() {
-        return Err(ParseError::malformed(
-            Field::Language,
-            FaultCode::Missing,
-            Some(crate::offset_in(entry, raw)),
-        ));
-    }
-    flag_invalid_token(
-        entry,
-        raw_lang,
-        is_language_range(&lang),
-        Field::Language,
-        warnings,
-    );
-
+    let (lang, params) =
+        read_named_accept_entry(entry, Field::Language, is_language_range, warnings)?;
     Ok(SipAcceptLanguageEntry {
-        params: read_accept_params(entry, params_part, warnings),
-        ..SipAcceptLanguageEntry::unchecked(lang.into_owned())
+        params,
+        ..SipAcceptLanguageEntry::unchecked(lang)
     })
 }
 
@@ -185,6 +167,7 @@ list_parse!(SipAcceptLanguage);
 
 #[cfg(test)]
 mod tests {
+    use crate::list::testing::{self, Seen};
     use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
@@ -305,21 +288,8 @@ mod tests {
             .is_empty());
     }
 
-    type Seen = (
-        Field,
-        WarningCode,
-        WarningKind,
-        Option<usize>,
-        Option<usize>,
-    );
-
     fn seen(raw: &str) -> Vec<Seen> {
-        SipAcceptLanguage::parse_with_warnings(raw)
-            .unwrap()
-            .warnings
-            .iter()
-            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
-            .collect()
+        testing::seen::<SipAcceptLanguage>(raw)
     }
 
     fn assert_strict_refuses(raw: &str) {

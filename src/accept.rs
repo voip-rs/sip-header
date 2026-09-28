@@ -191,9 +191,36 @@ fn parse_accept_entry(
     })
 }
 
+/// Read `name *(SEMI accept-param)` whose `name` is one `field`, raising
+/// [`WarningCode::InvalidToken`] where `conforms` refuses it.
+pub(crate) fn read_named_accept_entry(
+    entry: &str,
+    field: Field,
+    conforms: fn(&str) -> bool,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<(String, HeaderParams), ParseError> {
+    let raw = entry.trim();
+    let (raw_name, params_part) = crate::split_at_params(raw);
+    let raw_name = raw_name.trim();
+    let name = crate::token_field(entry, raw_name, field, warnings);
+
+    if name.is_empty() {
+        return Err(ParseError::malformed(
+            field,
+            FaultCode::Missing,
+            Some(crate::offset_in(entry, raw)),
+        ));
+    }
+    flag_invalid_token(entry, raw_name, conforms(&name), field, warnings);
+    Ok((
+        name.into_owned(),
+        read_accept_params(entry, params_part, warnings),
+    ))
+}
+
 /// Raise [`WarningCode::InvalidToken`] on `field` at `part`'s position in
 /// `entry` unless `conforms`.
-pub(crate) fn flag_invalid_token(
+fn flag_invalid_token(
     entry: &str,
     part: &str,
     conforms: bool,
@@ -360,6 +387,7 @@ list_parse!(SipAccept);
 
 #[cfg(test)]
 mod tests {
+    use crate::list::testing::{self, Seen};
     use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
@@ -505,21 +533,8 @@ mod tests {
             .is_empty());
     }
 
-    type Seen = (
-        Field,
-        WarningCode,
-        WarningKind,
-        Option<usize>,
-        Option<usize>,
-    );
-
     fn seen(raw: &str) -> Vec<Seen> {
-        SipAccept::parse_with_warnings(raw)
-            .unwrap()
-            .warnings
-            .iter()
-            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
-            .collect()
+        testing::seen::<SipAccept>(raw)
     }
 
     fn assert_strict_refuses(raw: &str) {

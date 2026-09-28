@@ -222,6 +222,7 @@ list_parse!(UriInfo);
 mod tests {
     use super::*;
     use crate::diagnostic::WarningCode;
+    use crate::list::testing::{self, Seen};
     use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
@@ -229,28 +230,8 @@ mod tests {
         read_entry(raw, &mut Vec::new())
     }
 
-    type Seen = (
-        Field,
-        WarningCode,
-        WarningKind,
-        Option<usize>,
-        Option<usize>,
-    );
-
-    /// Lenient value and warnings, after checking strict parsing refuses.
     fn lenient(raw: &str) -> (UriInfo, Vec<Seen>) {
-        assert!(matches!(
-            UriInfo::parse_strict(raw),
-            Err(ParseError::NonConformant(_))
-        ));
-        let parsed = UriInfo::parse_with_warnings(raw).unwrap();
-        assert_eq!(UriInfo::parse(raw).as_ref(), Ok(&parsed.value));
-        let seen = parsed
-            .warnings
-            .iter()
-            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
-            .collect();
-        (parsed.value, seen)
+        testing::lenient(raw)
     }
 
     // -- UriInfoEntry tests --

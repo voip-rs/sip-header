@@ -293,6 +293,7 @@ list_parse!(SipGeolocation);
 mod tests {
     use super::*;
     use crate::diagnostic::{Field, WarningCode};
+    use crate::list::testing::{self, Seen};
     use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
@@ -354,28 +355,8 @@ mod tests {
         );
     }
 
-    type Seen = (
-        Field,
-        WarningCode,
-        WarningKind,
-        Option<usize>,
-        Option<usize>,
-    );
-
-    /// Lenient value and warnings, after checking strict parsing refuses.
     fn lenient(raw: &str) -> (SipGeolocation, Vec<Seen>) {
-        assert!(matches!(
-            SipGeolocation::parse_strict(raw),
-            Err(ParseError::NonConformant(_))
-        ));
-        let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
-        assert_eq!(parse(raw), parsed.value);
-        let seen = parsed
-            .warnings
-            .iter()
-            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
-            .collect();
-        (parsed.value, seen)
+        testing::lenient(raw)
     }
 
     #[test]

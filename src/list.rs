@@ -304,3 +304,55 @@ macro_rules! list_parse {
         }
     };
 }
+
+/// Warning summaries and the strict/lenient contract, shared by list tests.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::fmt::Debug;
+
+    use sip_uri::WarningKind;
+
+    use crate::diagnostic::{Field, ParseWarning, WarningCode};
+    use crate::error::ParseError;
+    use crate::HeaderParse;
+
+    /// `(field, code, kind, position, entry)` of one warning.
+    pub(crate) type Seen = (
+        Field,
+        WarningCode,
+        WarningKind,
+        Option<usize>,
+        Option<usize>,
+    );
+
+    fn seen_in(warnings: &[ParseWarning]) -> Vec<Seen> {
+        warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
+            .collect()
+    }
+
+    /// Warnings lenient parsing of `raw` raises.
+    pub(crate) fn seen<T: HeaderParse>(raw: &str) -> Vec<Seen> {
+        seen_in(
+            &T::parse_with_warnings(raw)
+                .unwrap()
+                .warnings,
+        )
+    }
+
+    /// Lenient value and warnings, after checking strict parsing refuses.
+    pub(crate) fn lenient<T>(raw: &str) -> (T, Vec<Seen>)
+    where
+        T: HeaderParse + Debug + PartialEq,
+    {
+        assert!(
+            matches!(T::parse_strict(raw), Err(ParseError::NonConformant(_))),
+            "{raw}"
+        );
+        let parsed = T::parse_with_warnings(raw).unwrap();
+        assert_eq!(T::parse(raw).as_ref(), Ok(&parsed.value));
+        let seen = seen_in(&parsed.warnings);
+        (parsed.value, seen)
+    }
+}

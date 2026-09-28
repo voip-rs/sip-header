@@ -5,10 +5,10 @@
 
 use std::fmt;
 
-use crate::accept::{check_accept_param, flag_invalid_token, q_of, read_accept_params, QValue};
+use crate::accept::{check_accept_param, q_of, read_named_accept_entry, QValue};
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning};
-use crate::error::{FaultCode, ParseError};
+use crate::error::ParseError;
 use crate::is_token;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
@@ -118,29 +118,10 @@ fn parse_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipAcceptEncodingEntry, ParseError> {
-    let raw = entry.trim();
-    let (raw_encoding, params_part) = crate::split_at_params(raw);
-    let raw_encoding = raw_encoding.trim();
-    let encoding = crate::token_field(entry, raw_encoding, Field::Coding, warnings);
-
-    if encoding.is_empty() {
-        return Err(ParseError::malformed(
-            Field::Coding,
-            FaultCode::Missing,
-            Some(crate::offset_in(entry, raw)),
-        ));
-    }
-    flag_invalid_token(
-        entry,
-        raw_encoding,
-        is_token(&encoding),
-        Field::Coding,
-        warnings,
-    );
-
+    let (encoding, params) = read_named_accept_entry(entry, Field::Coding, is_token, warnings)?;
     Ok(SipAcceptEncodingEntry {
-        params: read_accept_params(entry, params_part, warnings),
-        ..SipAcceptEncodingEntry::unchecked(encoding.into_owned())
+        params,
+        ..SipAcceptEncodingEntry::unchecked(encoding)
     })
 }
 
@@ -164,11 +145,13 @@ list_parse!(SipAcceptEncoding);
 
 #[cfg(test)]
 mod tests {
+    use crate::list::testing::{self, Seen};
     use crate::{HeaderParse, ListParse};
     use sip_uri::WarningKind;
 
     use super::*;
     use crate::diagnostic::WarningCode;
+    use crate::error::FaultCode;
 
     #[test]
     fn single_encoding() {
@@ -283,21 +266,8 @@ mod tests {
             .is_empty());
     }
 
-    type Seen = (
-        Field,
-        WarningCode,
-        WarningKind,
-        Option<usize>,
-        Option<usize>,
-    );
-
     fn seen(raw: &str) -> Vec<Seen> {
-        SipAcceptEncoding::parse_with_warnings(raw)
-            .unwrap()
-            .warnings
-            .iter()
-            .map(|w| (w.field, w.code, w.kind, w.position, w.entry))
-            .collect()
+        testing::seen::<SipAcceptEncoding>(raw)
     }
 
     fn assert_strict_refuses(raw: &str) {
