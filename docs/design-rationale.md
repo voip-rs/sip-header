@@ -66,9 +66,13 @@ Every header-value parser returns the crate's `ParseError`, so nested parsers co
 
 ## Stores return one row per occurrence, borrowed and fallible
 
-`extract_header` and every lookup store return one row per header occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers; splitting a row into list entries is the accessor's job, and each row is split untrimmed. A store has one required method, the fallible rows lookup, and everything else, the single-value lookup included, derives from it, so two views of one store cannot disagree and a store's decoding failure reaches every caller instead of a value parsed from undecoded text. Rows are borrowed from the store: a store that must unfold or unescape does it once when it is built, never per lookup. A present row that is only whitespace reaches the entry parser as an empty entry instead of vanishing. Where the header's grammar admits an empty value, one blank value is the empty list; every further blank row or entry is reported.
+`extract_header` and every lookup store return one row per header occurrence, never a comma-joined string, because RFC 3261 section 7.3.1 forbids joining the authentication headers; splitting a row into list entries is the accessor's job, and each row is split untrimmed. A store has one required method, the fallible rows lookup, and everything else, the single-value lookup included, derives from it, so two views of one store cannot disagree and a store's decoding failure reaches every caller instead of a value parsed from undecoded text. Rows are borrowed from the store: a store that must unfold or unescape does it once when it is built, never per lookup. A present row that is empty or only whitespace is a blank entry instead of vanishing, and the list reader reports it; a blank entry is never an error, only a list left with no entry where its grammar needs one. Where the grammar admits an empty value, a lone blank value is the empty list; among several blanks none is singled out and each is reported.
 
-Callers pass the canonical name. A store keyed by wire name matches it case-insensitively and through the compact alias, using the catalog's predicate, and returns both spellings in wire order; a store keyed another way translates the name and looks it up directly.
+Callers pass the canonical name. A store keyed by wire name matches it case-insensitively and through the compact alias, using the catalog's predicate, and returns both spellings in wire order; a store keyed another way translates the name and looks it up directly. A map keyed by wire name returns the rows of every key the name matches, in a fixed key order, since it has no wire order to keep.
+
+## Parameters after a bare addr-spec belong to the header
+
+Without angle brackets, every parameter after the URI is a header parameter (RFC 3261 section 20.10), so a tag on a bare From reaches dialog matching. The split skips a SIP URI's userinfo, where `user` may hold `;`, and Display always brackets the URI, so the parameters stay header parameters when the value is read again.
 
 ## Only the header catalog is a stable crate
 
