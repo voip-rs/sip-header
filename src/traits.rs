@@ -51,13 +51,19 @@ pub trait HeaderParse: Sized + sealed::Sealed {
     }
 }
 
-/// Building a comma-list type from entries a transport already split.
+/// Building a comma-list type from entries or from header rows.
+///
+/// Entries are already split by a transport and each is parsed whole; rows
+/// are header occurrences, each split at its top-level commas as the typed
+/// accessors of [`SipHeaderLookup`](crate::SipHeaderLookup) split them.
 ///
 /// ```
 /// use sip_header::{ListParse, SipVia};
 ///
 /// let via = SipVia::from_entries(["SIP/2.0/UDP 198.51.100.1", "SIP/2.0/TCP 203.0.113.5"])?;
 /// assert_eq!(via.len(), 2);
+/// let via = SipVia::from_rows(["SIP/2.0/UDP 198.51.100.1, SIP/2.0/TCP 203.0.113.5", "SIP/2.0/UDP 198.51.100.2"])?;
+/// assert_eq!(via.len(), 3);
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 pub trait ListParse: HeaderParse {
@@ -80,6 +86,26 @@ pub trait ListParse: HeaderParse {
         entries: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, ParseError> {
         Self::from_entries_with_warnings(entries)?.into_strict()
+    }
+
+    /// Build from header rows, reporting accepted grammar breaches.
+    ///
+    /// Entry indexes count across rows. A blank row is an empty entry,
+    /// except that a lone blank row is the empty list where the grammar
+    /// admits one.
+    fn from_rows_with_warnings<'a>(
+        rows: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Parsed<Self>, ParseError>;
+
+    /// Build from header rows leniently, discarding the warnings.
+    fn from_rows<'a>(rows: impl IntoIterator<Item = &'a str>) -> Result<Self, ParseError> {
+        Self::from_rows_with_warnings(rows).map(|parsed| parsed.value)
+    }
+
+    /// Build from header rows, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
+    fn from_rows_strict<'a>(rows: impl IntoIterator<Item = &'a str>) -> Result<Self, ParseError> {
+        Self::from_rows_with_warnings(rows)?.into_strict()
     }
 }
 

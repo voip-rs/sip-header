@@ -72,6 +72,18 @@ impl ContactList {
         }
     }
 
+    /// Number of addresses; 0 for the wildcard.
+    pub fn len(&self) -> usize {
+        self.addrs()
+            .len()
+    }
+
+    /// Returns `true` for the wildcard, the only list without an address.
+    pub fn is_empty(&self) -> bool {
+        self.addrs()
+            .is_empty()
+    }
+
     /// Consume self and return the addresses; empty for the wildcard.
     pub fn into_addrs(self) -> Vec<SipHeaderAddr> {
         match self.0 {

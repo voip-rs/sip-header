@@ -179,6 +179,14 @@ pub(crate) trait CommaList: Sized {
         )
     }
 
+    /// Split every row at top-level commas and parse every entry, entry
+    /// indexes counted across rows.
+    fn list_from_rows<'a>(
+        rows: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Parsed<Self>, ParseError> {
+        Self::list_from_marked(crate::row_entries(rows, Self::QUOTE_START))
+    }
+
     /// [`list_from_entries`](Self::list_from_entries), each entry paired
     /// with whether a final comma follows it.
     fn list_from_marked<'a>(
@@ -286,6 +294,12 @@ macro_rules! list_parse {
                 entries: impl IntoIterator<Item = &'a str>,
             ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
                 <Self as $crate::list::CommaList>::list_from_entries(entries)
+            }
+
+            fn from_rows_with_warnings<'a>(
+                rows: impl IntoIterator<Item = &'a str>,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                <Self as $crate::list::CommaList>::list_from_rows(rows)
             }
         }
     };

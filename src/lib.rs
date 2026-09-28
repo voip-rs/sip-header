@@ -557,7 +557,10 @@ impl<'a> Split<'a> {
 
 /// Every entry of every row, each with whether a final comma follows it;
 /// an empty row is one blank entry.
-pub(crate) fn row_entries(rows: Vec<&str>, rule: QuoteStart) -> impl Iterator<Item = (&str, bool)> {
+pub(crate) fn row_entries<'a>(
+    rows: impl IntoIterator<Item = &'a str>,
+    rule: QuoteStart,
+) -> impl Iterator<Item = (&'a str, bool)> {
     rows.into_iter()
         .flat_map(move |row| {
             let split = split_entries(row, rule);

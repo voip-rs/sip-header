@@ -195,7 +195,7 @@ assert_eq!(
 | Area | 0.3 | 0.4 |
 |---|---|---|
 | parsing | `"…".parse::<T>()`, inherent `T::parse` | `HeaderParse::parse`, `parse_with_warnings`, `parse_strict`; `use sip_header::prelude::*` |
-| parsing | inherent `from_entries` on list types | `ListParse::from_entries`, `from_entries_with_warnings`, `from_entries_strict` |
+| parsing | inherent `from_entries` on list types | `ListParse::from_entries`, `from_entries_with_warnings`, `from_entries_strict` for entries a transport split; `from_rows` and its siblings for header occurrences, each split at its commas as the accessors split them |
 | parsing | inherent `parse_uri_header` on `SipReplaces`, `SipTargetDialog` | `UriHeaderParse`, also on `SipJoin` and `SipReason` |
 | parsing | inherent `SipHeaderAddr::replaces()`, `HistoryInfoEntry::reason()` | `AddrParts`: `addr.replaces()`, `addr.reason()`, `entry.addr().reason()` |
 | parsing | `sip_header::header_addr::SipHeaderAddr` and the other module paths | every type at the crate root; `conference_info` and `serde_str` stay modules |
@@ -216,7 +216,7 @@ assert_eq!(
 | params | a repeated parameter is kept silently | kept, with a `DuplicateParam` warning; `get()` returns the first |
 | params | `q() -> Option<&str>` on the Accept family and `SipSecurityMechanism` | `Option<QValue>` (thousandths, canonical `Display`); the text stays in `param("q")` |
 | shapes | `SipHeaderAddr::parse_list -> Vec<SipHeaderAddr>` | `SipHeaderAddrList`, `Err` when empty |
-| shapes | `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries` | opaque `ContactList`: `wildcard()`, `new(addrs)` (non-empty), `is_wildcard()`, `addrs()`; `ContactList::parse` / `from_entries`; an empty Contact is `Err` |
+| shapes | `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list`, `parse_contact_entries` | opaque `ContactList`: `wildcard()`, `new(addrs)` (non-empty), `is_wildcard()`, `addrs()`, `len()` (0 for the wildcard); `ContactList::parse` / `from_entries`; an empty Contact is `Err` |
 | shapes | Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
 | shapes | `SipCallId<'a>` borrowing its input | owned `SipCallId`; `new()` refuses a breach of `word ["@" word]` |
 | shapes | `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
