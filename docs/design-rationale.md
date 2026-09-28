@@ -104,7 +104,7 @@ Headers from expired drafts that remain deployed are ordinary catalog entries, w
 
 ## Catalog serde uses the wire name
 
-A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type.
+A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type. An invocation may ask under a cfg of its own, so a crate whose serde is optional gets it exactly when its own feature is on.
 
 ## Error Display never carries the rejected bytes
 
