@@ -111,7 +111,7 @@ assert_eq!(field.sip_header_rows_str("x-custom"), Ok(vec!["a", "b"]));
 
 ## Name enums of your own
 
-`define_header_enum!` generates a `#[non_exhaustive]` fieldless enum with inherent `ALL` and `as_str`, a `HeaderName` impl, `Display`, `AsRef<str>` and a case-insensitive `FromStr`. The `serde,` arm adds serde through the wire name, deserializing any spelling `FromStr` accepts; it needs this crate's `serde` feature, and an invocation without it gets no serde impls, whatever features the calling crate enables. Attributes on the enum pass through, so an enum that serializes as its variant name carries its own derive inside the invocation:
+`define_header_enum!` generates a `#[non_exhaustive]` fieldless enum with inherent `ALL` and `as_str`, a `HeaderName` impl, `Display`, `AsRef<str>` and a case-insensitive `FromStr`. The `serde,` arm adds serde through the wire name, deserializing any spelling `FromStr` accepts; it needs this crate's `serde` feature, and an invocation without it gets no serde impls, whatever features the calling crate enables. A crate whose serde is optional writes `serde(cfg(feature = "serde")),` instead: the impls sit under that cfg, evaluated in the calling crate, and its feature forwards sip-header-catalog/serde; where the cfg holds without the catalog feature, the invocation fails to compile, naming it. Attributes on the enum pass through, so an enum that serializes as its variant name carries its own derive inside the invocation:
 
 ```rust
 sip_header_catalog::define_header_enum! {
@@ -156,7 +156,7 @@ assert_eq!(serde_json::to_string(&Method::Invite).unwrap(), r#""INVITE""#);
 
 | Feature | Description |
 |---|---|
-| `serde` | `SipHeader` serializes as its canonical wire name and deserializes from any spelling `parse_name` accepts; enables the `serde,` arm of `define_header_enum!` |
+| `serde` | `SipHeader` serializes as its canonical wire name and deserializes from any spelling `parse_name` accepts; enables the `serde,` and `serde(cfg(…)),` arms of `define_header_enum!` |
 
 ## MSRV
 

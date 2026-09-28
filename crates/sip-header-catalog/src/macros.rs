@@ -33,6 +33,11 @@ pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr 
 ///   `FromStr`, accepting any spelling it does, whose error never quotes
 ///   the input. Needs this crate's `serde` feature; an invocation without
 ///   it gets no serde impls, whatever features the caller enables.
+/// - With `serde(cfg(<meta>)),`: the same impls under `#[cfg(<meta>)]`,
+///   evaluated in the calling crate, so a caller whose serde is optional
+///   writes `serde(cfg(feature = "serde")),` and has its feature forward
+///   `sip-header-catalog/serde`. Where the cfg holds without this crate's
+///   `serde` feature, the invocation fails to compile, naming the feature.
 /// - With `tests_mod: m,`: a `#[cfg(test)] mod m` testing round trip, case
 ///   insensitivity, `Display` and unknown input over `ALL` (needs
 ///   `PartialEq` on the error).
@@ -79,35 +84,12 @@ pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr 
 /// ```
 #[macro_export]
 macro_rules! define_header_enum {
-    (@serde $Name:ident) => {
-        impl $crate::__private::serde::Serialize for $Name {
-            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
-            where
-                S: $crate::__private::serde::Serializer,
-            {
-                $crate::__private::serialize_name($Name::as_str(self), serializer)
-            }
-        }
-
-        impl<'de> $crate::__private::serde::Deserialize<'de> for $Name {
-            fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
-            where
-                D: $crate::__private::serde::Deserializer<'de>,
-            {
-                $crate::__private::deserialize_name(
-                    deserializer,
-                    ::core::concat!(::core::stringify!($Name), " name"),
-                    <$Name as ::core::str::FromStr>::from_str,
-                )
-            }
-        }
-    };
     (@serde_of
         error_type: $Err:ident $(=> $err_msg:literal)?,
         $(#[$enum_meta:meta])*
         $vis:vis enum $Name:ident { $($body:tt)* }
     ) => {
-        $crate::define_header_enum! { @serde $Name }
+        $crate::__define_header_enum_serde! { $Name }
     };
     (
         $(tests_mod: $tests_mod:ident,)?
@@ -115,6 +97,15 @@ macro_rules! define_header_enum {
         $($rest:tt)*
     ) => {
         $crate::define_header_enum! { $(tests_mod: $tests_mod,)? $($rest)* }
+        $crate::define_header_enum! { @serde_of $($rest)* }
+    };
+    (
+        $(tests_mod: $tests_mod:ident,)?
+        serde(cfg($cfg:meta)),
+        $($rest:tt)*
+    ) => {
+        $crate::define_header_enum! { $(tests_mod: $tests_mod,)? $($rest)* }
+        #[cfg($cfg)]
         $crate::define_header_enum! { @serde_of $($rest)* }
     };
     (
@@ -244,6 +235,48 @@ macro_rules! define_header_enum {
                 }
             }
         )?
+    };
+}
+
+#[doc(hidden)]
+#[cfg(feature = "serde")]
+#[macro_export]
+macro_rules! __define_header_enum_serde {
+    ($Name:ident) => {
+        impl $crate::__private::serde::Serialize for $Name {
+            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
+            where
+                S: $crate::__private::serde::Serializer,
+            {
+                $crate::__private::serialize_name($Name::as_str(self), serializer)
+            }
+        }
+
+        impl<'de> $crate::__private::serde::Deserialize<'de> for $Name {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+            where
+                D: $crate::__private::serde::Deserializer<'de>,
+            {
+                $crate::__private::deserialize_name(
+                    deserializer,
+                    ::core::concat!(::core::stringify!($Name), " name"),
+                    <$Name as ::core::str::FromStr>::from_str,
+                )
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "serde"))]
+#[macro_export]
+macro_rules! __define_header_enum_serde {
+    ($Name:ident) => {
+        ::core::compile_error!(::core::concat!(
+            "define_header_enum! serde for `",
+            ::core::stringify!($Name),
+            "` needs the sip-header-catalog `serde` feature: forward it from the calling crate, e.g. serde = [\"sip-header-catalog/serde\"]"
+        ));
     };
 }
 
