@@ -196,7 +196,7 @@ assert_eq!(all.headers[1].0, "f");  // not "From"
 | `with_display_name` / `with_param` return `Self`; `try_with_*` validate | `with_*` validate and return `Result`; `try_with_*` removed |
 | `new` constructors (`SipHeaderAddr`, `SipViaEntry`, `SipAuthValue`, `from_token68`, `SipWarningEntry`, the Accept, Security, URI-info and Geolocation entries, `SipReplaces`, `SipTargetDialog`, `SipReason`) and `SipReason::with_text` return `Self` | `Result`: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
 | a comma ending a list or an auth-param list is ignored | ignored with a `TrailingComma` warning; `split_comma_entries_with_warnings` reports it for a caller splitting before `from_entries` |
-| a blank entry of an Accept, Accept-Encoding, Accept-Language, Allow or Supported list, or a blank auth-param, is ignored | ignored with an `EmptyEntry` warning; a list value that is only whitespace is the empty list |
+| a blank entry of an Accept, Accept-Encoding, Accept-Language, Allow or Supported list, a blank auth-param, or an empty header parameter (`;;`, a final `;`) is ignored | ignored with an `EmptyEntry` warning; a list value that is only whitespace is the empty list |
 | a CR, LF or NUL inside a header value is kept | a folded line is one space; any other CR, LF or NUL is dropped with a `ControlChar` warning |
 | `SipAuthValue` derives `Debug` and compares the scheme exactly | `Debug` masks `token68` and credential parameters; the scheme compares case-insensitively; `Redact` renders it for logs |
 | Via `sent-protocol` parts and the Reason protocol compare byte for byte | case-insensitively, printed as sent |

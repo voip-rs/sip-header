@@ -156,9 +156,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
     let (data, params, recovered) = match bracketed {
         Some((data, params)) => (data, params, false),
         None => {
-            let (data, params) = raw
-                .split_once(';')
-                .unwrap_or((raw, ""));
+            let (data, params) = crate::split_at_params(raw);
             (
                 data.trim()
                     .trim_matches(|c| c == '<' || c == '>'),

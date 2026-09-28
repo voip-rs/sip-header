@@ -164,10 +164,8 @@ fn parse_accept_entry(
         return Err(missing_entry());
     }
 
-    let (media_part, params_part) = match raw.split_once(';') {
-        Some((m, p)) => (m.trim(), Some(p)),
-        None => (raw, None),
-    };
+    let (media_part, params_part) = crate::split_at_params(raw);
+    let media_part = media_part.trim();
     let bad_range = || {
         ParseError::malformed(
             Field::MediaRange,
@@ -192,7 +190,7 @@ fn parse_accept_entry(
     }
 
     Ok(SipAcceptEntry {
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        params: read_accept_params(entry, params_part, warnings),
         ..SipAcceptEntry::unchecked(&type_str, &subtype_str)
     })
 }

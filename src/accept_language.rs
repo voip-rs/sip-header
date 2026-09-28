@@ -134,10 +134,8 @@ fn parse_entry(
         return Err(missing_entry());
     }
 
-    let (raw_lang, params_part) = match raw.split_once(';') {
-        Some((l, p)) => (l.trim(), Some(p)),
-        None => (raw, None),
-    };
+    let (raw_lang, params_part) = crate::split_at_params(raw);
+    let raw_lang = raw_lang.trim();
     let lang = crate::token_field(entry, raw_lang, Field::Language, warnings);
 
     if lang.is_empty() {
@@ -156,7 +154,7 @@ fn parse_entry(
     );
 
     Ok(SipAcceptLanguageEntry {
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        params: read_accept_params(entry, params_part, warnings),
         ..SipAcceptLanguageEntry::unchecked(lang.into_owned())
     })
 }

@@ -390,7 +390,16 @@ impl<'a> RawParam<'a> {
     }
 }
 
-/// Read `*(SEMI generic-param)`, with or without the leading `;`.
+/// `raw` split at its first `;`, which the tail keeps for [`parse_params`].
+pub(crate) fn split_at_params(raw: &str) -> (&str, &str) {
+    raw.split_at(
+        raw.find(';')
+            .unwrap_or(raw.len()),
+    )
+}
+
+/// Read `*(SEMI generic-param)` from the `;` opening it; a `;` with no
+/// parameter after it yields an empty `key` positioned at that `;`.
 ///
 /// A value opening with `"` runs to its closing quote, so a `;` inside it does
 /// not split; a quote that never closes ends at the next `;` like any value.
@@ -398,9 +407,22 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
     let mut params = Vec::new();
     let mut rest = s;
     loop {
-        rest = rest.trim_start_matches(|c: char| c == ';' || c.is_ascii_whitespace());
+        rest = rest.trim_start();
         if rest.is_empty() {
             return params;
+        }
+        if let Some(after) = rest.strip_prefix(';') {
+            let next = after.trim_start();
+            if next.is_empty() || next.starts_with(';') {
+                params.push(RawParam {
+                    key: &rest[..0],
+                    value: None,
+                    unterminated: false,
+                });
+                rest = next;
+                continue;
+            }
+            rest = next;
         }
         let segment_end = rest
             .find(';')

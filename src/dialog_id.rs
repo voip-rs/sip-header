@@ -388,9 +388,7 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
     }
 
     // A call-id `word` may contain `"`, so it ends at the first raw `;`.
-    let (call_id, rest) = trimmed
-        .split_once(';')
-        .unwrap_or((trimmed, ""));
+    let (call_id, rest) = crate::split_at_params(trimmed);
     let call_id = call_id.trim();
     if call_id.is_empty() {
         return Err(ParseError::malformed(

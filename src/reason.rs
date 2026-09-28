@@ -328,9 +328,7 @@ pub(crate) fn parse_reason(
     {
         return Err(ParseError::empty(Field::Value));
     }
-    let (protocol, rest) = input
-        .split_once(';')
-        .unwrap_or((input, ""));
+    let (protocol, rest) = crate::split_at_params(input);
     let raw_protocol = protocol.trim();
     let protocol = crate::token_field(input, raw_protocol, Field::Protocol, warnings);
     if protocol.is_empty() {

@@ -357,12 +357,7 @@ fn parse_via_entry(
         ));
     }
 
-    // Split on first semicolon to separate sent-protocol/sent-by from params
-    let (main_part, params_part) = if let Some(semi_idx) = trimmed.find(';') {
-        (&trimmed[..semi_idx], Some(&trimmed[semi_idx + 1..]))
-    } else {
-        (trimmed, None)
-    };
+    let (main_part, params_part) = crate::split_at_params(trimmed);
 
     let (protocol_name, protocol_version, transport, sent_by) =
         parse_sent_protocol(entry, main_part, warnings)?;
@@ -379,7 +374,7 @@ fn parse_via_entry(
         port,
         ..SipViaEntry::unchecked(protocol_name, protocol_version, transport, host)
     };
-    for p in crate::parse_params(params_part.unwrap_or("")) {
+    for p in crate::parse_params(params_part) {
         if via
             .rport
             .is_none()

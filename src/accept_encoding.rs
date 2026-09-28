@@ -125,10 +125,8 @@ fn parse_entry(
         return Err(missing_entry());
     }
 
-    let (raw_encoding, params_part) = match raw.split_once(';') {
-        Some((e, p)) => (e.trim(), Some(p)),
-        None => (raw, None),
-    };
+    let (raw_encoding, params_part) = crate::split_at_params(raw);
+    let raw_encoding = raw_encoding.trim();
     let encoding = crate::token_field(entry, raw_encoding, Field::Coding, warnings);
 
     if encoding.is_empty() {
@@ -147,7 +145,7 @@ fn parse_entry(
     );
 
     Ok(SipAcceptEncodingEntry {
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        params: read_accept_params(entry, params_part, warnings),
         ..SipAcceptEncodingEntry::unchecked(encoding.into_owned())
     })
 }

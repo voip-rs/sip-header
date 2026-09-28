@@ -137,10 +137,8 @@ fn parse_mechanism(
         ));
     }
 
-    let (raw_mechanism, params_part) = match raw.split_once(';') {
-        Some((m, p)) => (m.trim(), Some(p)),
-        None => (raw, None),
-    };
+    let (raw_mechanism, params_part) = crate::split_at_params(raw);
+    let raw_mechanism = raw_mechanism.trim();
     let mechanism = crate::token_field(entry, raw_mechanism, Field::Mechanism, warnings);
 
     if mechanism.is_empty() {
@@ -158,7 +156,7 @@ fn parse_mechanism(
         );
     }
     Ok(SipSecurityMechanism {
-        params: read_accept_params(entry, params_part.unwrap_or(""), warnings),
+        params: read_accept_params(entry, params_part, warnings),
         ..SipSecurityMechanism::unchecked(mechanism.into_owned())
     })
 }

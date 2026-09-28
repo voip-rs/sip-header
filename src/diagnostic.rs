@@ -271,8 +271,8 @@ pub enum WarningCode {
     MissingBrackets,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
-    /// A blank list element, which RFC 3261 §25.1 `x *(COMMA x)` never
-    /// leaves empty; ignored.
+    /// A blank list element or header parameter, which RFC 3261 §25.1
+    /// `x *(COMMA x)` and `*(SEMI generic-param)` never leave empty; ignored.
     EmptyEntry,
     /// An accept-param `q` outside RFC 3261 §25.1 `qvalue`, kept as sent.
     InvalidQvalue,

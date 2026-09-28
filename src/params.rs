@@ -388,8 +388,8 @@ impl HeaderParams {
     }
 
     /// Append one `generic-param` read from `input`, unquoting its value
-    /// and reporting its breaches at their position in `input`; a flag
-    /// whose name was only quotes leaves nothing to append.
+    /// and reporting its breaches at their position in `input`; an empty
+    /// parameter, or a flag whose name was only quotes, leaves nothing to append.
     pub(crate) fn push_raw(
         &mut self,
         input: &str,
@@ -397,6 +397,14 @@ impl HeaderParams {
         warnings: &mut Vec<ParseWarning>,
     ) {
         let at = offset_in(input, p.key);
+        if p.key
+            .is_empty()
+            && p.value
+                .is_none()
+        {
+            warnings.push(crate::empty_entry(Field::Param, at));
+            return;
+        }
         p.report_name(input, warnings);
         let name = p.name();
         if name.is_empty()
