@@ -176,16 +176,27 @@ fn hashmap_returns_canonical_then_compact() {
 }
 
 #[test]
-fn hashmap_scans_case_insensitively_only_on_a_miss() {
+fn hashmap_returns_every_matching_key() {
     let h = map(&[("via", &["lower"]), ("V", &["upper-compact"])]);
     assert_eq!(
         h.sip_header_rows(SipHeader::Via),
         Ok(vec!["lower", "upper-compact"])
     );
-    let h = map(&[("Via", &["exact"]), ("VIA", &["shadowed"])]);
-    assert_eq!(h.sip_header_rows(SipHeader::Via), Ok(vec!["exact"]));
-    let h = map(&[("x-custom", &["one"])]);
-    assert_eq!(h.sip_header_rows_str("X-Custom"), Ok(vec!["one"]));
+    for _ in 0..8 {
+        let h = map(&[
+            ("V", &["C"]),
+            ("via", &["lower"]),
+            ("VIA", &["upper"]),
+            ("v", &["c"]),
+            ("Via", &["exact"]),
+        ]);
+        assert_eq!(
+            h.sip_header_rows(SipHeader::Via),
+            Ok(vec!["exact", "c", "upper", "lower", "C"])
+        );
+    }
+    let h = map(&[("x-custom", &["one"]), ("X-Custom", &["two"])]);
+    assert_eq!(h.sip_header_rows_str("X-Custom"), Ok(vec!["two", "one"]));
     assert_eq!(h.sip_header_rows_str("X-Other"), Ok(Vec::<&str>::new()));
 }
 
