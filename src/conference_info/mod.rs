@@ -428,6 +428,23 @@ mod tests {
         }
 
         #[test]
+        fn ill_formed_attribute_is_read_error() {
+            let kinds: Vec<_> = [
+                r#"<conference-info entity="sip:conf@example.com" state=full/>"#,
+                r#"<conference-info entity="sip:conf@example.com" state="full" state="partial"/>"#,
+                r#"<conference-info entity="sip:&bogus;@example.com"/>"#,
+            ]
+            .iter()
+            .map(|xml| {
+                ConferenceInfo::from_xml(xml)
+                    .map(|d| d.entity)
+                    .map_err(|e| e.kind())
+            })
+            .collect();
+            assert_eq!(kinds, [const { Err(ConferenceInfoErrorKind::Read) }; 3]);
+        }
+
+        #[test]
         fn schema_mismatch_keeps_deserializer_source() {
             let xml = r#"<conference-info entity="sip:conf@example.com" version="secret1"/>"#;
             let e = ConferenceInfo::from_xml(xml).unwrap_err();
