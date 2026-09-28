@@ -264,10 +264,14 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
+    fn from_entries_blank_entry_is_empty_entry() {
+        let parsed = SipAcceptEncoding::from_entries_with_warnings(["gzip", "   "]).unwrap();
+        assert_eq!(parsed.value, SipAcceptEncoding::parse("gzip").unwrap());
+        let w = parsed.warnings[0];
+        assert_eq!((w.code, w.entry), (WarningCode::EmptyEntry, Some(1)));
         assert_eq!(
-            SipAcceptEncoding::from_entries(["gzip", "   "]),
-            Err(missing_entry().in_entry(1))
+            SipAcceptEncoding::from_entries_strict(["gzip", "   "]),
+            Err(ParseError::NonConformant(w))
         );
     }
 
@@ -388,9 +392,5 @@ mod tests {
         let parsed = SipAcceptEncoding::parse_with_warnings(raw).unwrap();
         assert!(!parsed.has_warnings());
         assert_eq!(SipAcceptEncoding::parse_strict(raw), Ok(parsed.value));
-        assert_eq!(
-            SipAcceptEncoding::from_entries_with_warnings(["gzip", "   "]),
-            Err(missing_entry().in_entry(1))
-        );
     }
 }

@@ -915,10 +915,7 @@ mod tests {
         let h = rows(&[("Via", &[""])]);
         assert_eq!(h.via(), Err(ParseError::empty(Field::Value)));
         let h = rows(&[("Via", &["   "])]);
-        assert_eq!(
-            h.via(),
-            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(0))
-        );
+        assert_eq!(h.via(), Err(ParseError::empty(Field::Value)));
     }
 
     #[test]

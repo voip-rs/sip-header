@@ -6,8 +6,9 @@ use sip_header::sip_uri::{Host, Uri, UriParse, WarningKind};
 use sip_header::{
     AddrParts, ContactList, Fault, FaultCode, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
     ListParse, ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipGeolocation,
-    SipGeolocationEntry, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason, SipReasonCause,
-    SipSecurity, SipVia, SipViaEntry, SipWarning, UriInfo, UriInfoEntry, WarningCode,
+    SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipJoin, SipReason,
+    SipReasonCause, SipReasonList, SipSecurity, SipVia, SipViaEntry, SipWarning, UriInfo,
+    UriInfoEntry, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -326,6 +327,75 @@ fn addr_reason_is_a_sip_reason() -> R {
         Some(16)
     );
     Ok(())
+}
+
+/// A blank entry between `a` and `b` is dropped under EmptyEntry; an
+/// all-blank list is `all_blank`.
+fn blank_beside_real<T>(a: &str, b: &str, all_blank: Result<T, ParseError>)
+where
+    T: ListParse + PartialEq + std::fmt::Debug,
+{
+    let wire = format!("{a}, , {b}");
+    let parsed = T::parse_with_warnings(&wire).unwrap_or_else(|e| panic!("{wire}: {e}"));
+    assert_eq!(
+        parsed.value,
+        T::parse(&format!("{a}, {b}")).unwrap(),
+        "{wire}"
+    );
+    let seen: Vec<_> = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.field, w.code, w.position, w.entry))
+        .collect();
+    assert_eq!(
+        seen,
+        [(Field::Entry, WarningCode::EmptyEntry, Some(0), Some(1))],
+        "{wire}"
+    );
+    assert_eq!(
+        T::parse_strict(&wire),
+        Err(ParseError::NonConformant(parsed.warnings[0]))
+    );
+    let split = T::from_entries_with_warnings([a, "", b]).unwrap();
+    assert_eq!(split.value, parsed.value, "{wire}");
+    assert_eq!(split.warnings, parsed.warnings, "{wire}");
+    assert_eq!(T::parse(" , "), all_blank, "{a}");
+}
+
+#[test]
+fn blank_entry_beside_real_ones_is_empty_entry() {
+    blank_beside_real::<SipAccept>("application/sdp", "text/plain", Ok(SipAccept::new(vec![])));
+    blank_beside_real::<SipAcceptEncoding>("gzip", "identity", Ok(SipAcceptEncoding::new(vec![])));
+    blank_beside_real::<SipAcceptLanguage>("en", "fr", Ok(SipAcceptLanguage::new(vec![])));
+    blank_beside_real::<SipHeaderAddrList>(
+        "<sip:a@example.com>",
+        "<sip:b@example.com>",
+        Err(empty()),
+    );
+    blank_beside_real::<ContactList>("<sip:a@example.com>", "<sip:b@example.com>", Err(empty()));
+    blank_beside_real::<HistoryInfo>(
+        "<sip:a@example.com>;index=1",
+        "<sip:b@example.com>;index=2",
+        Err(empty()),
+    );
+    blank_beside_real::<SipVia>(
+        "SIP/2.0/UDP a.example.com",
+        "SIP/2.0/UDP b.example.com",
+        Err(empty()),
+    );
+    blank_beside_real::<SipWarning>(
+        r#"399 example.com "a""#,
+        r#"399 example.com "b""#,
+        Err(empty()),
+    );
+    blank_beside_real::<SipSecurity>("tls;q=0.1", "digest", Err(empty()));
+    blank_beside_real::<SipReasonList>("SIP;cause=200", "Q.850;cause=16", Err(empty()));
+    blank_beside_real::<UriInfo>(
+        "<http://example.com/a>",
+        "<http://example.com/b>",
+        Err(empty()),
+    );
+    blank_beside_real::<SipGeolocation>("<cid:a@example.com>", "<cid:b@example.com>", Err(empty()));
 }
 
 mod equality_and_case {

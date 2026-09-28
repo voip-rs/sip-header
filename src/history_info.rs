@@ -650,10 +650,6 @@ mod tests {
 
     #[test]
     fn bad_entry_error_carries_index() {
-        assert_eq!(
-            HistoryInfo::from_entries(["<sip:a@example.com>;index=1", " "]),
-            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
-        );
         assert!(matches!(
             HistoryInfo::parse("<sip:a@example.com>;index=1, <sip:b@example.com"),
             Err(ParseError::Malformed(f)) if f.entry == Some(1) && f.code == FaultCode::Unterminated

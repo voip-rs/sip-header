@@ -286,10 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
+    fn from_entries_blank_entry_is_empty_entry() {
+        let parsed = SipAcceptLanguage::from_entries_with_warnings(["en", "   "]).unwrap();
+        assert_eq!(parsed.value, SipAcceptLanguage::parse("en").unwrap());
+        let w = parsed.warnings[0];
+        assert_eq!((w.code, w.entry), (WarningCode::EmptyEntry, Some(1)));
         assert_eq!(
-            SipAcceptLanguage::from_entries(["en", "   "]),
-            Err(missing_entry().in_entry(1))
+            SipAcceptLanguage::from_entries_strict(["en", "   "]),
+            Err(ParseError::NonConformant(w))
         );
     }
 

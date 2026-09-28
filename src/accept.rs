@@ -492,11 +492,20 @@ mod tests {
     }
 
     #[test]
-    fn blank_entry_beside_real_one_is_error() {
+    fn blank_entry_beside_real_one_is_empty_entry() {
+        let raw = "application/sdp, ";
+        assert_eq!(SipAccept::parse(raw), SipAccept::parse("application/sdp"));
         assert_eq!(
-            SipAccept::parse("application/sdp, "),
-            Err(missing_entry().in_entry(1))
+            seen(raw),
+            vec![(
+                Field::Entry,
+                WarningCode::EmptyEntry,
+                WarningKind::Recovered,
+                Some(0),
+                Some(1)
+            )]
         );
+        assert_strict_refuses(raw);
     }
 
     #[test]

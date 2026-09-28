@@ -242,10 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
+    fn from_entries_all_blank_is_error() {
         assert_eq!(
-            SipSecurity::from_entries(["tls", "   "]),
-            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
+            SipSecurity::from_entries(["", "   "]),
+            Err(ParseError::empty(Field::Value))
         );
     }
 

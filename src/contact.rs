@@ -217,7 +217,6 @@ impl<'de> serde::Deserialize<'de> for ContactList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::FaultCode;
     use crate::{HeaderParse, ListParse};
 
     #[test]
@@ -332,9 +331,17 @@ mod tests {
             )
         );
         assert!(ContactList::parse_strict(bad).is_err());
+        let blank = ContactList::from_entries_with_warnings(["<sip:a@example.com>", " "]).unwrap();
         assert_eq!(
-            ContactList::from_entries(["<sip:a@example.com>", " "]),
-            Err(ParseError::malformed(Field::Entry, FaultCode::Missing, None).in_entry(1))
+            blank
+                .value
+                .addrs()
+                .len(),
+            1
+        );
+        assert_eq!(
+            (blank.warnings[0].code, blank.warnings[0].entry),
+            (WarningCode::EmptyEntry, Some(1))
         );
     }
 }
