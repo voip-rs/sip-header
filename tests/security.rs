@@ -1,15 +1,18 @@
 //! Injected structure: constructors refuse it, lenient parsing never prints
 //! it, serde reads back whatever the parser produced.
 
+use std::collections::HashMap;
+
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ParseError,
-    ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
-    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry,
-    SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
-    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry,
-    UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
+    ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse,
+    ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
+    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
+    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason,
+    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+    SipVia, SipViaEntry, SipWarning, SipWarningEntry, TokenList, UriHeaderParse, UriInfo,
+    UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -813,12 +816,6 @@ fn a_final_comma_is_warned_and_strictly_refused() {
     check::<SipWarning>(r#"399 example.com "a, b","#, "399", 1);
     check::<SipReasonList>("SIP;cause=200,", "SIP", 1);
 
-    let parsed = SipAccept::parse_with_warnings(",").unwrap();
-    assert!(parsed
-        .value
-        .is_empty());
-    assert_eq!(parsed.warnings[0].code, WarningCode::TrailingComma);
-
     let input = r#"Digest realm="a", nonce="b","#;
     let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
     assert_eq!(
@@ -856,6 +853,103 @@ fn a_final_comma_is_warned_and_strictly_refused() {
     assert!(sip_header::split_comma_entries_with_warnings("a, b")
         .warnings
         .is_empty());
+}
+
+fn empty(entry: usize) -> Seen {
+    (
+        Field::Entry,
+        WarningCode::EmptyEntry,
+        WarningKind::Recovered,
+        Some(0),
+        Some(entry),
+    )
+}
+
+fn comma(at: usize, entry: usize) -> Seen {
+    (
+        Field::Entry,
+        WarningCode::TrailingComma,
+        WarningKind::Recovered,
+        Some(at),
+        Some(entry),
+    )
+}
+
+/// Blank entries of a list that may be empty, with the warnings each raises.
+fn blank_lists() -> Vec<(&'static str, Vec<Seen>)> {
+    vec![
+        (", ,", vec![empty(0), empty(1), comma(1, 1)]),
+        (" , ", vec![empty(0), empty(1)]),
+        (",", vec![empty(0), comma(0, 0)]),
+    ]
+}
+
+#[test]
+fn a_blank_entry_in_a_list_that_may_be_empty_is_warned_and_strictly_refused() {
+    fn check<T: HeaderParse + ListParse + PartialEq + std::fmt::Debug>() {
+        for (input, expected) in blank_lists() {
+            let parsed = T::parse_with_warnings(input).unwrap();
+            assert_eq!(parsed.value, T::parse("").unwrap(), "{input:?}");
+            assert_eq!(T::parse(input), Ok(T::parse("").unwrap()), "{input:?}");
+            assert_eq!(
+                parsed
+                    .warnings
+                    .iter()
+                    .map(seen)
+                    .collect::<Vec<_>>(),
+                expected,
+                "{input:?}"
+            );
+            assert_eq!(
+                T::parse_strict(input),
+                Err(ParseError::NonConformant(parsed.warnings[0])),
+                "{input:?}"
+            );
+        }
+        let split = T::from_entries_with_warnings(["", " "]).unwrap();
+        assert_eq!(
+            split
+                .warnings
+                .iter()
+                .map(seen)
+                .collect::<Vec<_>>(),
+            [empty(0), empty(1)]
+        );
+        assert!(T::from_entries_strict([" "]).is_ok());
+        assert!(T::parse_strict(" ").is_ok());
+    }
+    check::<SipAccept>();
+    check::<SipAcceptEncoding>();
+    check::<SipAcceptLanguage>();
+
+    for header in [SipHeader::Allow, SipHeader::Supported] {
+        for (input, expected) in blank_lists() {
+            let store = HashMap::from([(header.to_string(), input.to_string())]);
+            let parsed = store
+                .parse_header::<TokenList>(header)
+                .unwrap()
+                .unwrap();
+            assert!(parsed
+                .value
+                .is_empty());
+            assert_eq!(
+                parsed
+                    .warnings
+                    .iter()
+                    .map(seen)
+                    .collect::<Vec<_>>(),
+                expected,
+                "{header} {input:?}"
+            );
+            assert!(store
+                .parse_header_strict::<TokenList>(header)
+                .is_err());
+        }
+        let store = HashMap::from([(header.to_string(), "  ".to_string())]);
+        assert!(store
+            .parse_header_strict::<TokenList>(header)
+            .is_ok());
+    }
 }
 
 #[test]

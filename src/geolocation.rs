@@ -409,8 +409,8 @@ mod tests {
             vec![(
                 Field::Entry,
                 WarningCode::EmptyEntry,
-                WarningKind::Lost,
-                None,
+                WarningKind::Recovered,
+                Some(0),
                 Some(1)
             )]
         );
