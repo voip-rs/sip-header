@@ -49,6 +49,8 @@
 //! use sip_header::header_addr::SipHeaderAddr;
 //! ```
 
+#![forbid(unsafe_code)]
+
 #[macro_use]
 mod params;
 #[macro_use]

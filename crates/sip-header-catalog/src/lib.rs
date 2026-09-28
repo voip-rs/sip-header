@@ -8,6 +8,8 @@
 //! [sip-header](https://docs.rs/sip-header). [`SipHeaderFields`] and
 //! [`SipHeaderField`] hold received rows as sent, and are such stores.
 
+#![forbid(unsafe_code)]
+
 mod fields;
 #[macro_use]
 mod macros;
