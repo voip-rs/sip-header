@@ -27,6 +27,24 @@ jobs:
     - name: Check (all features)
       run: cargo check --workspace --all-features
 
+  catalog-msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Read the catalog's rust-version from its Cargo.toml
+      run: echo "CATALOG_MSRV=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "sip-header-catalog") | .rust_version')" >> "$GITHUB_ENV"
+
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ env.CATALOG_MSRV }}
+
+    # Last installed is the default, which packages the crate.
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Check sip-header-catalog at its rust-version (plain and serde)
+      run: scripts/catalog-msrv.sh
+
   test:
     runs-on: ubuntu-latest
     steps:
