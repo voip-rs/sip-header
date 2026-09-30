@@ -13,8 +13,10 @@ use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 
 /// `with_param`, `with_quoted_param`, `params` and `param` for a type
 /// holding its parameters in a `params: HeaderParams` field; `reserved`
-/// names the keys it sets through typed setters, and `check` refuses what
-/// the header's own grammar gives a meaning it would not parse back to.
+/// names the keys it sets through typed setters, `check` refuses what
+/// the header's own grammar gives a meaning it would not parse back to,
+/// and `clear_spans` has the two setters clear `span` and `uri_span` on a
+/// type carrying those fields.
 macro_rules! header_params {
     ($Type:ident) => {
         header_params!($Type, reserved: &[], check: $crate::params::any_value);
@@ -24,6 +26,9 @@ macro_rules! header_params {
     };
     ($Type:ident, check: $check:path) => {
         header_params!($Type, reserved: &[], check: $check);
+    };
+    ($Type:ident, clear_spans) => {
+        header_params!($Type, reserved: &[], clear_spans);
     };
     ($Type:ident, reserved: $reserved:expr, check: $check:path) => {
         impl $Type {
@@ -57,6 +62,59 @@ macro_rules! header_params {
                 $check(key.as_ref(), Some(&value), true)?;
                 self.params
                     .set_unreserved($reserved, key.as_ref(), Some(value), true)?;
+                Ok(self)
+            }
+
+            /// The parameters, in wire order.
+            pub fn params(&self) -> &$crate::params::HeaderParams {
+                &self.params
+            }
+
+            /// [`HeaderParams::get`](crate::HeaderParams::get) on
+            /// [`params`](Self::params).
+            pub fn param(&self, key: &str) -> Option<Option<&str>> {
+                self.params
+                    .get(key)
+            }
+        }
+    };
+    ($Type:ident, reserved: $reserved:expr, clear_spans) => {
+        impl $Type {
+            /// Set a parameter, replacing the first of the same name in place
+            /// and dropping the rest, and clearing the spans, which no
+            /// longer read as the value's text.
+            ///
+            /// The key must be a `token` this type does not set through a
+            /// typed setter. The value is unescaped text, which
+            /// [`Display`](std::fmt::Display) quotes unless it is a `token`
+            /// or a host.
+            pub fn with_param(
+                mut self,
+                key: impl AsRef<str>,
+                value: Option<impl Into<String>>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                let value = value.map(Into::into);
+                $crate::params::any_value(key.as_ref(), value.as_deref(), false)?;
+                self.params
+                    .set_unreserved($reserved, key.as_ref(), value, false)?;
+                self.span = None;
+                self.uri_span = None;
+                Ok(self)
+            }
+
+            /// [`with_param`](Self::with_param), the value written as a
+            /// `quoted-string` even where it could be bare.
+            pub fn with_quoted_param(
+                mut self,
+                key: impl AsRef<str>,
+                value: impl Into<String>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                let value = value.into();
+                $crate::params::any_value(key.as_ref(), Some(&value), true)?;
+                self.params
+                    .set_unreserved($reserved, key.as_ref(), Some(value), true)?;
+                self.span = None;
+                self.uri_span = None;
                 Ok(self)
             }
 

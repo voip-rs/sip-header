@@ -103,6 +103,8 @@ impl HistoryInfoEntry {
         self.addr
             .params_mut()
             .replace("index", Some(index), false);
+        self.addr
+            .clear_spans();
         Ok(self)
     }
 

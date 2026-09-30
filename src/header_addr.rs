@@ -114,7 +114,7 @@ impl Located for Option<SipHeaderAddr> {
 /// Parameters [`SipHeaderAddr::with_param`] refuses, set through a typed setter.
 const RESERVED: &[&str] = &["tag"];
 
-header_params!(SipHeaderAddr, reserved: RESERVED);
+header_params!(SipHeaderAddr, reserved: RESERVED, clear_spans);
 
 /// The `tag` [`SipHeaderAddr::with_tag`] writes.
 #[cfg(feature = "serde")]
@@ -216,6 +216,7 @@ impl SipHeaderAddr {
         let name = name.into();
         crate::check::refuse_controls(Field::DisplayName, &name)?;
         self.display_name = (!name.is_empty()).then_some(name);
+        self.clear_spans();
         Ok(self)
     }
 
@@ -239,6 +240,7 @@ impl SipHeaderAddr {
         let tag = crate::params::checked_token(Field::Tag, tag.into())?;
         self.params
             .replace("tag", Some(tag), false);
+        self.clear_spans();
         Ok(self)
     }
 
@@ -285,6 +287,12 @@ impl SipHeaderAddr {
 
     pub(crate) fn params_mut(&mut self) -> &mut HeaderParams {
         &mut self.params
+    }
+
+    /// Clear both spans, as a builder that changes the value does.
+    pub(crate) fn clear_spans(&mut self) {
+        self.span = None;
+        self.uri_span = None;
     }
 
     /// The first `tag` parameter value, if present, case as sent.

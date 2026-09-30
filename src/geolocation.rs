@@ -48,7 +48,7 @@ pub struct SipGeolocationEntry {
     uri_span: Option<Span>,
 }
 
-header_params!(SipGeolocationEntry);
+header_params!(SipGeolocationEntry, clear_spans);
 
 impl PartialEq for SipGeolocationEntry {
     fn eq(&self, other: &Self) -> bool {

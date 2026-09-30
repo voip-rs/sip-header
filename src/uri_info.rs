@@ -43,7 +43,7 @@ pub struct UriInfoEntry {
     uri_span: Option<Span>,
 }
 
-header_params!(UriInfoEntry);
+header_params!(UriInfoEntry, clear_spans);
 
 impl PartialEq for UriInfoEntry {
     fn eq(&self, other: &Self) -> bool {
