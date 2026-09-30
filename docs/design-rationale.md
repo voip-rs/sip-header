@@ -50,7 +50,7 @@ A leniently parsed value is not held to strict round-trip, only to safety: it ne
 
 ## Parsers are lenient; warnings report what strict parsing would refuse
 
-Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the string handed to the parser, and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions, and their code's printed name is prefixed so one name identifies one code across both crates.
+Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the row the caller handed in (the parsed string, or one of the rows or entries a list was built from, with that row's index), and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions, and their code's printed name is prefixed so one name identifies one code across both crates.
 
 ## Tokens compare as their RFC says and print as sent
 
@@ -73,6 +73,10 @@ Callers pass the canonical name. A store keyed by wire name matches it case-inse
 ## Parameters after a bare addr-spec belong to the header
 
 Without angle brackets, every parameter after the URI is a header parameter (RFC 3261 section 20.10), so a tag on a bare From reaches dialog matching. The split skips a SIP URI's userinfo, where `user` may hold `;`, and Display always brackets the URI, so the parameters stay header parameters when the value is read again.
+
+## Received text is reached by span, not stored
+
+A parsed value that carries a URI points back at the text it was read from with a span, a row index and byte range into what the caller handed in, and an error names its span instead of carrying the bytes. The value keeps its canonical form for identity, so the span is ignored by equality and serde, and a caller that needs the text as received slices its own rows. Provenance belongs to this parser crate: a type in a 1.0 crate holds either a canonical value or received text, never both, and carries indexes, never byte positions, so a later need for the text as received is met here in a minor release instead of widening a frozen type.
 
 ## Only the header catalog is a stable crate
 
