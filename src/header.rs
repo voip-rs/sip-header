@@ -1076,7 +1076,10 @@ mod tests {
         let code = crate::WarningCode::EmptyEntry;
         let comma = crate::WarningCode::TrailingComma;
         assert_eq!(empty, [(code, Some(1)), (comma, Some(2)), (code, Some(3))]);
-        assert_eq!(parsed.warnings[1].position, Some(" ACK".len()));
+        assert_eq!(
+            (parsed.warnings[1].position, parsed.warnings[1].row),
+            (Some("INVITE, , ACK".len()), Some(0))
+        );
     }
 
     #[test]

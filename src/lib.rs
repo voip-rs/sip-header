@@ -504,7 +504,7 @@ pub fn split_comma_entries(raw: &str) -> Vec<&str> {
 /// let split = sip_header::split_comma_entries_with_warnings("a, b,");
 /// assert_eq!(split.value, ["a", " b"]);
 /// assert_eq!(split.warnings[0].code, WarningCode::TrailingComma);
-/// assert_eq!((split.warnings[0].position, split.warnings[0].entry), (Some(2), Some(1)));
+/// assert_eq!((split.warnings[0].position, split.warnings[0].entry), (Some(4), Some(1)));
 /// ```
 pub fn split_comma_entries_with_warnings(raw: &str) -> Parsed<Vec<&str>> {
     let split = split_entries(raw, QuoteStart::Anywhere);
