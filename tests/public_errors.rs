@@ -208,3 +208,114 @@ fn default_rows_match_every_occurrence() {
         ["INVITE", "ACK", "BYE"]
     );
 }
+
+/// `(row, range, text)` of an error's span over `rows`, or of one string.
+fn span_of(
+    e: &ParseError,
+    rows: &[&str],
+) -> Option<(Option<usize>, std::ops::Range<usize>, String)> {
+    let span = e.span()?;
+    let row = rows[span
+        .row()
+        .unwrap_or(0)];
+    Some((
+        span.row(),
+        span.range(),
+        span.get(row)?
+            .to_string(),
+    ))
+}
+
+#[test]
+fn a_uri_fault_spans_the_uri() {
+    use sip_header::{HeaderParse, ListParse, SipVia};
+
+    let input = "SIP/2.0/UDP [zz]:5060";
+    let e = SipVia::parse(input).unwrap_err();
+    assert_eq!(span_of(&e, &[input]), Some((None, 12..16, "[zz]".into())));
+    let ParseError::Uri(fault) = &e else {
+        panic!("not Uri");
+    };
+    assert_eq!(fault.span(), e.span());
+    assert_eq!(fault.row(), None);
+
+    let rows = [
+        "SIP/2.0/UDP a.example.com",
+        "SIP/2.0/UDP b.example.com, SIP/2.0/UDP [zz]:5060",
+    ];
+    let e = SipVia::from_rows(rows).unwrap_err();
+    let at = rows[1]
+        .find('[')
+        .unwrap();
+    assert_eq!(
+        span_of(&e, &rows),
+        Some((Some(1), at..at + 4, "[zz]".into()))
+    );
+    assert_eq!(
+        e.to_string(),
+        format!("invalid URI at byte {at} in row 1 in entry 2")
+    );
+}
+
+#[test]
+fn an_empty_uri_is_an_empty_span_where_it_stood() {
+    use sip_header::{HeaderParse, ListParse, SipHeaderAddr, SipHeaderAddrList};
+
+    let rows = ["<sip:a@example.com>", "<sip:b@example.com>, Bob <>"];
+    let e = SipHeaderAddrList::from_rows(rows).unwrap_err();
+    let at = rows[1]
+        .rfind('>')
+        .unwrap();
+    assert_eq!(span_of(&e, &rows), Some((Some(1), at..at, String::new())));
+
+    let input = "\0<>";
+    let e = SipHeaderAddr::parse(input).unwrap_err();
+    assert_eq!(span_of(&e, &[input]), Some((None, 2..2, String::new())));
+}
+
+#[test]
+fn a_fault_spans_from_its_position_to_its_end() {
+    use sip_header::{ListParse, SipHeaderAddrList};
+
+    let rows = ["<sip:a@example.com>", "<sip:b@example.com"];
+    let e = SipHeaderAddrList::from_rows(rows).unwrap_err();
+    assert_eq!(span_of(&e, &rows), Some((Some(1), 0..0, String::new())));
+
+    let fault = Fault::new(Field::Value, FaultCode::Missing)
+        .at(3)
+        .to(9)
+        .in_row(2);
+    assert_eq!(
+        (fault.position, fault.end, fault.row),
+        (Some(3), Some(9), Some(2))
+    );
+    let span = ParseError::Malformed(fault)
+        .span()
+        .unwrap();
+    assert_eq!((span.row(), span.range()), (Some(2), 3..9));
+    assert_eq!(
+        ParseError::Malformed(Fault::new(Field::Value, FaultCode::Missing)).span(),
+        None
+    );
+}
+
+#[test]
+fn a_strict_refusal_spans_the_point_of_its_warning() {
+    use sip_header::{HeaderParse, UriInfo};
+
+    let input = "<urn:example:0>, urn:example:1";
+    let e = UriInfo::parse_strict(input).unwrap_err();
+    let at = input
+        .find("urn:example:1")
+        .unwrap();
+    assert_eq!(span_of(&e, &[input]), Some((None, at..at, String::new())));
+    assert_eq!(ParseError::from(row_error()).span(), None);
+}
+
+#[test]
+fn an_error_in_decoded_text_has_no_span() {
+    use sip_header::{SipReplaces, UriHeaderParse};
+
+    let e = SipReplaces::parse_uri_header("abc%3Bto-tag%3Dt1").unwrap_err();
+    assert_eq!(e.span(), None);
+}
