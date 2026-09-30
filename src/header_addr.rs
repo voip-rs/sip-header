@@ -1033,6 +1033,52 @@ mod tests {
     }
 
     #[test]
+    fn with_display_name_clears_spans() {
+        let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
+        assert!(addr
+            .span()
+            .is_some());
+        assert!(addr
+            .uri_span()
+            .is_some());
+        let addr = addr
+            .with_display_name("Alice")
+            .unwrap();
+        assert_eq!(addr.span(), None);
+        assert_eq!(addr.uri_span(), None);
+    }
+
+    #[test]
+    fn with_tag_clears_spans() {
+        let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
+        let addr = addr
+            .with_tag("abc")
+            .unwrap();
+        assert_eq!(addr.span(), None);
+        assert_eq!(addr.uri_span(), None);
+    }
+
+    #[test]
+    fn with_param_clears_spans() {
+        let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
+        let addr = addr
+            .with_param("lr", None::<&str>)
+            .unwrap();
+        assert_eq!(addr.span(), None);
+        assert_eq!(addr.uri_span(), None);
+    }
+
+    #[test]
+    fn with_quoted_param_clears_spans() {
+        let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
+        let addr = addr
+            .with_quoted_param("note", "v")
+            .unwrap();
+        assert_eq!(addr.span(), None);
+        assert_eq!(addr.uri_span(), None);
+    }
+
+    #[test]
     fn escaped_quotes_in_display_name() {
         let input = r#""Say \"Hello\"" <sip:u@h>;tag=t"#;
         let addr = SipHeaderAddr::parse(input).unwrap();

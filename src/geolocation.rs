@@ -471,6 +471,34 @@ mod tests {
     }
 
     #[test]
+    fn with_param_clears_spans() {
+        let geo = parse("<cid:a>;inserted-by=x");
+        let entry = geo.entries()[0].clone();
+        assert!(entry
+            .span()
+            .is_some());
+        assert!(entry
+            .uri_span()
+            .is_some());
+        let entry = entry
+            .with_param("flag", None::<&str>)
+            .unwrap();
+        assert_eq!(entry.span(), None);
+        assert_eq!(entry.uri_span(), None);
+    }
+
+    #[test]
+    fn with_quoted_param_clears_spans() {
+        let geo = parse("<cid:a>;inserted-by=x");
+        let entry = geo.entries()[0]
+            .clone()
+            .with_quoted_param("note", "v")
+            .unwrap();
+        assert_eq!(entry.span(), None);
+        assert_eq!(entry.uri_span(), None);
+    }
+
+    #[test]
     fn text_after_bracket_is_dropped_with_warning() {
         let raw = "<cid:a>junk;inserted-by=x";
         let (geo, seen) = lenient(raw);

@@ -276,6 +276,23 @@ mod tests {
         assert_eq!(hi.entries()[0].index(), None);
     }
 
+    #[test]
+    fn with_index_clears_spans() {
+        let hi = HistoryInfo::parse("<sip:alice@example.com>;index=1").unwrap();
+        let entry = hi.entries()[0].clone();
+        assert!(entry
+            .span()
+            .is_some());
+        assert!(entry
+            .uri_span()
+            .is_some());
+        let entry = entry
+            .with_index("2")
+            .unwrap();
+        assert_eq!(entry.span(), None);
+        assert_eq!(entry.uri_span(), None);
+    }
+
     // -- URI accessor tests --
 
     #[test]

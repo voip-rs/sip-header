@@ -426,6 +426,32 @@ mod tests {
         assert_eq!(entry.param("purpose"), Some(None));
     }
 
+    #[test]
+    fn with_param_clears_spans() {
+        let entry = parse_entry("<data>;meta1=one").unwrap();
+        assert!(entry
+            .span()
+            .is_some());
+        assert!(entry
+            .uri_span()
+            .is_some());
+        let entry = entry
+            .with_param("meta2", Some("two"))
+            .unwrap();
+        assert_eq!(entry.span(), None);
+        assert_eq!(entry.uri_span(), None);
+    }
+
+    #[test]
+    fn with_quoted_param_clears_spans() {
+        let entry = parse_entry("<data>;meta1=one").unwrap();
+        let entry = entry
+            .with_quoted_param("meta2", "two")
+            .unwrap();
+        assert_eq!(entry.span(), None);
+        assert_eq!(entry.uri_span(), None);
+    }
+
     // -- UriInfo tests --
 
     const SAMPLE_EMERGENCY: &str = "\
