@@ -2,6 +2,7 @@
 //! it, serde reads back whatever the parser produced.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
@@ -9,10 +10,10 @@ use sip_header::{
     ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse,
     ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
     SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields, SipHeaderLookup, SipJoin,
-    SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism,
-    SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, TokenList, TypedHeader,
-    UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
+    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields, SipHeaderLookup,
+    SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
+    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
+    TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -547,6 +548,150 @@ fn corpus_is_stable_and_clean() {
     for (kind, input) in CORPUS {
         check_kind(kind, input).unwrap();
         check_kind_through_holder(kind, input).unwrap();
+        check_rows(kind, &[input.to_string(), input.to_string()]).unwrap();
+    }
+}
+
+/// `range` lies in the row `row` names among `rows`, on char boundaries.
+fn inside(rows: &[&str], row: Option<usize>, range: Range<usize>) -> Result<(), TestCaseError> {
+    let text = row.and_then(|r| rows.get(r));
+    prop_assert!(text.is_some(), "row {:?} of {}", row, rows.len());
+    let text = text.unwrap();
+    prop_assert!(
+        range.start <= range.end && range.end <= text.len(),
+        "{:?} in {:?}",
+        range,
+        text
+    );
+    prop_assert!(
+        text.is_char_boundary(range.start) && text.is_char_boundary(range.end),
+        "{:?} in {:?}",
+        range,
+        text
+    );
+    Ok(())
+}
+
+/// Every warning, error and span of `T` read from `rows` under `header`
+/// names its row and lies inside it.
+fn in_their_rows<T>(
+    header: SipHeader,
+    rows: &[String],
+    spans: impl Fn(&T) -> Vec<Option<Span>>,
+) -> Result<(), TestCaseError>
+where
+    T: for<'a> TypedHeader<'a>,
+{
+    let fields = SipHeaderFields::from(
+        rows.iter()
+            .map(|r| (header.as_str(), r.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let held = fields
+        .sip_header_rows(header)
+        .unwrap();
+    match fields.parse_header::<T>(header) {
+        Ok(parsed) => {
+            let parsed = parsed.expect("the rows are present");
+            for w in &parsed.warnings {
+                prop_assert!(
+                    w.row
+                        .is_some(),
+                    "{:?}",
+                    w
+                );
+                if let Some(p) = w.position {
+                    inside(&held, w.row, p..p)?;
+                }
+            }
+            for span in spans(&parsed.value) {
+                prop_assert!(span.is_some());
+                let span = span.unwrap();
+                inside(&held, span.row(), span.range())?;
+            }
+        }
+        Err(ParseError::Malformed(f)) => {
+            if let Some(p) = f.position {
+                inside(&held, f.row, p..p)?;
+            }
+        }
+        Err(ParseError::Uri(f)) => {
+            if let Some(p) = f.position() {
+                inside(&held, f.row(), p..p)?;
+            }
+        }
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+fn addr_spans(addrs: &[SipHeaderAddr]) -> Vec<Option<Span>> {
+    addrs
+        .iter()
+        .flat_map(|a| [a.span(), a.uri_span()])
+        .collect()
+}
+
+fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
+    let none = |_: &_| Vec::new();
+    match kind {
+        "addr" => in_their_rows::<SipHeaderAddr>(SipHeader::From, &rows[..1], |a| {
+            addr_spans(std::slice::from_ref(a))
+        }),
+        "contact" => {
+            in_their_rows::<ContactList>(SipHeader::Contact, rows, |l| addr_spans(l.addrs()))
+        }
+        "via" => in_their_rows::<SipVia>(SipHeader::Via, rows, none),
+        "warning" => in_their_rows::<SipWarning>(SipHeader::Warning, rows, none),
+        "auth" => in_their_rows::<Vec<SipAuthValue>>(SipHeader::Authorization, rows, none),
+        "accept" => in_their_rows::<SipAccept>(SipHeader::Accept, rows, none),
+        "accept-encoding" => {
+            in_their_rows::<SipAcceptEncoding>(SipHeader::AcceptEncoding, rows, none)
+        }
+        "accept-language" => {
+            in_their_rows::<SipAcceptLanguage>(SipHeader::AcceptLanguage, rows, none)
+        }
+        "security" => in_their_rows::<SipSecurity>(SipHeader::SecurityClient, rows, none),
+        "uri-info" => in_their_rows::<UriInfo>(SipHeader::CallInfo, rows, |l| {
+            l.entries()
+                .iter()
+                .flat_map(|e| [e.span(), e.uri_span()])
+                .collect()
+        }),
+        "geolocation" => in_their_rows::<SipGeolocation>(SipHeader::Geolocation, rows, |l| {
+            l.entries()
+                .iter()
+                .flat_map(|e| [e.span(), e.uri_span()])
+                .collect()
+        }),
+        "history-info" => in_their_rows::<HistoryInfo>(SipHeader::HistoryInfo, rows, |l| {
+            l.entries()
+                .iter()
+                .flat_map(|e| [e.span(), e.uri_span()])
+                .collect()
+        }),
+        "replaces" | "replaces-uri" => {
+            in_their_rows::<SipReplaces>(SipHeader::Replaces, &rows[..1], none)
+        }
+        "target-dialog" => {
+            in_their_rows::<SipTargetDialog>(SipHeader::TargetDialog, &rows[..1], none)
+        }
+        "join" => in_their_rows::<SipJoin>(SipHeader::Join, &rows[..1], none),
+        "reason" => in_their_rows::<SipReasonList>(SipHeader::Reason, rows, none),
+        other => panic!("{other}"),
+    }
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn positions_and_spans_stay_inside_their_row(
+        base in prop::sample::select(CORPUS),
+        first in prop::collection::vec((0.0..=1.0f64, prop_oneof![injected(), Just("é".to_string())]), 1..4),
+        second in prop::collection::vec((0.0..=1.0f64, prop_oneof![injected(), Just("é".to_string())]), 0..3),
+    ) {
+        check_rows(base.0, &[inject(base.1, &first), inject(base.1, &second)])?;
     }
 }
 

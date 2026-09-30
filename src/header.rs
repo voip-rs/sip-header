@@ -1259,20 +1259,32 @@ mod tests {
         }
     }
 
-    fn same_as_accessor<L>(header: SipHeader, wire: &[&str])
+    type Spans = Vec<(Option<crate::Span>, Option<crate::Span>)>;
+
+    fn addr_spans(addrs: &[SipHeaderAddr]) -> Spans {
+        addrs
+            .iter()
+            .map(|a| (a.span(), a.uri_span()))
+            .collect()
+    }
+
+    /// The same value, warnings and rows, and the same spans.
+    fn same_as_accessor<L>(header: SipHeader, wire: &[&str], spans: impl Fn(&L) -> Spans)
     where
         L: crate::ListParse + for<'a> TypedHeader<'a> + PartialEq + std::fmt::Debug,
     {
         let h = rows(&[(header.as_str(), wire)]);
-        assert_eq!(
-            L::from_rows_with_warnings(
-                wire.iter()
-                    .copied()
-            ),
-            h.parse_header::<L>(header)
-                .map(|p| p.unwrap()),
-            "{wire:?}"
+        let from_rows = L::from_rows_with_warnings(
+            wire.iter()
+                .copied(),
         );
+        let accessor = h
+            .parse_header::<L>(header)
+            .map(|p| p.unwrap());
+        assert_eq!(from_rows, accessor, "{wire:?}");
+        if let (Ok(a), Ok(b)) = (from_rows, accessor) {
+            assert_eq!(spans(&a.value), spans(&b.value), "{wire:?}");
+        }
     }
 
     #[test]
@@ -1291,13 +1303,22 @@ mod tests {
             &["   "],
         ];
         for wire in rows_cases {
-            same_as_accessor::<SipHeaderAddrList>(SipHeader::Route, wire);
-            same_as_accessor::<ContactList>(SipHeader::Contact, wire);
+            same_as_accessor::<SipHeaderAddrList>(SipHeader::Route, wire, |l| {
+                addr_spans(l.entries())
+            });
+            same_as_accessor::<ContactList>(SipHeader::Contact, wire, |l| addr_spans(l.addrs()));
         }
         let accept_cases: &[&[&str]] = &[&[""], &["", "  "], &["application/sdp, text/plain", " "]];
         for wire in accept_cases {
-            same_as_accessor::<SipAccept>(SipHeader::Accept, wire);
+            same_as_accessor::<SipAccept>(SipHeader::Accept, wire, |_| Vec::new());
         }
+        let info: &[&str] = &["<urn:example:0>", " <urn:example:1>, x:y;purpose=icon"];
+        same_as_accessor::<UriInfo>(SipHeader::CallInfo, info, |l| {
+            l.entries()
+                .iter()
+                .map(|e| (e.span(), e.uri_span()))
+                .collect()
+        });
     }
 
     #[test]
