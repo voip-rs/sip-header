@@ -4,8 +4,8 @@
 //!   [`SipHeaderRows`] store every typed accessor reads
 //! - [`extract_header`], [`extract_all_headers`]: the same rows as owned
 //!   strings
-//! - [`extract_request_uri`]: the Request-URI of the request line
-//!   (RFC 3261 §7.1)
+//! - [`extract_request_line`]: the request line's parts as received, and
+//!   [`extract_request_uri`]: its Request-URI parsed (RFC 3261 §7.1)
 //! - [`extract_body`]: the message body following the header block
 //!   (RFC 3261 §7.4)
 //!
@@ -17,7 +17,8 @@ use sip_header_catalog::{RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
-use crate::error::{FaultCode, ParseError};
+use crate::error::{Fault, FaultCode, ParseError};
+use crate::span::Span;
 
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
 ///
@@ -269,10 +270,9 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 /// `Method SP Request-URI SP SIP-Version`), parsed leniently: the value
 /// [`extract_request_uri_with_warnings`] returns, without its warnings.
 ///
-/// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors when the message
-/// is empty, the first line has not three parts, the method is not a
-/// `token` or the version does not start `SIP/`, and when the URI yields no
-/// value; error positions are byte offsets into the first line.
+/// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors as
+/// [`extract_request_line`] does, and when the URI yields no value; error
+/// positions are byte offsets into the first line.
 ///
 /// ```
 /// let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\r\n";
@@ -311,6 +311,113 @@ pub fn extract_request_uri_strict(message: &str) -> Result<Option<sip_uri::Uri>,
 pub fn extract_request_uri_with_warnings(
     message: &str,
 ) -> Result<Option<Parsed<sip_uri::Uri>>, ParseError> {
+    let Some(line) = extract_request_line(message)? else {
+        return Ok(None);
+    };
+    let uri_at = line
+        .uri_span
+        .range()
+        .start;
+    let parsed = sip_uri::Uri::parse_with_warnings(line.uri_text).map_err(|e| {
+        ParseError::uri(
+            e,
+            uri_at,
+            line.uri_text
+                .len(),
+        )
+    })?;
+    let (before, after): (Vec<_>, Vec<_>) = line
+        .warnings
+        .into_iter()
+        .partition(|w| w.position < Some(uri_at));
+    let warnings = before
+        .into_iter()
+        .chain(
+            parsed
+                .warnings
+                .into_iter()
+                .map(|w| ParseWarning::from_uri(w, uri_at)),
+        )
+        .chain(after)
+        .collect();
+    Ok(Some(Parsed::new(parsed.value, warnings)))
+}
+
+/// The request line of a SIP request (RFC 3261 §7.1 `Method SP Request-URI
+/// SP SIP-Version`), its three parts borrowed as received.
+///
+/// Spans and positions are byte offsets into the message, whose first line
+/// this is; they carry no row index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RequestLine<'a> {
+    method: &'a str,
+    uri_text: &'a str,
+    version: &'a str,
+    method_span: Span,
+    uri_span: Span,
+    version_span: Span,
+    warnings: Vec<ParseWarning>,
+}
+
+impl<'a> RequestLine<'a> {
+    /// The method, a `token`.
+    pub fn method(&self) -> &'a str {
+        self.method
+    }
+
+    /// The Request-URI's text between its separators, unparsed.
+    pub fn uri_text(&self) -> &'a str {
+        self.uri_text
+    }
+
+    /// The version, starting `SIP/`.
+    pub fn version(&self) -> &'a str {
+        self.version
+    }
+
+    /// Where the method is in the message.
+    pub fn method_span(&self) -> Span {
+        self.method_span
+    }
+
+    /// Where the Request-URI is in the message.
+    pub fn uri_span(&self) -> Span {
+        self.uri_span
+    }
+
+    /// Where the version is in the message.
+    pub fn version_span(&self) -> Span {
+        self.version_span
+    }
+
+    /// [`WarningCode::RequestLineWhitespace`] at each gap between or
+    /// around the parts other than the one SP each allows, in line order.
+    pub fn warnings(&self) -> &[ParseWarning] {
+        &self.warnings
+    }
+}
+
+/// The request line of `message`, its parts borrowed as received.
+///
+/// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors when the message
+/// is empty, the method is not a `token` or the version does not start
+/// `SIP/`; a first line without three parts is
+/// [`FaultCode::Missing`] spanning the whole line, so its text stays
+/// reachable through [`ParseError::span`].
+///
+/// ```
+/// let msg = "INVITE  sip:bob@example.com SIP/2.0\r\n\r\n";
+/// let line = sip_header::extract_request_line(msg)?.unwrap();
+/// assert_eq!(line.uri_text(), "sip:bob@example.com");
+/// assert_eq!(line.uri_span().get(msg), Some("sip:bob@example.com"));
+/// assert_eq!(line.warnings()[0].position, Some(6));
+///
+/// let e = sip_header::extract_request_line("INVITE sip:a b@example.com SIP/2.0\r\n").unwrap_err();
+/// assert_eq!(e.span().unwrap().range(), 0..34);
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub fn extract_request_line(message: &str) -> Result<Option<RequestLine<'_>>, ParseError> {
     let first = message
         .split('\n')
         .next()
@@ -330,11 +437,11 @@ pub fn extract_request_uri_with_warnings(
     {
         return Ok(None);
     }
-    let [method, uri, version] = parts.as_slice() else {
-        return Err(ParseError::malformed(
-            Field::Value,
-            FaultCode::Missing,
-            None,
+    let [method, uri_text, version] = parts.as_slice() else {
+        return Err(ParseError::Malformed(
+            Fault::new(Field::Value, FaultCode::Missing)
+                .at(0)
+                .to(first.len()),
         ));
     };
     if !crate::is_token(method) {
@@ -351,23 +458,19 @@ pub fn extract_request_uri_with_warnings(
             Some(crate::offset_in(first, version)),
         ));
     }
-    let uri_at = crate::offset_in(first, uri);
-    let parsed = sip_uri::Uri::parse_with_warnings(uri)
-        .map_err(|e| ParseError::uri(e, uri_at, uri.len()))?;
-    let (before, after): (Vec<_>, Vec<_>) = spacing_breaches(first, &parts)
-        .into_iter()
-        .partition(|w| w.position < Some(uri_at));
-    let warnings = before
-        .into_iter()
-        .chain(
-            parsed
-                .warnings
-                .into_iter()
-                .map(|w| ParseWarning::from_uri(w, uri_at)),
-        )
-        .chain(after)
-        .collect();
-    Ok(Some(Parsed::new(parsed.value, warnings)))
+    let span = |part: &str| {
+        let at = crate::offset_in(first, part);
+        Span::new(at..at + part.len())
+    };
+    Ok(Some(RequestLine {
+        method,
+        uri_text,
+        version,
+        method_span: span(method),
+        uri_span: span(uri_text),
+        version_span: span(version),
+        warnings: spacing_breaches(first, &parts),
+    }))
 }
 
 /// A [`WarningCode::RequestLineWhitespace`] at each gap around `parts`, the
@@ -418,7 +521,7 @@ impl SipHeaderExtract for SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Fault, HeaderParse};
+    use crate::HeaderParse;
 
     const SAMPLE_INVITE: &str = "\
 INVITE sip:bob@biloxi.example.com SIP/2.0\r\n\
