@@ -76,7 +76,7 @@ Without angle brackets, every parameter after the URI is a header parameter (RFC
 
 ## Received text is reached by span, not stored
 
-A parsed value that carries a URI points back at the text it was read from with a span, a row index and byte range into what the caller handed in, and an error names its span instead of carrying the bytes. The value keeps its canonical form for identity, so the span is ignored by equality and serde, and a caller that needs the text as received slices its own rows. Provenance belongs to this parser crate: a type in a 1.0 crate holds either a canonical value or received text, never both, and carries indexes, never byte positions, so a later need for the text as received is met here in a minor release instead of widening a frozen type.
+A parsed value that carries a URI points back at the text it was read from with a span, a row index and byte range into what the caller handed in, and an error names its span instead of carrying the bytes. The value keeps its canonical form for identity, so the span is ignored by equality and serde, and a caller that needs the text as received slices its own rows. A span covers the text as the row holds it, folds and dropped control characters included, and a builder that changes a value clears its spans, since the value no longer reads as that text. Provenance belongs to this parser crate: a type in a 1.0 crate holds either a canonical value or received text, never both, and carries indexes, never byte positions, so a later need for the text as received is met here in a minor release instead of widening a frozen type.
 
 ## Only the header catalog is a stable crate
 
