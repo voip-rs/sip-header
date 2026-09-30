@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::diagnostic::{write_location, Field, ParseWarning, Parsed};
-use crate::span::Relocation;
+use crate::span::{Relocation, Span};
 use sip_header_catalog::RowError;
 
 impl<T> Parsed<T> {
@@ -52,8 +52,39 @@ impl ParseError {
         ParseError::malformed(field, FaultCode::Empty, None)
     }
 
-    pub(crate) fn uri(source: sip_uri::ParseError, position: usize) -> Self {
-        ParseError::Uri(UriFault::new(source, position))
+    /// sip-uri refused the `len` bytes at `position`.
+    pub(crate) fn uri(source: sip_uri::ParseError, position: usize, len: usize) -> Self {
+        ParseError::Uri(UriFault {
+            position: Some(position),
+            len,
+            row: None,
+            entry: None,
+            source,
+        })
+    }
+
+    /// The text this error points at, in the row it names: a
+    /// [`Malformed`](Self::Malformed) fault from its position to its end, a
+    /// [`Uri`](Self::Uri) the URI refused, a
+    /// [`NonConformant`](Self::NonConformant) warning its point, as an
+    /// empty range. `None` without a position, and for a row error.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            ParseError::Malformed(fault) => fault
+                .position
+                .map(|start| {
+                    let end = fault
+                        .end
+                        .unwrap_or(start)
+                        .max(start);
+                    Span::in_row(fault.row, start..end)
+                }),
+            ParseError::Uri(fault) => fault.span(),
+            ParseError::NonConformant(w) => w
+                .position
+                .map(|p| Span::in_row(w.row, p..p)),
+            ParseError::Row(_) => None,
+        }
     }
 
     /// Drop the position and row, for input that was decoded before parsing.
@@ -61,6 +92,7 @@ impl ParseError {
         match self {
             ParseError::Malformed(fault) => ParseError::Malformed(Fault {
                 position: None,
+                end: None,
                 row: None,
                 ..fault
             }),
@@ -85,20 +117,33 @@ impl ParseError {
                 position: fault
                     .position
                     .and_then(|p| to.start(p)),
+                end: fault
+                    .end
+                    .and_then(|p| to.end(p)),
                 row: to
                     .row()
                     .or(fault.row),
                 ..fault
             }),
-            ParseError::Uri(fault) => ParseError::Uri(UriFault {
-                position: fault
-                    .position
-                    .and_then(|p| to.start(p)),
-                row: to
-                    .row()
-                    .or(fault.row),
-                ..fault
-            }),
+            ParseError::Uri(fault) => {
+                let span = fault
+                    .span()
+                    .and_then(|s| s.relocate(to));
+                ParseError::Uri(UriFault {
+                    position: span.map(|s| {
+                        s.range()
+                            .start
+                    }),
+                    len: span.map_or(0, |s| {
+                        s.range()
+                            .len()
+                    }),
+                    row: to
+                        .row()
+                        .or(fault.row),
+                    ..fault
+                })
+            }
             ParseError::NonConformant(w) => ParseError::NonConformant(w.relocate(to)),
             ParseError::Row(e) => ParseError::Row(e),
         }
@@ -155,21 +200,14 @@ impl std::error::Error for ParseError {
 #[non_exhaustive]
 pub struct UriFault {
     position: Option<usize>,
+    /// Bytes of the URI from `position`.
+    len: usize,
     row: Option<usize>,
     entry: Option<usize>,
     source: sip_uri::ParseError,
 }
 
 impl UriFault {
-    pub(crate) fn new(source: sip_uri::ParseError, position: usize) -> Self {
-        UriFault {
-            position: Some(position),
-            row: None,
-            entry: None,
-            source,
-        }
-    }
-
     pub(crate) fn in_entry(self, index: usize) -> Self {
         UriFault {
             entry: Some(index),
@@ -192,6 +230,12 @@ impl UriFault {
     /// Index of the list entry holding the URI, for list-valued headers.
     pub fn entry(&self) -> Option<usize> {
         self.entry
+    }
+
+    /// The URI's text in its row; `None` without a position.
+    pub fn span(&self) -> Option<Span> {
+        self.position
+            .map(|start| Span::in_row(self.row, start..start + self.len))
     }
 }
 
@@ -222,6 +266,9 @@ pub struct Fault {
     /// the string handed to `parse`, or the row or entry named by
     /// [`row`](Self::row).
     pub position: Option<usize>,
+    /// Byte offset in the same row where the failing text ends, when the
+    /// fault covers more than a point.
+    pub end: Option<usize>,
     /// Index of the row that failed, among the rows or entries a value was
     /// built from; `None` for a value parsed from one string.
     pub row: Option<usize>,
@@ -247,6 +294,7 @@ impl Fault {
             field,
             code,
             position: None,
+            end: None,
             row: None,
             entry: None,
         }
@@ -255,6 +303,12 @@ impl Fault {
     /// Point the fault at byte `position`.
     pub fn at(mut self, position: usize) -> Self {
         self.position = Some(position);
+        self
+    }
+
+    /// End the failing text at byte `end`.
+    pub fn to(mut self, end: usize) -> Self {
+        self.end = Some(end);
         self
     }
 
@@ -349,7 +403,7 @@ mod tests {
 
     #[test]
     fn uri_error_keeps_source() {
-        let e = ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4).in_entry(1);
+        let e = ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4, 3).in_entry(1);
         let ParseError::Uri(fault) = &e else {
             panic!("not Uri");
         };
@@ -369,7 +423,7 @@ mod tests {
         assert_eq!(e.to_string(), "invalid URI at byte 4 in entry 1");
         assert_eq!(fault.to_string(), e.to_string());
         assert_eq!(
-            ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4)
+            ParseError::uri(sip_uri::ParseError::SchemeMismatch, 4, 3)
                 .without_position()
                 .to_string(),
             "invalid URI"

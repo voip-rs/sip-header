@@ -610,17 +610,11 @@ where
                 inside(&held, span.row(), span.range())?;
             }
         }
-        Err(ParseError::Malformed(f)) => {
-            if let Some(p) = f.position {
-                inside(&held, f.row, p..p)?;
+        Err(e) => {
+            if let Some(span) = e.span() {
+                inside(&held, span.row(), span.range())?;
             }
         }
-        Err(ParseError::Uri(f)) => {
-            if let Some(p) = f.position() {
-                inside(&held, f.row(), p..p)?;
-            }
-        }
-        Err(_) => {}
     }
     Ok(())
 }

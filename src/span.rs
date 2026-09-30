@@ -38,6 +38,13 @@ impl Span {
         }
     }
 
+    pub(crate) fn in_row(row: Option<usize>, range: Range<usize>) -> Self {
+        Span {
+            row,
+            ..Span::new(range)
+        }
+    }
+
     /// Index of the row, among the rows or entries a value was built from;
     /// `None` for a value parsed from one string.
     pub fn row(&self) -> Option<usize> {

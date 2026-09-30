@@ -352,7 +352,8 @@ pub fn extract_request_uri_with_warnings(
         ));
     }
     let uri_at = crate::offset_in(first, uri);
-    let parsed = sip_uri::Uri::parse_with_warnings(uri).map_err(|e| ParseError::uri(e, uri_at))?;
+    let parsed = sip_uri::Uri::parse_with_warnings(uri)
+        .map_err(|e| ParseError::uri(e, uri_at, uri.len()))?;
     let (before, after): (Vec<_>, Vec<_>) = spacing_breaches(first, &parts)
         .into_iter()
         .partition(|w| w.position < Some(uri_at));

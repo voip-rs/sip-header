@@ -530,7 +530,8 @@ fn read_host(
     offset: usize,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<Host, ParseError> {
-    let parsed = Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset))?;
+    let parsed =
+        Host::parse_with_warnings(host).map_err(|e| ParseError::uri(e, offset, host.len()))?;
     warnings.extend(
         parsed
             .warnings

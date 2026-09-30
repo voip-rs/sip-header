@@ -472,7 +472,8 @@ fn parse_uri(
     offset: usize,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<sip_uri::Uri, ParseError> {
-    let parsed = sip_uri::Uri::parse_with_warnings(text).map_err(|e| ParseError::uri(e, offset))?;
+    let parsed = sip_uri::Uri::parse_with_warnings(text)
+        .map_err(|e| ParseError::uri(e, offset, text.len()))?;
     warnings.extend(
         parsed
             .warnings
