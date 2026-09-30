@@ -617,7 +617,7 @@ mod tests {
                 Field::Addr,
                 WarningCode::NotNameAddr,
                 WarningKind::Recovered,
-                Some(1),
+                input.find("sip:b"),
                 Some(1)
             )
         );
@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn addr_warnings_carry_entry_index_and_entry_position() {
+    fn addr_warnings_carry_entry_index_and_row_position() {
         use crate::diagnostic::WarningCode;
 
         let good = "<sip:a@example.com>;index=1";
@@ -683,16 +683,21 @@ mod tests {
                 WarningCode::TrailingContent,
                 Some(1),
                 Some(
-                    1 + bad
-                        .find('j')
-                        .unwrap()
+                    good.len()
+                        + 2
+                        + bad
+                            .find('j')
+                            .unwrap()
                 )
             )
         );
 
         let split = HistoryInfo::from_entries_with_warnings([good, bad]).unwrap();
         assert_eq!(split.warnings[0].position, bad.find('j'));
-        assert_eq!(split.warnings[0].entry, Some(1));
+        assert_eq!(
+            (split.warnings[0].row, split.warnings[0].entry),
+            (Some(1), Some(1))
+        );
         assert_eq!(
             HistoryInfo::from_entries([good, bad])
                 .unwrap()

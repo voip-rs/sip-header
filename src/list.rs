@@ -3,7 +3,7 @@
 use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::ParseError;
 use crate::scrub::{merge, scrub, Scrubbed};
-use crate::QuoteStart;
+use crate::{QuoteStart, RowEntry};
 
 /// Constructor, accessors, iteration and Display for a
 /// `struct $Type(Vec<$Entry>)`.
@@ -164,18 +164,19 @@ pub(crate) trait CommaList: Sized {
         {
             return Self::from_parsed(Vec::new()).map(|v| Parsed::new(v, whole.warnings));
         }
-        Self::list_from_marked(crate::split_entries(raw, Self::QUOTE_START).marked())
+        Self::list_from_marked(crate::split_row(raw, None, Self::QUOTE_START))
     }
 
-    /// Parse entries already split, attributing errors and warnings to
-    /// their entry index.
+    /// Parse entries already split, each a row of its own, attributing
+    /// errors and warnings to their entry index.
     fn list_from_entries<'a>(
         entries: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
         Self::list_from_marked(
             entries
                 .into_iter()
-                .map(|e| (e, false)),
+                .enumerate()
+                .map(|(i, e)| RowEntry::whole(i, e)),
         )
     }
 
@@ -187,14 +188,13 @@ pub(crate) trait CommaList: Sized {
         Self::list_from_marked(crate::row_entries(rows, Self::QUOTE_START))
     }
 
-    /// [`list_from_entries`](Self::list_from_entries), each entry paired
-    /// with whether a final comma follows it.
+    /// Parse every entry, positioned in the row it was split from.
     fn list_from_marked<'a>(
-        entries: impl IntoIterator<Item = (&'a str, bool)>,
+        entries: impl IntoIterator<Item = RowEntry<'a>>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<(Scrubbed<'a>, Option<ParseWarning>)> = entries
+        let entries: Vec<(RowEntry<'a>, Scrubbed<'a>)> = entries
             .into_iter()
-            .map(|(e, comma)| (scrub(e), comma.then(|| crate::trailing_comma(e))))
+            .map(|e| (e, scrub(e.text)))
             .collect();
         let is_blank = |e: &Scrubbed<'_>| {
             e.text
@@ -202,37 +202,50 @@ pub(crate) trait CommaList: Sized {
                 .is_empty()
         };
         let empty_list = Self::BLANK_ENTRIES_ARE_EMPTY
-            && matches!(entries.as_slice(), [(e, None)] if is_blank(e));
+            && matches!(entries.as_slice(), [(e, s)] if !e.comma && is_blank(s));
+        let rows: Vec<Option<usize>> = entries
+            .iter()
+            .map(|(e, _)| e.row)
+            .collect();
         let mut warnings = Vec::new();
         let mut kept = Vec::with_capacity(entries.len());
-        for (i, (entry, comma)) in entries
+        for (i, (entry, mut scrubbed)) in entries
             .into_iter()
             .enumerate()
         {
-            if is_blank(&entry) {
-                let empty = (!empty_list).then(|| crate::empty_entry(Field::Entry, 0));
+            let in_row = entry.relocation();
+            let comma = entry
+                .comma
+                .then(|| entry.trailing_comma());
+            let own: Vec<ParseWarning> = std::mem::take(&mut scrubbed.warnings)
+                .into_iter()
+                .map(|w| w.relocate(&in_row))
+                .collect();
+            if is_blank(&scrubbed) {
+                let empty =
+                    (!empty_list).then(|| crate::empty_entry(Field::Entry, 0).relocate(&in_row));
                 warnings.extend(
-                    entry
-                        .warnings
-                        .into_iter()
+                    own.into_iter()
                         .chain(empty)
                         .chain(comma)
                         .map(|w| w.in_entry(i)),
                 );
                 continue;
             }
-            let map = |p: usize| entry.original(p);
+            let back = scrubbed
+                .relocation()
+                .then_shift(entry.base, entry.row);
             let mut found = Vec::new();
-            let value = Self::parse_entry(&entry.text, &mut found).map_err(|e| {
-                e.map_position(map)
+            let value = Self::parse_entry(&scrubbed.text, &mut found).map_err(|e| {
+                e.relocate(&back)
                     .in_entry(i)
             })?;
             let found = found
                 .into_iter()
-                .map(|w| w.map_position(map))
+                .map(|w| w.relocate(&back))
                 .collect();
             warnings.extend(
-                merge(entry.warnings, found)
+                merge(own, found)
                     .into_iter()
                     .chain(comma)
                     .map(|w| w.in_entry(i)),
@@ -240,6 +253,17 @@ pub(crate) trait CommaList: Sized {
             kept.extend(value);
         }
         let value = Self::from_parsed_reporting(kept, &mut warnings)?;
+        for w in &mut warnings {
+            if w.row
+                .is_none()
+            {
+                w.row = w
+                    .entry
+                    .and_then(|e| rows.get(e))
+                    .copied()
+                    .flatten();
+            }
+        }
         Ok(Parsed::new(value, warnings))
     }
 }

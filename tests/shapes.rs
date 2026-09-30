@@ -349,7 +349,12 @@ where
         .collect();
     assert_eq!(
         seen,
-        [(Field::Entry, WarningCode::EmptyEntry, Some(0), Some(1))],
+        [(
+            Field::Entry,
+            WarningCode::EmptyEntry,
+            Some(a.len() + 1),
+            Some(1)
+        )],
         "{wire}"
     );
     assert_eq!(
@@ -358,7 +363,22 @@ where
     );
     let split = T::from_entries_with_warnings([a, "", b]).unwrap();
     assert_eq!(split.value, parsed.value, "{wire}");
-    assert_eq!(split.warnings, parsed.warnings, "{wire}");
+    let in_rows: Vec<_> = split
+        .warnings
+        .iter()
+        .map(|w| (w.field, w.code, w.position, w.row, w.entry))
+        .collect();
+    assert_eq!(
+        in_rows,
+        [(
+            Field::Entry,
+            WarningCode::EmptyEntry,
+            Some(0),
+            Some(1),
+            Some(1)
+        )],
+        "{wire}"
+    );
     assert_eq!(T::parse(" , "), all_blank, "{a}");
 }
 

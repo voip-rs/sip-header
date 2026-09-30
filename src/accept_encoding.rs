@@ -295,7 +295,7 @@ mod tests {
                 Field::Coding,
                 WarningCode::InvalidToken,
                 WarningKind::Recovered,
-                Some(1),
+                raw.find("gz/"),
                 Some(1)
             )]
         );

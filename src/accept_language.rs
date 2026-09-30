@@ -277,7 +277,7 @@ mod tests {
     fn params_without_language_is_error() {
         assert_eq!(
             SipAcceptLanguage::parse("en, ;q=1"),
-            Err(ParseError::malformed(Field::Language, FaultCode::Missing, Some(1)).in_entry(1))
+            Err(ParseError::malformed(Field::Language, FaultCode::Missing, Some(4)).in_entry(1))
         );
     }
 
@@ -340,7 +340,7 @@ mod tests {
                 Field::Language,
                 WarningCode::InvalidToken,
                 WarningKind::Recovered,
-                Some(1),
+                raw.find("en_"),
                 Some(1)
             )]
         );

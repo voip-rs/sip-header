@@ -335,9 +335,10 @@ mod tests {
                 WarningCode::TrailingContent,
                 Some(1),
                 Some(
-                    1 + bad
-                        .find('j')
-                        .unwrap()
+                    "<sip:a@example.com>, ".len()
+                        + bad
+                            .find('j')
+                            .unwrap()
                 )
             )
         );

@@ -30,8 +30,8 @@ pub(crate) mod sealed {
 pub trait HeaderParse: Sized + sealed::Sealed {
     /// Parse, reporting accepted grammar breaches beside the value.
     ///
-    /// Positions are byte offsets into `input`; for a list type they are
-    /// relative to the entry, whose index each warning carries.
+    /// Positions are byte offsets into `input`, with no row index; a list
+    /// type's warnings also carry their entry index.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError>;
 
     /// Parse leniently, discarding the warnings.
@@ -64,7 +64,8 @@ pub trait HeaderParse: Sized + sealed::Sealed {
 pub trait ListParse: HeaderParse {
     /// Build from entries, reporting accepted grammar breaches.
     ///
-    /// Positions are relative to the entry, whose index each warning and
+    /// Each entry is a row of its own: positions are byte offsets into the
+    /// entry, whose index is both the row and the entry each warning and
     /// error carries.
     fn from_entries_with_warnings<'a>(
         entries: impl IntoIterator<Item = &'a str>,
@@ -85,9 +86,10 @@ pub trait ListParse: HeaderParse {
 
     /// Build from header rows, reporting accepted grammar breaches.
     ///
-    /// Entry indexes count across rows. A blank row is an empty entry,
-    /// except that a lone blank row is the empty list where the grammar
-    /// admits one.
+    /// Positions are byte offsets into the row a warning or error names by
+    /// index; entry indexes count across rows. A blank row is an empty
+    /// entry, except that a lone blank row is the empty list where the
+    /// grammar admits one.
     fn from_rows_with_warnings<'a>(
         rows: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError>;

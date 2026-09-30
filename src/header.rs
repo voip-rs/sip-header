@@ -58,10 +58,18 @@ fn list_rows<L: CommaList>(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<
     }
 }
 
-/// The one row of a header whose grammar admits a single value.
+/// The one row of a header whose grammar admits a single value, row 0.
 fn single_row<T: HeaderParse>(rows: Vec<&str>) -> Result<Parsed<T>, ParseError> {
     match rows.as_slice() {
-        [row] => T::parse_with_warnings(row),
+        [row] => {
+            let parsed = T::parse_with_warnings(row).map_err(|e| e.in_row(0))?;
+            let warnings = parsed
+                .warnings
+                .into_iter()
+                .map(|w| w.in_row(0))
+                .collect();
+            Ok(Parsed::new(parsed.value, warnings))
+        }
         _ => Err(ParseError::malformed(
             Field::Value,
             FaultCode::Duplicate,
@@ -133,16 +141,26 @@ impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
                 .trim()
                 .is_empty()
             {
-                warnings.push(crate::empty_entry(Field::Entry, 0).in_entry(i));
+                warnings.push(
+                    crate::empty_entry(Field::Entry, 0)
+                        .in_row(i)
+                        .in_entry(i),
+                );
                 continue;
             }
-            let parsed = SipAuthValue::parse_with_warnings(row).map_err(|e| e.in_entry(i))?;
+            let parsed = SipAuthValue::parse_with_warnings(row).map_err(|e| {
+                e.in_row(i)
+                    .in_entry(i)
+            })?;
             values.push(parsed.value);
             warnings.extend(
                 parsed
                     .warnings
                     .into_iter()
-                    .map(|w| w.in_entry(i)),
+                    .map(|w| {
+                        w.in_row(i)
+                            .in_entry(i)
+                    }),
             );
         }
         if values.is_empty() {
@@ -221,6 +239,10 @@ fn lenient<T>(parsed: Result<Option<Parsed<T>>, ParseError>) -> Result<Option<T>
 pub trait SipHeaderLookup: SipHeaderRows {
     /// Parse `name` as `T`, reporting accepted grammar breaches beside the
     /// value; `Ok(None)` when the header is absent.
+    ///
+    /// A warning's or error's `row` indexes the `Vec` that
+    /// [`sip_header_rows(name)`](SipHeaderRowsExt::sip_header_rows) returns,
+    /// and its position is a byte offset into that row as the store holds it.
     ///
     /// Errors with [`FaultCode::WrongHeader`] when `name` is not among
     /// [`T::HEADERS`](TypedHeader::HEADERS).

@@ -712,6 +712,7 @@ mod tests {
             SipVia::from_entries(["SIP/2.0/UDP 203.0.113.5", bad]),
             Err(
                 ParseError::malformed(Field::SentBy, FaultCode::InvalidNumber, bad.find("99999"))
+                    .in_row(1)
                     .in_entry(1)
             )
         );
@@ -904,7 +905,7 @@ mod tests {
                     Field::Entry,
                     WarningCode::SkippedEntry,
                     WarningKind::Lost,
-                    Some(1),
+                    Some("SIP/2.0/UDP 198.51.100.1, ".len()),
                     Some(1)
                 )],
                 "{bad}"
@@ -934,7 +935,7 @@ mod tests {
                 Field::Uri(sip_uri::Component::Host),
                 WarningCode::Uri(sip_uri::WarningCode::InvalidChar),
                 WarningKind::Recovered,
-                Some(" SIP/2.0/UDP exa".len()),
+                raw.find('_'),
                 Some(1)
             )]
         );

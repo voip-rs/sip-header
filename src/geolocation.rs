@@ -386,7 +386,7 @@ mod tests {
                 Field::Entry,
                 WarningCode::EmptyEntry,
                 WarningKind::Recovered,
-                Some(0),
+                Some("<cid:a>,".len()),
                 Some(1)
             )]
         );
@@ -469,7 +469,8 @@ mod tests {
 
     #[test]
     fn unbracketed_entry_skipped() {
-        let (geo, seen) = lenient("<cid:a>, cid:x@example.com, <https://example.com/loc>");
+        let raw = "<cid:a>, cid:x@example.com, <https://example.com/loc>";
+        let (geo, seen) = lenient(raw);
         assert_eq!(geo.len(), 2);
         assert_eq!(
             geo.url()
@@ -483,7 +484,7 @@ mod tests {
                 Field::Entry,
                 WarningCode::SkippedEntry,
                 WarningKind::Lost,
-                Some(1),
+                raw.find("cid:x"),
                 Some(1)
             )]
         );

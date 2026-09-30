@@ -529,7 +529,11 @@ mod tests {
     fn from_entries_bad_entry_is_error() {
         assert_eq!(
             SipWarning::from_entries([r#"399 example.com "ok""#, "nope"]),
-            Err(ParseError::malformed(Field::Agent, FaultCode::Missing, None).in_entry(1))
+            Err(
+                ParseError::malformed(Field::Agent, FaultCode::Missing, None)
+                    .in_row(1)
+                    .in_entry(1)
+            )
         );
     }
 
@@ -588,7 +592,7 @@ mod tests {
                 Field::Agent,
                 crate::WarningCode::InvalidToken,
                 sip_uri::WarningKind::Recovered,
-                Some(5),
+                raw.find("a b"),
                 Some(1)
             )
         );

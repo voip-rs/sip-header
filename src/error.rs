@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::diagnostic::{write_location, Field, ParseWarning, Parsed};
+use crate::span::Relocation;
 use sip_header_catalog::RowError;
 
 impl<T> Parsed<T> {
@@ -41,10 +42,8 @@ pub enum ParseError {
 impl ParseError {
     pub(crate) fn malformed(field: Field, code: FaultCode, position: Option<usize>) -> Self {
         ParseError::Malformed(Fault {
-            field,
-            code,
             position,
-            entry: None,
+            ..Fault::new(field, code)
         })
     }
 
@@ -57,43 +56,57 @@ impl ParseError {
         ParseError::Uri(UriFault::new(source, position))
     }
 
-    /// Drop the byte position, for input that was decoded before parsing.
+    /// Drop the position and row, for input that was decoded before parsing.
     pub(crate) fn without_position(self) -> Self {
         match self {
             ParseError::Malformed(fault) => ParseError::Malformed(Fault {
                 position: None,
+                row: None,
                 ..fault
             }),
             ParseError::Uri(fault) => ParseError::Uri(UriFault {
                 position: None,
+                row: None,
                 ..fault
             }),
             ParseError::NonConformant(w) => ParseError::NonConformant(ParseWarning {
                 position: None,
+                row: None,
                 ..w
             }),
             ParseError::Row(e) => ParseError::Row(e),
         }
     }
 
-    /// Move the byte position through `f`.
-    pub(crate) fn map_position(self, f: impl Fn(usize) -> usize) -> Self {
+    /// Move the error to where `to` places the text it was found in.
+    pub(crate) fn relocate(self, to: &Relocation<'_>) -> Self {
         match self {
             ParseError::Malformed(fault) => ParseError::Malformed(Fault {
                 position: fault
                     .position
-                    .map(f),
+                    .and_then(|p| to.start(p)),
+                row: to
+                    .row()
+                    .or(fault.row),
                 ..fault
             }),
             ParseError::Uri(fault) => ParseError::Uri(UriFault {
                 position: fault
                     .position
-                    .map(f),
+                    .and_then(|p| to.start(p)),
+                row: to
+                    .row()
+                    .or(fault.row),
                 ..fault
             }),
-            ParseError::NonConformant(w) => ParseError::NonConformant(w.map_position(f)),
+            ParseError::NonConformant(w) => ParseError::NonConformant(w.relocate(to)),
             ParseError::Row(e) => ParseError::Row(e),
         }
+    }
+
+    /// Place this error in row `row`.
+    pub(crate) fn in_row(self, row: usize) -> Self {
+        self.relocate(&Relocation::shift(Some(0), Some(row)))
     }
 
     /// Attribute this error to list entry `index`.
@@ -142,6 +155,7 @@ impl std::error::Error for ParseError {
 #[non_exhaustive]
 pub struct UriFault {
     position: Option<usize>,
+    row: Option<usize>,
     entry: Option<usize>,
     source: sip_uri::ParseError,
 }
@@ -150,6 +164,7 @@ impl UriFault {
     pub(crate) fn new(source: sip_uri::ParseError, position: usize) -> Self {
         UriFault {
             position: Some(position),
+            row: None,
             entry: None,
             source,
         }
@@ -162,9 +177,16 @@ impl UriFault {
         }
     }
 
-    /// Byte offset of the URI in the string handed to the parser.
+    /// Byte offset of the URI in its row: the string handed to `parse`, or
+    /// the row or entry named by [`row`](Self::row).
     pub fn position(&self) -> Option<usize> {
         self.position
+    }
+
+    /// Index of the row holding the URI, among the rows or entries a value
+    /// was built from; `None` for a value parsed from one string.
+    pub fn row(&self) -> Option<usize> {
+        self.row
     }
 
     /// Index of the list entry holding the URI, for list-valued headers.
@@ -176,7 +198,7 @@ impl UriFault {
 impl fmt::Display for UriFault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("invalid URI")?;
-        write_location(f, self.position, self.entry)
+        write_location(f, self.position, self.row, self.entry)
     }
 }
 
@@ -196,9 +218,13 @@ pub struct Fault {
     pub field: Field,
     /// What is wrong with it.
     pub code: FaultCode,
-    /// Byte offset into the string handed to the parser, when one points at
-    /// the failure.
+    /// Byte offset into the row that failed, when one points at the failure:
+    /// the string handed to `parse`, or the row or entry named by
+    /// [`row`](Self::row).
     pub position: Option<usize>,
+    /// Index of the row that failed, among the rows or entries a value was
+    /// built from; `None` for a value parsed from one string.
+    pub row: Option<usize>,
     /// Index of the list entry that failed, for list-valued headers.
     pub entry: Option<usize>,
 }
@@ -221,6 +247,7 @@ impl Fault {
             field,
             code,
             position: None,
+            row: None,
             entry: None,
         }
     }
@@ -228,6 +255,12 @@ impl Fault {
     /// Point the fault at byte `position`.
     pub fn at(mut self, position: usize) -> Self {
         self.position = Some(position);
+        self
+    }
+
+    /// Place the fault in row `row`.
+    pub fn in_row(mut self, row: usize) -> Self {
+        self.row = Some(row);
         self
     }
 
@@ -241,7 +274,7 @@ impl Fault {
 impl fmt::Display for Fault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.field, self.code)?;
-        write_location(f, self.position, self.entry)
+        write_location(f, self.position, self.row, self.entry)
     }
 }
 

@@ -680,7 +680,7 @@ mod tests {
                     Field::Entry,
                     WarningCode::MissingBrackets,
                     WarningKind::Recovered,
-                    Some(1),
+                    Some("<urn:example:0>, ".len()),
                     Some(1)
                 ),
                 "{second}"
@@ -699,7 +699,7 @@ mod tests {
                 Field::Entry,
                 WarningCode::SkippedEntry,
                 WarningKind::Lost,
-                Some(1),
+                Some("<urn:example:0>, ".len()),
                 Some(1),
             );
             assert_eq!(seen.last(), Some(&skipped), "{second}");
@@ -708,18 +708,18 @@ mod tests {
 
     #[test]
     fn blank_entries_dropped_with_empty_entry() {
-        let empty = |entry| {
+        let empty = |at, entry| {
             (
                 Field::Entry,
                 WarningCode::EmptyEntry,
                 WarningKind::Recovered,
-                Some(0),
+                Some(at),
                 Some(entry),
             )
         };
         let (info, seen) = lenient(",<urn:example:0>,,<urn:example:1>, ");
         assert_eq!(info.len(), 2);
-        assert_eq!(seen, vec![empty(0), empty(2), empty(4)]);
+        assert_eq!(seen, vec![empty(0, 0), empty(17, 2), empty(34, 4)]);
     }
 
     #[test]

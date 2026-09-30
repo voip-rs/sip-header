@@ -4,6 +4,8 @@ use std::fmt;
 
 use sip_uri::WarningKind;
 
+use crate::span::Relocation;
+
 /// A parse result together with the non-conformance found on the way.
 ///
 /// Returned by the `parse_with_warnings` constructors; `value` is what
@@ -49,9 +51,13 @@ pub struct ParseWarning {
     pub field: Field,
     /// What is wrong with it.
     pub code: WarningCode,
-    /// Byte offset into the string handed to the parser, when one points at
-    /// the breach.
+    /// Byte offset into the row the breach is in, when one points at it: the
+    /// string handed to `parse`, or the row or entry named by
+    /// [`row`](Self::row).
     pub position: Option<usize>,
+    /// Index of the row the breach is in, among the rows or entries a value
+    /// was built from; `None` for a value parsed from one string.
+    pub row: Option<usize>,
     /// Index of the list entry the breach is in, for list-valued headers.
     pub entry: Option<usize>,
     /// Whether the parsed value still carries what was sent.
@@ -76,6 +82,7 @@ impl ParseWarning {
             field,
             code,
             position: None,
+            row: None,
             entry: None,
             kind: code.own_kind(),
         }
@@ -87,6 +94,12 @@ impl ParseWarning {
         self
     }
 
+    /// Place the warning in row `row`.
+    pub fn in_row(mut self, row: usize) -> Self {
+        self.row = Some(row);
+        self
+    }
+
     /// Lift a sip-uri warning whose input began `offset` bytes into ours.
     pub(crate) fn from_uri(w: sip_uri::ParseWarning, offset: usize) -> Self {
         ParseWarning {
@@ -95,16 +108,20 @@ impl ParseWarning {
             position: w
                 .position
                 .map(|p| p + offset),
+            row: None,
             entry: None,
             kind: w.kind,
         }
     }
 
-    /// Move the position through `f`.
-    pub(crate) fn map_position(mut self, f: impl Fn(usize) -> usize) -> Self {
+    /// Move the warning to where `to` places the text it was found in.
+    pub(crate) fn relocate(mut self, to: &Relocation<'_>) -> Self {
         self.position = self
             .position
-            .map(f);
+            .and_then(|p| to.start(p));
+        self.row = to
+            .row()
+            .or(self.row);
         self
     }
 
@@ -118,17 +135,21 @@ impl ParseWarning {
 impl fmt::Display for ParseWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.field, self.code)?;
-        write_location(f, self.position, self.entry)
+        write_location(f, self.position, self.row, self.entry)
     }
 }
 
 pub(crate) fn write_location(
     f: &mut fmt::Formatter<'_>,
     position: Option<usize>,
+    row: Option<usize>,
     entry: Option<usize>,
 ) -> fmt::Result {
     if let Some(pos) = position {
         write!(f, " at byte {pos}")?;
+    }
+    if let Some(row) = row {
+        write!(f, " in row {row}")?;
     }
     if let Some(entry) = entry {
         write!(f, " in entry {entry}")?;

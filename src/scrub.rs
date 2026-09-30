@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
+use crate::span::Relocation;
 
 /// Input with folds turned into one SP and every other CR, LF and NUL
 /// dropped, together with what was dropped.
@@ -24,15 +25,9 @@ fn is_control(b: u8) -> bool {
 }
 
 impl Scrubbed<'_> {
-    /// Position in the original input of byte `pos` of [`text`](Self::text).
-    pub(crate) fn original(&self, pos: usize) -> usize {
-        let removed = self
-            .shifts
-            .iter()
-            .take_while(|(at, _)| *at <= pos)
-            .last()
-            .map_or(0, |(_, removed)| *removed);
-        pos + removed
+    /// Positions in [`text`](Self::text) moved back to the original input.
+    pub(crate) fn relocation(&self) -> Relocation<'_> {
+        Relocation::unshift(&self.shifts)
     }
 }
 
@@ -135,18 +130,22 @@ pub(crate) fn parse_scrubbed<T>(
     input: &str,
     parse: impl FnOnce(&str) -> Result<Parsed<T>, ParseError>,
 ) -> Result<Parsed<T>, ParseError> {
-    let s = scrub(input);
-    let map = |p: usize| s.original(p);
-    match parse(&s.text) {
+    let Scrubbed {
+        text,
+        shifts,
+        warnings,
+    } = scrub(input);
+    let back = Relocation::unshift(&shifts);
+    match parse(&text) {
         Ok(parsed) => {
             let found = parsed
                 .warnings
                 .into_iter()
-                .map(|w| w.map_position(map))
+                .map(|w| w.relocate(&back))
                 .collect();
-            Ok(Parsed::new(parsed.value, merge(s.warnings, found)))
+            Ok(Parsed::new(parsed.value, merge(warnings, found)))
         }
-        Err(e) => Err(e.map_position(map)),
+        Err(e) => Err(e.relocate(&back)),
     }
 }
 
@@ -202,7 +201,12 @@ mod tests {
         let s = scrub("a\r\nb \r\n c\0d");
         assert_eq!(s.text, "ab cd");
         for (pos, original) in [(0, 0), (1, 3), (2, 4), (3, 8), (4, 10)] {
-            assert_eq!(s.original(pos), original, "{pos}");
+            assert_eq!(
+                s.relocation()
+                    .start(pos),
+                Some(original),
+                "{pos}"
+            );
         }
     }
 }

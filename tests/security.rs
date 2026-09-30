@@ -637,10 +637,6 @@ fn control_char_in_a_list_entry_carries_the_entry() {
             .host(),
         &Host::Hostname("b.example.com".into())
     );
-    let entry = &input[input
-        .find(',')
-        .unwrap()
-        + 1..];
     assert_eq!(
         parsed
             .warnings
@@ -651,7 +647,7 @@ fn control_char_in_a_list_entry_carries_the_entry() {
             Field::Value,
             WarningCode::ControlChar,
             WarningKind::Lost,
-            entry.find('\n'),
+            input.find('\n'),
             Some(1)
         )]
     );
@@ -884,10 +880,7 @@ fn a_quote_that_never_closes_does_not_hold_commas() {
 
 #[test]
 fn a_final_comma_is_warned_and_strictly_refused() {
-    fn check<T: HeaderParse + PartialEq + std::fmt::Debug>(input: &str, last: &str, len: usize) {
-        let last = input
-            .rfind(last)
-            .unwrap();
+    fn check<T: HeaderParse + PartialEq + std::fmt::Debug>(input: &str, len: usize) {
         let parsed = T::parse_with_warnings(input).unwrap();
         assert_eq!(parsed.value, T::parse(&input[..input.len() - 1]).unwrap());
         assert_eq!(
@@ -900,7 +893,7 @@ fn a_final_comma_is_warned_and_strictly_refused() {
                 Field::Entry,
                 WarningCode::TrailingComma,
                 WarningKind::Recovered,
-                Some(input.len() - 1 - last),
+                Some(input.len() - 1),
                 Some(len - 1)
             )],
             "{input}"
@@ -911,15 +904,11 @@ fn a_final_comma_is_warned_and_strictly_refused() {
             "{input}"
         );
     }
-    check::<SipVia>(
-        "SIP/2.0/UDP 198.51.100.1, SIP/2.0/TCP 198.51.100.2,",
-        " SIP/2.0/TCP",
-        2,
-    );
-    check::<ContactList>("<sip:a@example.com>,", "<sip", 1);
-    check::<SipAccept>("application/sdp, text/plain,", " text", 2);
-    check::<SipWarning>(r#"399 example.com "a, b","#, "399", 1);
-    check::<SipReasonList>("SIP;cause=200,", "SIP", 1);
+    check::<SipVia>("SIP/2.0/UDP 198.51.100.1, SIP/2.0/TCP 198.51.100.2,", 2);
+    check::<ContactList>("<sip:a@example.com>,", 1);
+    check::<SipAccept>("application/sdp, text/plain,", 2);
+    check::<SipWarning>(r#"399 example.com "a, b","#, 1);
+    check::<SipReasonList>("SIP;cause=200,", 1);
 
     let input = r#"Digest realm="a", nonce="b","#;
     let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
@@ -951,7 +940,7 @@ fn a_final_comma_is_warned_and_strictly_refused() {
             Field::Entry,
             WarningCode::TrailingComma,
             WarningKind::Recovered,
-            Some(2),
+            Some(4),
             Some(1)
         )]
     );
@@ -960,12 +949,12 @@ fn a_final_comma_is_warned_and_strictly_refused() {
         .is_empty());
 }
 
-fn empty(entry: usize) -> Seen {
+fn empty(at: usize, entry: usize) -> Seen {
     (
         Field::Entry,
         WarningCode::EmptyEntry,
         WarningKind::Recovered,
-        Some(0),
+        Some(at),
         Some(entry),
     )
 }
@@ -983,9 +972,9 @@ fn comma(at: usize, entry: usize) -> Seen {
 /// Blank entries of a list that may be empty, with the warnings each raises.
 fn blank_lists() -> Vec<(&'static str, Vec<Seen>)> {
     vec![
-        (", ,", vec![empty(0), empty(1), comma(1, 1)]),
-        (" , ", vec![empty(0), empty(1)]),
-        (",", vec![empty(0), comma(0, 0)]),
+        (", ,", vec![empty(0, 0), empty(1, 1), comma(2, 1)]),
+        (" , ", vec![empty(0, 0), empty(2, 1)]),
+        (",", vec![empty(0, 0), comma(0, 0)]),
     ]
 }
 
@@ -1018,7 +1007,7 @@ fn a_blank_entry_in_a_list_that_may_be_empty_is_warned_and_strictly_refused() {
                 .iter()
                 .map(seen)
                 .collect::<Vec<_>>(),
-            [empty(0), empty(1)]
+            [empty(0, 0), empty(0, 1)]
         );
         assert!(T::from_entries_strict([" "]).is_ok());
         assert!(T::parse_strict(" ").is_ok());

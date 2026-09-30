@@ -328,9 +328,10 @@ mod param_tests {
                 WarningCode::UnterminatedQuote,
                 Some(1),
                 Some(
-                    1 + entry
-                        .find('"')
-                        .unwrap()
+                    "tls, ".len()
+                        + entry
+                            .find('"')
+                            .unwrap()
                 )
             )
         );

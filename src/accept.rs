@@ -508,7 +508,11 @@ mod tests {
     fn from_entries_bad_entry_is_error() {
         assert_eq!(
             SipAccept::from_entries(["application/sdp", " noslash"]),
-            Err(ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(1)).in_entry(1))
+            Err(
+                ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(1))
+                    .in_row(1)
+                    .in_entry(1)
+            )
         );
     }
 
@@ -522,7 +526,7 @@ mod tests {
                 Field::Entry,
                 WarningCode::EmptyEntry,
                 WarningKind::Recovered,
-                Some(0),
+                Some("application/sdp,".len()),
                 Some(1)
             )]
         );
@@ -575,7 +579,7 @@ mod tests {
                 Field::Qvalue,
                 WarningCode::InvalidQvalue,
                 WarningKind::Recovered,
-                Some(" text/plain;q=".len()),
+                Some("application/sdp, text/plain;q=".len()),
                 Some(1)
             )]
         );

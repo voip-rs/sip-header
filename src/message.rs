@@ -77,7 +77,8 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// As a [`SipHeaderRows`] store it matches names as
 /// [`SipHeader::name_matches`] does, returning every spelling's rows in wire
 /// order, so every [`SipHeaderLookup`](crate::SipHeaderLookup) accessor
-/// reads it.
+/// reads it. The rows a parsed value's positions point into are these
+/// trimmed, unfolded rows, not the lines of the message.
 ///
 /// A line that is neither a header, a continuation of one, nor the start
 /// line is skipped, and its byte offset reported by

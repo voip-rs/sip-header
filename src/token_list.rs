@@ -8,6 +8,7 @@ use sip_header_catalog::SipHeader;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
 use crate::scrub::scrub;
+use crate::RowEntry;
 
 /// The token-list headers, borrowed from the store that holds them.
 ///
@@ -86,10 +87,16 @@ impl<'a> TokenList<'a> {
         header: SipHeader,
         rows: Vec<&'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        let entries: Vec<(&'a str, bool)> =
+        let entries: Vec<RowEntry<'a>> =
             crate::row_entries(rows, crate::QuoteStart::Param).collect();
-        let comma = |i: usize, (entry, comma): (&str, bool)| {
-            comma.then(|| crate::trailing_comma(entry).in_entry(i))
+        let comma = |i: usize, entry: &RowEntry<'_>| {
+            entry
+                .comma
+                .then(|| {
+                    entry
+                        .trailing_comma()
+                        .in_entry(i)
+                })
         };
         let mut list = TokenList {
             tokens: Vec::with_capacity(entries.len()),
@@ -101,20 +108,24 @@ impl<'a> TokenList<'a> {
         let mut warnings = Vec::new();
         if entries
             .iter()
-            .all(|(e, _)| {
-                e.trim()
+            .all(|e| {
+                e.text
+                    .trim()
                     .is_empty()
             })
         {
             return match header {
                 SipHeader::Allow | SipHeader::Supported => {
-                    let lone = matches!(entries.as_slice(), [(_, false)]);
+                    let lone = matches!(entries.as_slice(), [e] if !e.comma);
                     for (i, e) in entries
-                        .into_iter()
+                        .iter()
                         .enumerate()
                     {
-                        let empty =
-                            (!lone).then(|| crate::empty_entry(Field::Entry, 0).in_entry(i));
+                        let empty = (!lone).then(|| {
+                            crate::empty_entry(Field::Entry, 0)
+                                .relocate(&e.relocation())
+                                .in_entry(i)
+                        });
                         warnings.extend(
                             empty
                                 .into_iter()
@@ -126,20 +137,23 @@ impl<'a> TokenList<'a> {
                 _ => Err(ParseError::empty(Field::Value)),
             };
         }
-        for (i, marked) in entries
-            .into_iter()
+        for (i, entry) in entries
+            .iter()
             .enumerate()
         {
             let mut found = Vec::new();
-            if let Some(token) = read_token(header, marked.0, &mut found) {
+            if let Some(token) = read_token(header, entry.text, &mut found) {
                 list.tokens
                     .push(token);
             }
             warnings.extend(
                 found
                     .into_iter()
-                    .map(|w| w.in_entry(i))
-                    .chain(comma(i, marked)),
+                    .map(|w| {
+                        w.relocate(&entry.relocation())
+                            .in_entry(i)
+                    })
+                    .chain(comma(i, entry)),
             );
         }
         Ok(Parsed::new(list, warnings))
@@ -189,7 +203,7 @@ fn read_token<'a>(
     warnings.extend(
         found
             .into_iter()
-            .map(|w| w.map_position(|p| scrubbed.original(p))),
+            .map(|w| w.relocate(&scrubbed.relocation())),
     );
     Some(token)
 }

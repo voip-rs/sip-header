@@ -94,6 +94,7 @@ mod scrub;
 mod security;
 #[cfg(feature = "serde")]
 pub mod serde_str;
+mod span;
 mod target_dialog;
 mod token_list;
 mod traits;
@@ -496,7 +497,7 @@ pub fn split_comma_entries(raw: &str) -> Vec<&str> {
 }
 
 /// [`split_comma_entries`], with a final comma reported as the list parsers
-/// report it: [`WarningCode::TrailingComma`] positioned in the last entry.
+/// report it: [`WarningCode::TrailingComma`] at the comma, in the last entry.
 ///
 /// ```
 /// use sip_header::WarningCode;
@@ -513,21 +514,67 @@ pub fn split_comma_entries_with_warnings(raw: &str) -> Parsed<Vec<&str>> {
         .last()
         .filter(|_| split.trailing_comma)
         .map(|last| {
-            trailing_comma(last).in_entry(
-                split
-                    .entries
-                    .len()
-                    - 1,
-            )
+            RowEntry::new(raw, None, last, true)
+                .trailing_comma()
+                .in_entry(
+                    split
+                        .entries
+                        .len()
+                        - 1,
+                )
         })
         .into_iter()
         .collect();
     Parsed::new(split.entries, warnings)
 }
 
-/// [`WarningCode::TrailingComma`] after `entry`, positioned in it.
-pub(crate) fn trailing_comma(entry: &str) -> ParseWarning {
-    ParseWarning::new(Field::Entry, WarningCode::TrailingComma).at(entry.len())
+/// One list entry and the row it was split from.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RowEntry<'a> {
+    /// Index of the row; `None` for the one string handed to `parse`.
+    pub(crate) row: Option<usize>,
+    /// Byte offset of the entry in its row; `None` when it lies outside.
+    pub(crate) base: Option<usize>,
+    /// The entry, untrimmed.
+    pub(crate) text: &'a str,
+    /// Whether a final comma follows the entry.
+    pub(crate) comma: bool,
+}
+
+impl<'a> RowEntry<'a> {
+    /// `text`, a slice of `row`, the row at index `index`.
+    pub(crate) fn new(row: &str, index: Option<usize>, text: &'a str, comma: bool) -> Self {
+        RowEntry {
+            row: index,
+            base: span::row_offset(row, text),
+            text,
+            comma,
+        }
+    }
+
+    /// An entry that is a row of its own.
+    pub(crate) fn whole(index: usize, text: &'a str) -> Self {
+        RowEntry {
+            row: Some(index),
+            base: Some(0),
+            text,
+            comma: false,
+        }
+    }
+
+    /// Positions in the entry moved into its row.
+    pub(crate) fn relocation(&self) -> span::Relocation<'static> {
+        span::Relocation::shift(self.base, self.row)
+    }
+
+    /// [`WarningCode::TrailingComma`] at the comma after the entry.
+    pub(crate) fn trailing_comma(&self) -> ParseWarning {
+        ParseWarning::new(Field::Entry, WarningCode::TrailingComma)
+            .at(self
+                .text
+                .len())
+            .relocate(&self.relocation())
+    }
 }
 
 /// [`WarningCode::EmptyEntry`] for a blank element of `field` starting at `at`.
@@ -543,38 +590,39 @@ pub(crate) struct Split<'a> {
     pub(crate) trailing_comma: bool,
 }
 
-impl<'a> Split<'a> {
-    /// Each entry with whether the final comma follows it.
-    pub(crate) fn marked(self) -> impl Iterator<Item = (&'a str, bool)> {
-        let last = self
-            .entries
-            .len()
-            .checked_sub(1)
-            .filter(|_| self.trailing_comma);
-        self.entries
-            .into_iter()
-            .enumerate()
-            .map(move |(i, e)| (e, Some(i) == last))
-    }
+/// The entries of `row`, the row at index `index`, split at its top-level
+/// commas; an empty row is one blank entry.
+pub(crate) fn split_row(
+    row: &str,
+    index: Option<usize>,
+    rule: QuoteStart,
+) -> impl Iterator<Item = RowEntry<'_>> {
+    let split = split_entries(row, rule);
+    let last = split
+        .entries
+        .len()
+        .checked_sub(1)
+        .filter(|_| split.trailing_comma);
+    let blank = split
+        .entries
+        .is_empty()
+        .then(|| RowEntry::new(row, index, row, false));
+    split
+        .entries
+        .into_iter()
+        .enumerate()
+        .map(move |(i, e)| RowEntry::new(row, index, e, Some(i) == last))
+        .chain(blank)
 }
 
-/// Every entry of every row, each with whether a final comma follows it;
-/// an empty row is one blank entry.
+/// Every entry of every row, in order.
 pub(crate) fn row_entries<'a>(
     rows: impl IntoIterator<Item = &'a str>,
     rule: QuoteStart,
-) -> impl Iterator<Item = (&'a str, bool)> {
+) -> impl Iterator<Item = RowEntry<'a>> {
     rows.into_iter()
-        .flat_map(move |row| {
-            let split = split_entries(row, rule);
-            let blank = split
-                .entries
-                .is_empty()
-                .then_some((row, false));
-            split
-                .marked()
-                .chain(blank)
-        })
+        .enumerate()
+        .flat_map(move |(i, row)| split_row(row, Some(i), rule))
 }
 
 /// Where a list grammar lets a `quoted-string` start.
