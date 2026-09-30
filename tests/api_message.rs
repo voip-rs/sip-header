@@ -2,8 +2,9 @@
 #![cfg(feature = "message")]
 
 use sip_header::{
-    extract_all_headers, extract_header, extract_request_uri, ParseError, SipHeader,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders,
+    extract_all_headers, extract_header, extract_request_uri, extract_request_uri_with_warnings,
+    ParseError, SipHeader, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders,
+    WarningCode,
 };
 
 const MSG: &str = concat!(
@@ -135,5 +136,153 @@ fn request_uri_is_a_uri() -> Result<(), ParseError> {
     assert!(extract_request_uri("").is_err());
     assert!(extract_request_uri("INVITE sip:bob@example.com\r\n\r\n").is_err());
     assert!(extract_request_uri("IN VITE sip:bob@example.com SIP/2.0\r\n\r\n").is_err());
+    Ok(())
+}
+
+#[test]
+fn the_request_line_is_borrowed_as_received() -> Result<(), ParseError> {
+    use sip_header::extract_request_line;
+
+    let line = extract_request_line(MSG)?.unwrap();
+    assert_eq!(
+        (line.method(), line.uri_text(), line.version()),
+        ("INVITE", "sip:bob@example.com", "SIP/2.0")
+    );
+    for (span, text) in [
+        (line.method_span(), line.method()),
+        (line.uri_span(), line.uri_text()),
+        (line.version_span(), line.version()),
+    ] {
+        assert_eq!(span.row(), None);
+        assert_eq!(span.get(MSG), Some(text));
+    }
+    assert!(line
+        .warnings()
+        .is_empty());
+
+    let msg = "INVITE  sip:a%2fb@example.com\tSIP/2.0 \r\n\r\n";
+    let line = extract_request_line(msg)?.unwrap();
+    assert_eq!(line.uri_text(), "sip:a%2fb@example.com");
+    assert_eq!(
+        line.uri_span()
+            .get(msg),
+        Some("sip:a%2fb@example.com")
+    );
+    let spacing: Vec<_> = line
+        .warnings()
+        .iter()
+        .map(|w| (w.code, w.position))
+        .collect();
+    let gap = WarningCode::RequestLineWhitespace;
+    assert_eq!(
+        spacing,
+        [
+            (gap, Some(6)),
+            (gap, msg.find('\t')),
+            (gap, msg.find(" \r"))
+        ]
+    );
+    let uri = extract_request_uri_with_warnings(msg)?.unwrap();
+    assert_eq!(uri.warnings, line.warnings());
+    assert_eq!(
+        uri.value
+            .to_string(),
+        "sip:a%2Fb@example.com"
+    );
+
+    assert_eq!(extract_request_line("SIP/2.0 200 OK\r\n\r\n")?, None);
+    Ok(())
+}
+
+#[test]
+fn a_request_line_without_three_parts_spans_the_first_line() {
+    use sip_header::extract_request_line;
+
+    let msg = "INVITE sip:a b@example.com SIP/2.0\r\nVia: SIP/2.0/UDP h\r\n\r\n";
+    let first = "INVITE sip:a b@example.com SIP/2.0";
+    for e in [
+        extract_request_line(msg).unwrap_err(),
+        extract_request_uri(msg).unwrap_err(),
+    ] {
+        let span = e
+            .span()
+            .unwrap();
+        assert_eq!((span.row(), span.get(msg)), (None, Some(first)));
+        assert!(!e
+            .to_string()
+            .contains("sip:"));
+    }
+}
+
+/// A message as an NG9-1-1 consumer reads it: Call-Info over two rows, one
+/// folded, escapes as the sender wrote them, a Request-URI with a space.
+#[test]
+fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
+    use sip_header::{extract_request_line, ListParse, UriInfo};
+
+    let msg = concat!(
+        "INVITE sip:urn:service:sos@bcf.example.com SIP/2.0\r\n",
+        "Call-Info: <urn:emergency:uid:callid:a%2fb:bcf.example.com>;purpose=emergency-CallId,\r\n",
+        " <https://adr.example.com/serviceInfo?t=x%2fy>;purpose=EmergencyCallData.ServiceInfo\r\n",
+        "Call-Info: <urn:emergency:uid:incidentid:c%3ad:bcf.example.com>;purpose=emergency-IncidentId\r\n",
+        "\r\n",
+    );
+    let headers = SipMessageHeaders::new(msg);
+    let rows = headers.sip_header_rows(SipHeader::CallInfo)?;
+    assert_eq!(rows.len(), 2);
+    let info = headers
+        .call_info()?
+        .unwrap();
+    let received: Vec<_> = info
+        .entries()
+        .iter()
+        .map(|e| {
+            e.uri_span()
+                .and_then(|s| s.slice(&rows))
+        })
+        .collect();
+    assert_eq!(
+        received,
+        [
+            Some("urn:emergency:uid:callid:a%2fb:bcf.example.com"),
+            Some("https://adr.example.com/serviceInfo?t=x%2fy"),
+            Some("urn:emergency:uid:incidentid:c%3ad:bcf.example.com"),
+        ]
+    );
+    assert!(info.entries()[0]
+        .uri()
+        .to_string()
+        .contains("%2F"));
+    let from_rows = UriInfo::from_rows(
+        rows.iter()
+            .copied(),
+    )?;
+    let spans = |l: &UriInfo| -> Vec<_> {
+        l.entries()
+            .iter()
+            .map(|e| (e.span(), e.uri_span()))
+            .collect()
+    };
+    assert_eq!(spans(&from_rows), spans(&info));
+    assert_eq!(
+        info.entries()[1]
+            .span()
+            .and_then(|s| s.slice(&rows)),
+        Some("<https://adr.example.com/serviceInfo?t=x%2fy>;purpose=EmergencyCallData.ServiceInfo")
+    );
+
+    let line = extract_request_line(msg)?.unwrap();
+    assert_eq!(line.uri_text(), "sip:urn:service:sos@bcf.example.com");
+    let spaced = msg.replacen("sos@", "sos @", 1);
+    let e = extract_request_uri(&spaced).unwrap_err();
+    let first = spaced
+        .lines()
+        .next()
+        .unwrap();
+    assert_eq!(
+        e.span()
+            .and_then(|s| s.get(&spaced)),
+        Some(first)
+    );
     Ok(())
 }

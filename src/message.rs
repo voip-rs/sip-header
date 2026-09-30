@@ -418,7 +418,7 @@ impl SipHeaderExtract for SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::HeaderParse;
+    use crate::{Fault, HeaderParse};
 
     const SAMPLE_INVITE: &str = "\
 INVITE sip:bob@biloxi.example.com SIP/2.0\r\n\
@@ -762,12 +762,13 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             extract_request_uri(""),
             Err(ParseError::empty(Field::Value))
         );
+        let line = "INVITE sip:a@example.com SIP/2.0 x";
         assert_eq!(
-            extract_request_uri("INVITE sip:a@example.com SIP/2.0 x\r\n"),
-            Err(ParseError::malformed(
-                Field::Value,
-                FaultCode::Missing,
-                None
+            extract_request_uri(&format!("{line}\r\n")),
+            Err(ParseError::Malformed(
+                Fault::new(Field::Value, FaultCode::Missing)
+                    .at(0)
+                    .to(line.len())
             ))
         );
         assert_eq!(
