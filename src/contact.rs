@@ -322,6 +322,31 @@ mod tests {
     }
 
     #[test]
+    fn wildcard_after_blank_entry_gets_wire_entry_index() {
+        let raw = "<sip:alice@example.com>,,*";
+        let parsed = ContactList::parse_with_warnings(raw).unwrap();
+        let w = parsed
+            .warnings
+            .iter()
+            .find(|w| w.code == WarningCode::WildcardNotAlone)
+            .unwrap();
+        assert_eq!(w.entry, Some(2), "{:?}", parsed.warnings);
+    }
+
+    #[test]
+    fn wildcard_after_blank_row_gets_its_own_row() {
+        let rows = ["<sip:alice@example.com>", "", "*"];
+        let parsed = ContactList::from_rows_with_warnings(rows).unwrap();
+        let w = parsed
+            .warnings
+            .iter()
+            .find(|w| w.code == WarningCode::WildcardNotAlone)
+            .unwrap();
+        assert_eq!(w.entry, Some(2), "{:?}", parsed.warnings);
+        assert_eq!(w.row, Some(2), "{:?}", parsed.warnings);
+    }
+
+    #[test]
     fn contact_list_warnings_carry_entry_index() {
         let bad = "<sip:b@example.com>junk;expires=60";
         let parsed =
