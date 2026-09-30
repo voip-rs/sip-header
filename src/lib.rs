@@ -139,6 +139,7 @@ pub use reason::{SipReason, SipReasonCause, SipReasonList};
 pub use redact::{HeaderRedaction, Redact};
 pub use replaces::SipReplaces;
 pub use security::{SipSecurity, SipSecurityMechanism};
+pub use span::Span;
 pub use target_dialog::SipTargetDialog;
 pub use token_list::TokenList;
 pub use traits::{HeaderParse, ListParse, UriHeaderParse};

@@ -11,7 +11,7 @@ use sip_header::{
     SipHeaderLookup, SipHeaderRowsExt, Span, UriInfo, UriInfoEntry,
 };
 
-fn text<'r>(span: Option<Span>, row: &'r str) -> Option<&'r str> {
+fn text(span: Option<Span>, row: &str) -> Option<&str> {
     span?.get(row)
 }
 

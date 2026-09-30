@@ -18,6 +18,7 @@ use crate::list::CommaList;
 use crate::reason::SipReasonList;
 use crate::replaces::SipReplaces;
 use crate::security::SipSecurity;
+use crate::span::{Located, Relocation};
 use crate::target_dialog::SipTargetDialog;
 use crate::token_list::TokenList;
 use crate::traits::HeaderParse;
@@ -59,14 +60,18 @@ fn list_rows<L: CommaList>(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<
 }
 
 /// The one row of a header whose grammar admits a single value, row 0.
-fn single_row<T: HeaderParse>(rows: Vec<&str>) -> Result<Parsed<T>, ParseError> {
+fn single_row<T: HeaderParse + Located>(rows: Vec<&str>) -> Result<Parsed<T>, ParseError> {
     match rows.as_slice() {
         [row] => {
-            let parsed = T::parse_with_warnings(row).map_err(|e| e.in_row(0))?;
+            let first = Relocation::shift(Some(0), Some(0));
+            let mut parsed = T::parse_with_warnings(row).map_err(|e| e.relocate(&first))?;
+            parsed
+                .value
+                .relocate_spans(&first);
             let warnings = parsed
                 .warnings
                 .into_iter()
-                .map(|w| w.in_row(0))
+                .map(|w| w.relocate(&first))
                 .collect();
             Ok(Parsed::new(parsed.value, warnings))
         }
@@ -125,6 +130,11 @@ typed_header! { single:
     SipJoin => [Join];
     SipTargetDialog => [TargetDialog];
 }
+
+impl Located for SipCallId {}
+impl Located for SipReplaces {}
+impl Located for SipJoin {}
+impl Located for SipTargetDialog {}
 
 /// One value per row, as the authentication headers carry them (RFC 3261
 /// §7.3.1); a warning's or error's entry index is the row, and a blank row

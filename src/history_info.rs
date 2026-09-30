@@ -8,6 +8,7 @@ use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::span::{Located, Relocation, Span};
 
 /// A single entry from a History-Info header (RFC 7044).
 ///
@@ -17,7 +18,7 @@ use crate::params::HeaderParams;
 ///
 /// # Equality
 ///
-/// As its [`SipHeaderAddr`] compares.
+/// As its [`SipHeaderAddr`] compares, spans aside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
@@ -47,6 +48,20 @@ impl HistoryInfoEntry {
     pub fn uri(&self) -> &sip_uri::Uri {
         self.addr
             .uri()
+    }
+
+    /// Where the entry was read from, as its address's
+    /// [`span`](SipHeaderAddr::span).
+    pub fn span(&self) -> Option<Span> {
+        self.addr
+            .span()
+    }
+
+    /// Where the URI was read from, as its address's
+    /// [`uri_span`](SipHeaderAddr::uri_span).
+    pub fn uri_span(&self) -> Option<Span> {
+        self.addr
+            .uri_span()
     }
 
     /// The SIP URI, if this entry uses a `sip:` or `sips:` scheme.
@@ -180,6 +195,12 @@ impl CommaList for HistoryInfo {
             warnings.push(ParseWarning::new(Field::Index, WarningCode::MissingIndex));
         }
         Ok(Some(HistoryInfoEntry { addr }))
+    }
+
+    fn relocate_entry(entry: &mut HistoryInfoEntry, to: &Relocation<'_>) {
+        entry
+            .addr
+            .relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {

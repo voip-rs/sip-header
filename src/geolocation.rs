@@ -7,6 +7,7 @@
 //! locationValue)`).
 
 use std::fmt::{self, Write as _};
+use std::hash::{Hash, Hasher};
 
 use sip_uri::{Uri, UriRedact};
 
@@ -15,6 +16,7 @@ use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact};
+use crate::span::{relocated, Located, Relocation, Span};
 use crate::uri_info::read_uri;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
@@ -28,8 +30,8 @@ use crate::uri_info::read_uri;
 ///
 /// Two entries are equal when their wire forms are: the URI as [`Uri`]
 /// compares it, the parameters as [`HeaderParams`] does. [`Hash`] follows
-/// the same rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// the same rule. Spans take no part in equality, hashing or serde.
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -42,9 +44,35 @@ use crate::uri_info::read_uri;
 pub struct SipGeolocationEntry {
     uri: Uri,
     params: HeaderParams,
+    span: Option<Span>,
+    uri_span: Option<Span>,
 }
 
 header_params!(SipGeolocationEntry);
+
+impl PartialEq for SipGeolocationEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri && self.params == other.params
+    }
+}
+
+impl Eq for SipGeolocationEntry {}
+
+impl Hash for SipGeolocationEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.uri
+            .hash(state);
+        self.params
+            .hash(state);
+    }
+}
+
+impl Located for SipGeolocationEntry {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        relocated(&mut self.span, to);
+        relocated(&mut self.uri_span, to);
+    }
+}
 
 impl SipGeolocationEntry {
     /// An entry for `uri`, with no parameters.
@@ -52,15 +80,33 @@ impl SipGeolocationEntry {
     /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL, or does
     /// not read back strictly as `uri`.
     pub fn new(uri: Uri) -> Result<Self, ParseError> {
-        Ok(SipGeolocationEntry {
-            uri: crate::check::checked_uri(Field::Reference, uri)?,
+        crate::check::checked_uri(Field::Reference, uri).map(Self::unchecked)
+    }
+
+    fn unchecked(uri: Uri) -> Self {
+        SipGeolocationEntry {
+            uri,
             params: HeaderParams::default(),
-        })
+            span: None,
+            uri_span: None,
+        }
     }
 
     /// The location URI inside the angle brackets.
     pub fn uri(&self) -> &Uri {
         &self.uri
+    }
+
+    /// Where the entry was read from, its parameters included; `None` for
+    /// a value built or deserialized.
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Where the URI was read from, inside the angle brackets; `None` for
+    /// a value built or deserialized.
+    pub fn uri_span(&self) -> Option<Span> {
+        self.uri_span
     }
 
     /// The Content-ID of a `cid:` URI (RFC 2392), the text after the scheme.
@@ -214,8 +260,8 @@ impl TryFrom<SipGeolocationEntryParts> for SipGeolocationEntry {
 
     fn try_from(p: SipGeolocationEntryParts) -> Result<Self, Self::Error> {
         let entry = SipGeolocationEntry {
-            uri: p.uri,
             params: p.params,
+            ..SipGeolocationEntry::unchecked(p.uri)
         };
         crate::list::entry_reads_back::<SipGeolocation>(entry)
     }
@@ -249,7 +295,8 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
         skipped(warnings);
         return None;
     };
-    let Some((uri, uri_warnings)) = read_uri(inner, crate::offset_in(entry, inner)) else {
+    let inner_at = crate::offset_in(entry, inner);
+    let Some((uri, uri_warnings)) = read_uri(inner, inner_at) else {
         skipped(warnings);
         return None;
     };
@@ -266,9 +313,12 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
             .find(';')
             .unwrap_or(junk.len())..]
     };
+    let at = crate::offset_in(entry, raw);
     Some(SipGeolocationEntry {
-        uri,
         params: HeaderParams::read(entry, params, warnings),
+        span: Some(Span::new(at..at + raw.len())),
+        uri_span: Some(Span::new(inner_at..inner_at + inner.len())),
+        ..SipGeolocationEntry::unchecked(uri)
     })
 }
 
@@ -280,6 +330,10 @@ impl CommaList for SipGeolocation {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipGeolocationEntry>, ParseError> {
         Ok(read_entry(entry, warnings))
+    }
+
+    fn relocate_entry(entry: &mut SipGeolocationEntry, to: &Relocation<'_>) {
+        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {

@@ -1,11 +1,112 @@
-//! Where positions found in parsed text land in the row it was cut from.
+//! Where parsed text sits in the row it was cut from.
+
+use std::ops::Range;
+
+/// Where received text sits: a byte range into a row, and the row's index.
+///
+/// The row is the string handed to `parse`, one of the rows of
+/// [`from_rows`](crate::ListParse::from_rows) or of a store's
+/// [`sip_header_rows`](crate::SipHeaderRowsExt::sip_header_rows), or one
+/// entry of [`from_entries`](crate::ListParse::from_entries). The text is
+/// what the row holds, folds and dropped control characters included; both
+/// ends fall on char boundaries.
+///
+/// ```
+/// use sip_header::{ListParse, UriInfo};
+///
+/// let rows = ["<urn:example:0>", "<urn:example:a%2fb>;purpose=icon"];
+/// let info = UriInfo::from_rows(rows)?;
+/// let span = info.entries()[1].uri_span().unwrap();
+/// assert_eq!(span.row(), Some(1));
+/// assert_eq!(span.slice(&rows), Some("urn:example:a%2fb"));
+/// assert_eq!(info.entries()[1].uri().to_string(), "urn:example:a%2Fb");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span {
+    row: Option<usize>,
+    start: usize,
+    end: usize,
+}
+
+impl Span {
+    pub(crate) fn new(range: Range<usize>) -> Self {
+        Span {
+            row: None,
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    /// Index of the row, among the rows or entries a value was built from;
+    /// `None` for a value parsed from one string.
+    pub fn row(&self) -> Option<usize> {
+        self.row
+    }
+
+    /// Byte range into the row.
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+
+    /// The text in `row`; `None` when the range falls outside `row` or
+    /// inside a character.
+    pub fn get<'r>(&self, row: &'r str) -> Option<&'r str> {
+        row.get(self.range())
+    }
+
+    /// The text in the row this span names among `rows`; `None` for a span
+    /// without a row index, or rows other than the ones it indexes.
+    pub fn slice<'r>(&self, rows: &[&'r str]) -> Option<&'r str> {
+        self.get(rows.get(self.row?)?)
+    }
+
+    /// Move the span to where `to` places the text it covers; `None` when
+    /// it cannot be placed.
+    pub(crate) fn relocate(self, to: &Relocation<'_>) -> Option<Self> {
+        let start = to.start(self.start)?;
+        let end = to
+            .end(self.end)?
+            .max(start);
+        Some(Span {
+            row: to
+                .row()
+                .or(self.row),
+            start,
+            end,
+        })
+    }
+}
+
+/// A value holding spans, moved with the text it was read from.
+pub(crate) trait Located {
+    /// Move every span through `to`, dropping one that cannot be placed.
+    fn relocate_spans(&mut self, _to: &Relocation<'_>) {}
+}
+
+/// Move `span` through `to`.
+pub(crate) fn relocated(span: &mut Option<Span>, to: &Relocation<'_>) {
+    *span = span.and_then(|s| s.relocate(to));
+}
+
+/// Bytes a scrub removed, counted up to a position in the text it left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Shift {
+    /// Position in the scrubbed text.
+    pub(crate) at: usize,
+    /// Bytes removed before `at`, all removals so far included.
+    pub(crate) removed: usize,
+    /// Whether the removal is a fold whose one SP ends at `at`, so text
+    /// ending at `at` ends where the fold did.
+    pub(crate) fold: bool,
+}
 
 /// Moves a position in text a parser read to the row that text came from:
 /// back through the bytes a scrub removed, then `base` bytes into the row.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Relocation<'a> {
-    /// `(position in text, bytes removed before it)`, ascending.
-    shifts: &'a [(usize, usize)],
+    /// Ascending by `at`.
+    shifts: &'a [Shift],
     /// `None` when the text could not be placed in its row.
     base: Option<usize>,
     row: Option<usize>,
@@ -13,7 +114,7 @@ pub(crate) struct Relocation<'a> {
 
 impl<'a> Relocation<'a> {
     /// Through the removals `shifts` records, staying in the same row.
-    pub(crate) fn unshift(shifts: &'a [(usize, usize)]) -> Self {
+    pub(crate) fn unshift(shifts: &'a [Shift]) -> Self {
         Relocation {
             shifts,
             base: Some(0),
@@ -44,7 +145,12 @@ impl<'a> Relocation<'a> {
 
     /// Where the byte at `pos` came from.
     pub(crate) fn start(&self, pos: usize) -> Option<usize> {
-        Some(self.base? + pos + self.removed(|at| at <= pos))
+        Some(self.base? + pos + self.removed(|s| s.at <= pos))
+    }
+
+    /// Where the text ending before `pos` ended.
+    pub(crate) fn end(&self, pos: usize) -> Option<usize> {
+        Some(self.base? + pos + self.removed(|s| s.at < pos || (s.fold && s.at == pos)))
     }
 
     /// The row the text came from, when it names one.
@@ -52,12 +158,12 @@ impl<'a> Relocation<'a> {
         self.row
     }
 
-    fn removed(&self, before: impl Fn(usize) -> bool) -> usize {
+    fn removed(&self, before: impl Fn(&Shift) -> bool) -> usize {
         self.shifts
             .iter()
-            .take_while(|(at, _)| before(*at))
+            .take_while(|s| before(s))
             .last()
-            .map_or(0, |(_, removed)| *removed)
+            .map_or(0, |s| s.removed)
     }
 }
 
@@ -188,11 +294,28 @@ mod tests {
             }
             seen.push(span);
             let text = scrubbed(rows, span)?;
-            prop_assert_eq!(reparse(&text).as_ref(), Some(e), "{:?}", text);
+            let back = reparse(&text);
+            prop_assert_eq!(back.as_ref(), Some(e), "{:?}", text);
             let text = scrubbed(rows, uri_span)?;
-            prop_assert_eq!(Uri::parse(&text).as_ref(), Ok(uri(e)), "{:?}", text);
+            let back = Uri::parse(&text);
+            prop_assert_eq!(back.as_ref(), Ok(uri(e)), "{:?}", text);
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_fold_ending_a_uri_ends_inside_its_span() {
+        let row = "<urn:example:1\r\n >;purpose=info";
+        let info = UriInfo::parse(row).unwrap();
+        let entry = &info.entries()[0];
+        let span = entry
+            .uri_span()
+            .unwrap();
+        assert_eq!(span.get(row), Some("urn:example:1\r\n "));
+        assert_eq!(
+            Uri::parse(&scrub("urn:example:1\r\n ").text).as_ref(),
+            Ok(entry.uri())
+        );
     }
 
     fn one<E: Clone>(entries: &[E]) -> Option<E> {

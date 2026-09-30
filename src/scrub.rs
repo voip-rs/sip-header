@@ -4,14 +4,14 @@ use std::borrow::Cow;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
-use crate::span::Relocation;
+use crate::span::{Located, Relocation, Shift};
 
 /// Input with folds turned into one SP and every other CR, LF and NUL
 /// dropped, together with what was dropped.
 pub(crate) struct Scrubbed<'a> {
     pub(crate) text: Cow<'a, str>,
-    /// `(position in text, bytes removed before it)`, ascending.
-    shifts: Vec<(usize, usize)>,
+    /// What was removed, ascending.
+    shifts: Vec<Shift>,
     /// [`WarningCode::ControlChar`] at positions in the original input.
     pub(crate) warnings: Vec<ParseWarning>,
 }
@@ -91,7 +91,11 @@ pub(crate) fn scrub(input: &str) -> Scrubbed<'_> {
             }
             last_drop_end = Some(end);
         }
-        shifts.push((out.len(), removed));
+        shifts.push(Shift {
+            at: out.len(),
+            removed,
+            fold: folds,
+        });
         copied = end;
         i = end;
     }
@@ -130,6 +134,22 @@ pub(crate) fn parse_scrubbed<T>(
     input: &str,
     parse: impl FnOnce(&str) -> Result<Parsed<T>, ParseError>,
 ) -> Result<Parsed<T>, ParseError> {
+    scrubbed_with(input, parse, |_, _| {})
+}
+
+/// [`parse_scrubbed`], with the value's spans pointing back into `input`.
+pub(crate) fn parse_scrubbed_located<T: Located>(
+    input: &str,
+    parse: impl FnOnce(&str) -> Result<Parsed<T>, ParseError>,
+) -> Result<Parsed<T>, ParseError> {
+    scrubbed_with(input, parse, T::relocate_spans)
+}
+
+fn scrubbed_with<T>(
+    input: &str,
+    parse: impl FnOnce(&str) -> Result<Parsed<T>, ParseError>,
+    relocate_spans: impl FnOnce(&mut T, &Relocation<'_>),
+) -> Result<Parsed<T>, ParseError> {
     let Scrubbed {
         text,
         shifts,
@@ -137,7 +157,8 @@ pub(crate) fn parse_scrubbed<T>(
     } = scrub(input);
     let back = Relocation::unshift(&shifts);
     match parse(&text) {
-        Ok(parsed) => {
+        Ok(mut parsed) => {
+            relocate_spans(&mut parsed.value, &back);
             let found = parsed
                 .warnings
                 .into_iter()

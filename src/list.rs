@@ -3,6 +3,7 @@
 use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::ParseError;
 use crate::scrub::{merge, scrub, Scrubbed};
+use crate::span::Relocation;
 use crate::{QuoteStart, RowEntry};
 
 /// Constructor, accessors, iteration and Display for a
@@ -143,6 +144,10 @@ pub(crate) trait CommaList: Sized {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<Self::Entry>, ParseError>;
 
+    /// Move the spans of an entry [`parse_entry`](Self::parse_entry)
+    /// returned into the row the entry was cut from.
+    fn relocate_entry(_entry: &mut Self::Entry, _to: &Relocation<'_>) {}
+
     /// Build the list from the entries kept.
     fn from_parsed(entries: Vec<Self::Entry>) -> Result<Self, ParseError>;
 
@@ -250,7 +255,10 @@ pub(crate) trait CommaList: Sized {
                     .chain(comma)
                     .map(|w| w.in_entry(i)),
             );
-            kept.extend(value);
+            kept.extend(value.map(|mut v| {
+                Self::relocate_entry(&mut v, &back);
+                v
+            }));
         }
         let value = Self::from_parsed_reporting(kept, &mut warnings)?;
         for w in &mut warnings {

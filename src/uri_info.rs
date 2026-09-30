@@ -12,6 +12,7 @@
 //! no entry yielded a URI.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use sip_uri::{Uri, UriParse};
 
@@ -19,6 +20,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::span::{relocated, Located, Relocation, Span};
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 ///
@@ -26,8 +28,8 @@ use crate::params::HeaderParams;
 ///
 /// Two entries are equal when their wire forms are: the URI as
 /// [`Uri`] compares it, the parameters as [`HeaderParams`] does. [`Hash`]
-/// follows the same rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// follows the same rule. Spans take no part in equality, hashing or serde.
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -37,9 +39,35 @@ use crate::params::HeaderParams;
 pub struct UriInfoEntry {
     uri: Uri,
     params: HeaderParams,
+    span: Option<Span>,
+    uri_span: Option<Span>,
 }
 
 header_params!(UriInfoEntry);
+
+impl PartialEq for UriInfoEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri && self.params == other.params
+    }
+}
+
+impl Eq for UriInfoEntry {}
+
+impl Hash for UriInfoEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.uri
+            .hash(state);
+        self.params
+            .hash(state);
+    }
+}
+
+impl Located for UriInfoEntry {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        relocated(&mut self.span, to);
+        relocated(&mut self.uri_span, to);
+    }
+}
 
 impl UriInfoEntry {
     /// An entry for `uri`, written inside angle brackets, with no parameters.
@@ -54,12 +82,26 @@ impl UriInfoEntry {
         UriInfoEntry {
             uri,
             params: HeaderParams::default(),
+            span: None,
+            uri_span: None,
         }
     }
 
     /// The URI inside the angle brackets.
     pub fn uri(&self) -> &Uri {
         &self.uri
+    }
+
+    /// Where the entry was read from, its parameters included; `None` for
+    /// a value built or deserialized.
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Where the URI was read from, inside the angle brackets; `None` for
+    /// a value built or deserialized.
+    pub fn uri_span(&self) -> Option<Span> {
+        self.uri_span
     }
 
     /// The `purpose` parameter value, if present with a value.
@@ -166,7 +208,8 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
         return None;
     }
-    let Some((uri, uri_warnings)) = read_uri(data, crate::offset_in(entry, data)) else {
+    let data_at = crate::offset_in(entry, data);
+    let Some((uri, uri_warnings)) = read_uri(data, data_at) else {
         warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
         return None;
     };
@@ -177,6 +220,8 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
 
     Some(UriInfoEntry {
         params: HeaderParams::read(entry, params, warnings),
+        span: Some(Span::new(at..at + raw.len())),
+        uri_span: Some(Span::new(data_at..data_at + data.len())),
         ..UriInfoEntry::unchecked(uri)
     })
 }
@@ -209,6 +254,10 @@ impl CommaList for UriInfo {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<UriInfoEntry>, ParseError> {
         Ok(read_entry(entry, warnings))
+    }
+
+    fn relocate_entry(entry: &mut UriInfoEntry, to: &Relocation<'_>) {
+        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {

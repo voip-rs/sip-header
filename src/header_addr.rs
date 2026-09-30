@@ -1,6 +1,7 @@
 //! RFC 3261 `name-addr` with header-level parameters.
 
 use std::fmt::{self, Write as _};
+use std::hash::{Hash, Hasher};
 
 use sip_uri::{UriParse, UriRedact};
 
@@ -12,6 +13,7 @@ use crate::params::HeaderParams;
 use crate::reason::SipReason;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::replaces::SipReplaces;
+use crate::span::{relocated, Located, Relocation, Span};
 use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
@@ -56,8 +58,9 @@ use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 ///
 /// Two addresses are equal when their wire forms are: the display name
 /// byte for byte, the URI as [`sip_uri::Uri`] compares it, the parameters
-/// as [`HeaderParams`] does. [`Hash`] follows the same rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// as [`HeaderParams`] does. [`Hash`] follows the same rule. Spans take no
+/// part in equality, hashing or serde.
+#[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "serde",
     derive(serde::Serialize, serde::Deserialize),
@@ -68,6 +71,44 @@ pub struct SipHeaderAddr {
     display_name: Option<String>,
     uri: sip_uri::Uri,
     params: HeaderParams,
+    span: Option<Span>,
+    uri_span: Option<Span>,
+}
+
+impl PartialEq for SipHeaderAddr {
+    fn eq(&self, other: &Self) -> bool {
+        self.display_name == other.display_name
+            && self.uri == other.uri
+            && self.params == other.params
+    }
+}
+
+impl Eq for SipHeaderAddr {}
+
+impl Hash for SipHeaderAddr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.display_name
+            .hash(state);
+        self.uri
+            .hash(state);
+        self.params
+            .hash(state);
+    }
+}
+
+impl Located for SipHeaderAddr {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        relocated(&mut self.span, to);
+        relocated(&mut self.uri_span, to);
+    }
+}
+
+impl Located for Option<SipHeaderAddr> {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        if let Some(addr) = self {
+            addr.relocate_spans(to);
+        }
+    }
 }
 
 /// Parameters [`SipHeaderAddr::with_param`] refuses, set through a typed setter.
@@ -110,8 +151,8 @@ impl TryFrom<SipHeaderAddrParts> for SipHeaderAddr {
         )?;
         let addr = SipHeaderAddr {
             display_name: parts.display_name,
-            uri: parts.uri,
             params,
+            ..SipHeaderAddr::unchecked(parts.uri)
         };
         crate::check::reads_back(addr, SipHeaderAddr::parse)
     }
@@ -139,11 +180,17 @@ impl SipHeaderAddr {
     /// Errors when the URI's text holds `<`, `>`, CR, LF or NUL, or does
     /// not read back strictly as `uri`.
     pub fn new(uri: sip_uri::Uri) -> Result<Self, ParseError> {
-        Ok(SipHeaderAddr {
+        crate::check::checked_uri(Field::Addr, uri).map(Self::unchecked)
+    }
+
+    fn unchecked(uri: sip_uri::Uri) -> Self {
+        SipHeaderAddr {
             display_name: None,
-            uri: crate::check::checked_uri(Field::Addr, uri)?,
+            uri,
             params: HeaderParams::default(),
-        })
+            span: None,
+            uri_span: None,
+        }
     }
 
     /// Set the display name, rejecting what an RFC 3261 §25.1
@@ -204,6 +251,18 @@ impl SipHeaderAddr {
     /// The URI.
     pub fn uri(&self) -> &sip_uri::Uri {
         &self.uri
+    }
+
+    /// Where the address was read from, its parameters included; `None`
+    /// for a value built or deserialized.
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Where the URI was read from, inside the angle brackets; `None` for
+    /// a value built or deserialized.
+    pub fn uri_span(&self) -> Option<Span> {
+        self.uri_span
     }
 
     /// If the URI is a SIP/SIPS URI, return a reference to it.
@@ -284,7 +343,7 @@ impl HeaderParse for SipHeaderAddr {
     /// Parse leniently; the `;params` after an addr-spec without angle
     /// brackets are header parameters (RFC 3261 §20.10).
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed(input, parse_addr)
+        crate::scrub::parse_scrubbed_located(input, parse_addr)
     }
 }
 
@@ -477,6 +536,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         (None, None)
     };
 
+    let span = Some(Span::new(lead..lead + s.len()));
     let Some(open) = open else {
         let (text, params) = s.split_at(bare_params_at(s));
         let uri = parse_uri(text, lead, &mut warnings)?;
@@ -485,9 +545,10 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
                 .push(ParseWarning::new(Field::Addr, WarningCode::MissingBrackets).at(lead + i));
         }
         let addr = SipHeaderAddr {
-            display_name: None,
-            uri,
             params: HeaderParams::read(input, params, &mut warnings),
+            span,
+            uri_span: Some(Span::new(lead..lead + text.len())),
+            ..SipHeaderAddr::unchecked(uri)
         };
         return Ok(Parsed::new(addr, warnings));
     };
@@ -512,6 +573,8 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         display_name: display_name.filter(|n| !n.is_empty()),
         uri,
         params,
+        span,
+        uri_span: Some(Span::new(lead + start..lead + end)),
     };
     Ok(Parsed::new(addr, warnings))
 }
@@ -559,6 +622,10 @@ impl CommaList for SipHeaderAddrList {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipHeaderAddr>, ParseError> {
         parse_list_addr(entry, warnings).map(Some)
+    }
+
+    fn relocate_entry(entry: &mut SipHeaderAddr, to: &Relocation<'_>) {
+        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {

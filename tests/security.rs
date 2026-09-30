@@ -632,8 +632,11 @@ fn addr_spans(addrs: &[SipHeaderAddr]) -> Vec<Option<Span>> {
         .collect()
 }
 
+fn no_spans<T>(_: &T) -> Vec<Option<Span>> {
+    Vec::new()
+}
+
 fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
-    let none = |_: &_| Vec::new();
     match kind {
         "addr" => in_their_rows::<SipHeaderAddr>(SipHeader::From, &rows[..1], |a| {
             addr_spans(std::slice::from_ref(a))
@@ -641,17 +644,17 @@ fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
         "contact" => {
             in_their_rows::<ContactList>(SipHeader::Contact, rows, |l| addr_spans(l.addrs()))
         }
-        "via" => in_their_rows::<SipVia>(SipHeader::Via, rows, none),
-        "warning" => in_their_rows::<SipWarning>(SipHeader::Warning, rows, none),
-        "auth" => in_their_rows::<Vec<SipAuthValue>>(SipHeader::Authorization, rows, none),
-        "accept" => in_their_rows::<SipAccept>(SipHeader::Accept, rows, none),
+        "via" => in_their_rows::<SipVia>(SipHeader::Via, rows, no_spans),
+        "warning" => in_their_rows::<SipWarning>(SipHeader::Warning, rows, no_spans),
+        "auth" => in_their_rows::<Vec<SipAuthValue>>(SipHeader::Authorization, rows, no_spans),
+        "accept" => in_their_rows::<SipAccept>(SipHeader::Accept, rows, no_spans),
         "accept-encoding" => {
-            in_their_rows::<SipAcceptEncoding>(SipHeader::AcceptEncoding, rows, none)
+            in_their_rows::<SipAcceptEncoding>(SipHeader::AcceptEncoding, rows, no_spans)
         }
         "accept-language" => {
-            in_their_rows::<SipAcceptLanguage>(SipHeader::AcceptLanguage, rows, none)
+            in_their_rows::<SipAcceptLanguage>(SipHeader::AcceptLanguage, rows, no_spans)
         }
-        "security" => in_their_rows::<SipSecurity>(SipHeader::SecurityClient, rows, none),
+        "security" => in_their_rows::<SipSecurity>(SipHeader::SecurityClient, rows, no_spans),
         "uri-info" => in_their_rows::<UriInfo>(SipHeader::CallInfo, rows, |l| {
             l.entries()
                 .iter()
@@ -671,13 +674,13 @@ fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
                 .collect()
         }),
         "replaces" | "replaces-uri" => {
-            in_their_rows::<SipReplaces>(SipHeader::Replaces, &rows[..1], none)
+            in_their_rows::<SipReplaces>(SipHeader::Replaces, &rows[..1], no_spans)
         }
         "target-dialog" => {
-            in_their_rows::<SipTargetDialog>(SipHeader::TargetDialog, &rows[..1], none)
+            in_their_rows::<SipTargetDialog>(SipHeader::TargetDialog, &rows[..1], no_spans)
         }
-        "join" => in_their_rows::<SipJoin>(SipHeader::Join, &rows[..1], none),
-        "reason" => in_their_rows::<SipReasonList>(SipHeader::Reason, rows, none),
+        "join" => in_their_rows::<SipJoin>(SipHeader::Join, &rows[..1], no_spans),
+        "reason" => in_their_rows::<SipReasonList>(SipHeader::Reason, rows, no_spans),
         other => panic!("{other}"),
     }
 }
