@@ -151,12 +151,19 @@ pub(crate) trait CommaList: Sized {
     /// Build the list from the entries kept.
     fn from_parsed(entries: Vec<Self::Entry>) -> Result<Self, ParseError>;
 
-    /// Build the list, reporting breaches that span entries.
+    /// Build the list, reporting breaches that span entries; `entries`
+    /// pairs each kept entry with its wire entry index, the blank and
+    /// dropped entries between them included.
     fn from_parsed_reporting(
-        entries: Vec<Self::Entry>,
+        entries: Vec<(usize, Self::Entry)>,
         _warnings: &mut Vec<ParseWarning>,
     ) -> Result<Self, ParseError> {
-        Self::from_parsed(entries)
+        Self::from_parsed(
+            entries
+                .into_iter()
+                .map(|(_, entry)| entry)
+                .collect(),
+        )
     }
 
     /// Split `raw` at top-level commas and parse every entry.
@@ -257,7 +264,7 @@ pub(crate) trait CommaList: Sized {
             );
             kept.extend(value.map(|mut v| {
                 Self::relocate_entry(&mut v, &back);
-                v
+                (i, v)
             }));
         }
         let value = Self::from_parsed_reporting(kept, &mut warnings)?;

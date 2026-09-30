@@ -149,22 +149,25 @@ impl CommaList for ContactList {
     }
 
     fn from_parsed(entries: Vec<Option<SipHeaderAddr>>) -> Result<Self, ParseError> {
-        Self::from_parsed_reporting(entries, &mut Vec::new())
+        Self::from_parsed_reporting(
+            entries
+                .into_iter()
+                .enumerate()
+                .collect(),
+            &mut Vec::new(),
+        )
     }
 
     fn from_parsed_reporting(
-        entries: Vec<Option<SipHeaderAddr>>,
+        entries: Vec<(usize, Option<SipHeaderAddr>)>,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Self, ParseError> {
         let has_addr = entries
             .iter()
-            .any(Option::is_some);
+            .any(|(_, entry)| entry.is_some());
         let mut addrs = Vec::with_capacity(entries.len());
         let mut wildcard_seen = false;
-        for (i, entry) in entries
-            .into_iter()
-            .enumerate()
-        {
+        for (i, entry) in entries {
             match entry {
                 Some(addr) => addrs.push(addr),
                 None if has_addr || wildcard_seen => warnings.push(
