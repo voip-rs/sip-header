@@ -8,7 +8,7 @@ A `"` opens a quoted string only at bracket depth zero, only where the list's gr
 
 ## Token fields drop stray framing
 
-A `"`, `<`, `>` or `,` inside a token field is dropped by the lenient parser under a warning whose kind says data was lost, so no printed token carries list framing into the next reader. A tag the parameter reader framed as a closed quoted value is kept verbatim, because it prints with the same framing it arrived with.
+A `"`, `<`, `>` or `,` inside a token field is dropped by the lenient parser under a warning whose kind says data was lost, so no printed token carries list framing into the next reader. A token has no escape form, so where a URI component keeps such text escaped, a token can only lose it; the span still reaches it. A tag the parameter reader framed as a closed quoted value is kept verbatim, because it prints with the same framing it arrived with.
 
 ## Header parameters parse through one quote-aware reader
 
@@ -20,7 +20,7 @@ A quote that never closes is not a quoted-string, and the reader falls back to s
 
 Every value type holds its parameters in `HeaderParams`, so key case, quoting, duplicates and serde behave one way across headers. Values are stored unescaped with, per parameter, whether it arrived quoted; Display re-quotes exactly those, plus any value that is neither a token nor a host, and the parser warns about a bare value it will have to re-quote. Whether a parameter must be quoted depends on the role the header plays: a Digest challenge quotes `qop`, a credential does not, and one `SipAuthValue` serves both, so the wire form is the only reliable source and quotedness is part of equality.
 
-Setting a key that exists replaces its value in place and drops its later repeats. A key its owner sets through a typed setter (a tag, `rport`, `index`) is refused by the generic setter, since a second copy would print a header naming something else. Duplicates arriving from the wire are kept and warned about, and lookup returns the first. Equality ignores order across keys but not among one key's values, because lookup would otherwise tell two equal values apart. Parameters are never percent-decoded: `%` is a token character in header parameters. Serde carries a reserved key as a field of its own, holding its first occurrence when that is in the form the typed setter writes; repeats and other forms stay among the parameters. Deserialize must read back every value the parser can produce, repeats included, and accepts a value only when parsing its own wire form yields it again.
+Setting a key that exists replaces its value in place and drops its later repeats. A value's parameters change only through its owner's guard, which runs the builders' check and clears the value's spans. A key its owner sets through a typed setter (a tag, `rport`, `index`) is refused by every generic operation, removal included, since a second copy or a missing one prints a header naming something else. Duplicates arriving from the wire are kept and warned about, and lookup returns the first; adding a name a built value already holds is refused, since strict parsing refuses the repeat. Parameters are never percent-decoded: `%` is a token character in header parameters. Serde carries a reserved key as a field of its own, holding its first occurrence when that is in the form the typed setter writes; repeats and other forms stay among the parameters. Deserialize must read back every value the parser can produce, repeats included, and accepts a value only when parsing its own wire form yields it again.
 
 ## header_addr keeps its own quoted-string reader
 
@@ -44,7 +44,7 @@ Namespace prefixes are stripped before deserialization, so an element is matched
 
 ## Constructors refuse what would print as a different value
 
-A parser's leniency is what makes real traffic survivable; a value handed to a constructor or builder never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Every constructor, builder and deserializer therefore returns `Result`, and a value built through them prints something `parse_strict` reads back as the same value: control characters, a field's own delimiter, empty mandatory parts and out-of-range numbers are refused. NUL is refused even as a `quoted-pair` the grammar allows, and `<` inside a URI, because either would re-frame the value for a downstream reader. A URI or host handed to a constructor must itself read back strictly. A list whose grammar needs an entry cannot be built empty. The resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a builder.
+A parser's leniency is what makes real traffic survivable; a value handed to a constructor or builder never crossed the wire, so it earns none of that. An unchecked Call-ID set on a dialog identifier re-serializes into a header naming a different dialog, and an unchecked display name can carry a line break into the next header. Every constructor, builder and deserializer therefore returns `Result`, and a value built through them prints something `parse_strict` reads back as the same value: control characters, a field's own delimiter, empty mandatory parts and out-of-range numbers are refused. NUL is refused even as a `quoted-pair` the grammar allows, and `<` inside a URI, because either would re-frame the value for a downstream reader. A URI or host handed to a constructor must itself read back strictly. A list whose grammar needs an entry cannot be built or mutated empty. The resulting asymmetry stands: a value `parse` accepted can be rejected when set back through a builder.
 
 A leniently parsed value is not held to strict round-trip, only to safety: it never prints a CR, LF or NUL, and parsing its output yields it again. A folded line is whitespace and becomes one space; any other control character is dropped with a warning.
 
@@ -52,9 +52,9 @@ A leniently parsed value is not held to strict round-trip, only to safety: it ne
 
 Every header-value type parses the way sip-uri does, so the two crates read one way: `HeaderParse::parse` keeps whatever value the input yields, `parse_with_warnings` returns it with the grammar breaches found on the way, and `parse_strict` refuses the first one. A warning names the field, a code, a byte position in the row the caller handed in (the parsed string, or one of the rows or entries a list was built from, with that row's index), and for list types the entry index; it never carries the text, which may be a caller's number. Whether the value still holds what was sent is fixed by the code, not chosen per call site, so one code means the same thing everywhere it is raised. A URI's own warnings pass through with their sip-uri component and code, shifted to the header's positions, and their code's printed name is prefixed so one name identifies one code across both crates.
 
-## Tokens compare as their RFC says and print as sent
+## Equality is the held form; RFC equivalence is its own trait
 
-A token compares case-insensitively, per RFC 3261 section 7.3.1, unless the header's own RFC says otherwise, as method names and event types do; Display keeps the case that was sent. Folding case on output would change what a proxy forwards, and comparing byte for byte where the RFC folds would make two equal headers differ.
+`Eq` and `Hash` compare a value as it is held: tokens in the case they were sent, parameters in order and with their quotedness, URIs by sip-uri's identity. Where the held form is canonical it already folds what the RFC folds; parameter names and the tokens of the content-negotiation and security-agreement headers are held lowercased. Comparison under a header's RFC rules (tokens case-insensitive per RFC 3261 section 7.3.1 unless the header's RFC says otherwise, parameters in any order, URIs as RFC 3261 section 19.1.4 compares them) is `HeaderEquivalence`, which delegates every URI to sip-uri's equivalence and exists only where an RFC states the rule; where it is silent, the caller compares the parts its context cares about. Display keeps the case that was sent, since folding it would change what a proxy forwards, and identity never folds by RFC rule, so a later refinement of equivalence cannot change which stored values are equal.
 
 ## Lenient parsing fails only where no value exists
 
@@ -76,7 +76,7 @@ Without angle brackets, every parameter after the URI is a header parameter (RFC
 
 ## Received text is reached by span, not stored
 
-A parsed value that carries a URI points back at the text it was read from with a span, a row index and byte range into what the caller handed in, and an error names its span instead of carrying the bytes. The value keeps its canonical form for identity, so the span is ignored by equality and serde, and a caller that needs the text as received slices its own rows. A span covers the text as the row holds it, folds and dropped control characters included, and a builder that changes a value clears its spans, since the value no longer reads as that text. Provenance belongs to this parser crate: a type in a 1.0 crate holds either a canonical value or received text, never both, and carries indexes, never byte positions, so a later need for the text as received is met here in a minor release instead of widening a frozen type.
+A parsed value that carries a URI points back at the text it was read from with a span, a row index and byte range into what the caller handed in, and an error names its span instead of carrying the bytes. The value keeps its canonical form for identity, so the span is ignored by equality and serde, and a caller that needs the text as received slices its own rows. A span covers the text as the row holds it, folds and dropped control characters included, and a builder that changes a value clears its spans, since the changed value does not read as that text. Provenance belongs to this parser crate: a type in a 1.0 crate holds either a canonical value or received text, never both, and carries indexes, never byte positions, so a later need for the text as received is met here in a minor release instead of widening a frozen type.
 
 ## Only the header catalog is a stable crate
 
@@ -88,7 +88,7 @@ The catalog's holders keep names and values exactly as received, control charact
 
 ## Parsing is spelled through extension traits
 
-Parsing and redaction are extension traits a caller imports (`HeaderParse`, `ListParse` and their siblings, gathered in the prelude), matching sip-uri's `UriParse`, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway; spelling them as traits now keeps that move from breaking callers. The prelude holds traits only, so a caller can glob it beside sip-uri's without two `ParseError`s colliding, and names value types explicitly.
+Parsing, equivalence and redaction are sealed extension traits a caller imports by name (`HeaderParse`, `ListParse` and their siblings), as sip-uri's `UriParse` is, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway, and spelling them as traits keeps that move from breaking callers. Every example opens with the exact `use` line it needs, and each value type's rustdoc links the trait that parses it.
 
 ## Lookup stores implement the raw row trait
 
@@ -100,7 +100,11 @@ The catalog says of each header whether its grammar is a comma list, safe to spl
 
 ## Redaction masks identity parameters and location references by default
 
-A redacted header hides, besides the URI's user part, the parameters that name a device or user (instance identifiers, GRUUs) and Geolocation references, since each identifies a caller as surely as a number does. A caller that needs one shown opts in per kind.
+A redacted header hides, besides the URI's user part, the parameters that name a device or user (instance identifiers, GRUUs) and Geolocation references, since each identifies a caller as surely as a number does. A caller that needs one shown opts in per kind. Redaction is policy and lives in this crate: its configuration owns its data so it is built once and lent to every rendering, every URI a value holds renders through sip-uri's redaction, and a parameter name that policy masks is masked wherever it appears, in a URI or a header. Debug masks credentials, since debug output reaches logs without anyone choosing it.
+
+## Serde converts through private functions
+
+A value's serde mirror and the conversions to and from it are private functions, so every public impl names only types a caller can use, in rustdoc and in rustc's suggestions alike.
 
 ## Non-IANA headers are always present
 

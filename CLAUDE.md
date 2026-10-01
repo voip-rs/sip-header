@@ -29,6 +29,25 @@ follow the grammar from its defining RFC. Non-conformant input is accepted
 Never invent syntax. Never guess at encoding. Input that yields no usable
 value returns `Err`; nothing is relaxed silently.
 
+**New RFC checks warn, never reject.** A check added to a parser raises a
+`WarningCode`; input `parse` accepted keeps parsing.
+
+## Scope Boundary
+
+Header field grammar only. URI grammar (`addr-spec`) is sip-uri's; a URI
+parse problem is fixed there, and each URI is parsed, redacted and compared
+through sip-uri.
+
+## Builders and the Params Guard Share One Check
+
+Every constructor, builder and `params_mut()` guard operation runs the same
+field check and refuses what would print as a different value. A
+deserializer accepts whatever the parser can produce and refuses only what
+reads back as a different value. The parser shares the stored form
+(lowercasing, quoting) and warns where builders refuse. Builders take `impl AsRef<str>` names and text and
+`Option<&str>` optional values, one shape across builders and collection
+mutation.
+
 ## No FreeSWITCH Coupling
 
 This crate has **zero FreeSWITCH knowledge**. No references to FreeSWITCH,
@@ -58,7 +77,7 @@ The pre-commit hook runs gitleaks to enforce this.
 
 All public enums and public-field structs get `#[non_exhaustive]`.
 Single-field error newtypes (`pub struct ParseFooError(pub String)`) are
-exempt.
+exempt, and so is an enum whose variant set the rationale fixes.
 
 ## SipHeader Enum — IANA Registry Sync
 
@@ -109,6 +128,9 @@ etc.) get typed accessor methods. Simple string headers are accessed via
   or return `impl Trait`.
 - **`FromStr` uses `eq_ignore_ascii_case`** for case-insensitive matching.
   `Display` always emits the canonical wire form from the IANA registry.
+- **Imports are named.** Every example, README and crate doc included,
+  opens with its exact `use` line; each value type's rustdoc links its
+  parse trait.
 
 ## Build & Test
 
