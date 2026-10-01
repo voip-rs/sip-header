@@ -417,7 +417,7 @@ impl Redact for SipHeaderAddr {
                 .redacted(how.uri()),
             params: self
                 .params
-                .masked(how.masked_params()),
+                .masked(how),
         }
     }
 }

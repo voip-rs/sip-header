@@ -155,7 +155,7 @@ impl fmt::Display for RedactedEntry<'_> {
             ">{}",
             entry
                 .params
-                .masked(how.masked_params())
+                .masked(how)
         )
     }
 }

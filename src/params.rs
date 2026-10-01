@@ -8,6 +8,7 @@ pub(crate) use crate::check::checked_token;
 use crate::check::refuse_controls;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::redact::HeaderRedaction;
 use crate::span::Span;
 use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 
@@ -685,26 +686,26 @@ fn refuse_reserved(reserved: &[&str], name: &str) -> Result<(), ParseError> {
 
 impl fmt::Display for HeaderParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.masked(&[])
-            .fmt(f)
+        for p in &self.0 {
+            f.write_char(';')?;
+            p.write(f)?;
+        }
+        Ok(())
     }
 }
 
 impl HeaderParams {
-    /// [`Display`](fmt::Display), the value of every parameter named in
-    /// `names` (lowercase) written as `***`.
-    pub(crate) fn masked<'a>(&'a self, names: &'a [&'a str]) -> MaskedParams<'a> {
-        MaskedParams {
-            params: self,
-            names,
-        }
+    /// [`Display`](fmt::Display), the value of every parameter `how` masks
+    /// written as `***`.
+    pub(crate) fn masked<'a>(&'a self, how: &'a HeaderRedaction) -> MaskedParams<'a> {
+        MaskedParams { params: self, how }
     }
 }
 
 /// [`HeaderParams::masked`].
 pub(crate) struct MaskedParams<'a> {
     params: &'a HeaderParams,
-    names: &'a [&'a str],
+    how: &'a HeaderRedaction,
 }
 
 impl fmt::Display for MaskedParams<'_> {
@@ -717,11 +718,8 @@ impl fmt::Display for MaskedParams<'_> {
             if p.value
                 .is_some()
                 && self
-                    .names
-                    .contains(
-                        &p.name
-                            .as_str(),
-                    )
+                    .how
+                    .masks_param(&p.name)
             {
                 write!(f, "{}=***", p.name)?;
             } else {

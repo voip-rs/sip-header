@@ -128,7 +128,7 @@ impl Redact for UriInfoEntry {
                 .redacted(how.uri()),
             params: self
                 .params
-                .masked(how.masked_params()),
+                .masked(how),
         }
     }
 }

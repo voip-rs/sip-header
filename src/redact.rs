@@ -43,7 +43,8 @@ const IDENTITY_PARAMS: &[&str] = &["+sip.instance", "pub-gruu", "temp-gruu"];
 /// default the value of every identity parameter (`+sip.instance`,
 /// `pub-gruu`, `temp-gruu`) is `***`, and so is everything after the
 /// scheme of a Geolocation reference, which names a location body or a
-/// dereference URL.
+/// dereference URL. A parameter name [`Redaction::params`] masks is masked
+/// in the header's parameters as in the URI's.
 ///
 /// ```
 /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
@@ -101,13 +102,13 @@ impl HeaderRedaction {
         !self.show_location
     }
 
-    /// The header parameters whose value renders as `***`.
-    pub(crate) fn masked_params(&self) -> &'static [&'static str] {
-        if self.show_instance {
-            &[]
-        } else {
-            IDENTITY_PARAMS
-        }
+    /// Whether a header parameter named `name` (lowercase) renders its value
+    /// as `***`: an identity parameter, or a name the URI redaction masks.
+    pub(crate) fn masks_param(&self, name: &str) -> bool {
+        (!self.show_instance && IDENTITY_PARAMS.contains(&name))
+            || self
+                .uri
+                .masks_param(name)
     }
 }
 
