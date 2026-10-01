@@ -195,7 +195,10 @@ mod serde_round_trip {
     use serde::de::DeserializeOwned;
     use serde::Serialize;
     use serde_json::json;
-    use sip_header::{HeaderParse, ListParse, SipJoin};
+    use sip_header::{
+        HeaderParse, ListParse, SipCallId, SipHeader, SipHeaderAddrList, SipJoin, SipReasonCause,
+        SipReasonList,
+    };
 
     fn round_trip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: T) {
         let json = serde_json::to_value(&value).unwrap();
@@ -475,6 +478,144 @@ mod serde_round_trip {
         rejects::<SipWarningEntry>(json!({"code": 1000, "agent": "example.com", "text": "secret"}));
         rejects::<SipAcceptEntry>(json!({"media_type": "a/b", "subtype": "secret"}));
         rejects::<SipReason>(json!({"protocol": "S;IP", "cause": null, "text": "secret"}));
+    }
+
+    const MARKER: &str = "zz-marker-77";
+    const MARKER_NUMBER: u64 = 7_700_077_077;
+    /// Keys holding a sip-uri type, whose serde is sip-uri's.
+    const SIP_URI_KEYS: [&str; 2] = ["uri", "host"];
+
+    fn pointers(value: &serde_json::Value, at: String, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    pointers(v, format!("{at}/{k}"), out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (i, v) in items
+                    .iter()
+                    .enumerate()
+                {
+                    pointers(v, format!("{at}/{i}"), out);
+                }
+            }
+            _ => {}
+        }
+        out.push(at);
+    }
+
+    fn leaks<T: Serialize + DeserializeOwned>(value: &T) -> Vec<String> {
+        let json = serde_json::to_value(value).unwrap();
+        let mut at = Vec::new();
+        pointers(&json, String::new(), &mut at);
+        let substitutes = [
+            json!(MARKER),
+            json!(MARKER_NUMBER),
+            json!(true),
+            serde_json::Value::Null,
+            json!({ "k": MARKER }),
+            json!([MARKER]),
+        ];
+        let mut found = Vec::new();
+        for pointer in at
+            .iter()
+            .filter(|p| {
+                !p.split('/')
+                    .any(|s| SIP_URI_KEYS.contains(&s))
+            })
+        {
+            // An array read as a struct fills fields in declaration order, which
+            // the JSON cannot show, so it may land on a sip-uri field.
+            let holds_uri = json
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|o| {
+                    SIP_URI_KEYS
+                        .iter()
+                        .any(|k| o.contains_key(*k))
+                });
+            for substitute in substitutes
+                .iter()
+                .filter(|s| !(holds_uri && s.is_array()))
+            {
+                let mut probe = json.clone();
+                *probe
+                    .pointer_mut(pointer)
+                    .unwrap() = substitute.clone();
+                let errors = [
+                    serde_json::from_value::<T>(probe.clone()).err(),
+                    serde_json::from_str::<T>(&probe.to_string()).err(),
+                ];
+                for e in errors
+                    .into_iter()
+                    .flatten()
+                {
+                    let m = e.to_string();
+                    if m.contains(MARKER) || m.contains(&MARKER_NUMBER.to_string()) {
+                        found.push(format!(
+                            "{} {pointer:?} <- {substitute}: {m}",
+                            std::any::type_name::<T>()
+                        ));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn deserialize_errors_never_quote_the_value() -> R {
+        let mut found = Vec::new();
+        found.extend(leaks(&SipReason::parse(
+            r#"SIP;cause=200;text="x";foo=bar"#,
+        )?));
+        found.extend(leaks(&SipReasonList::parse(
+            "SIP;cause=200, Q.850;cause=16",
+        )?));
+        found.extend(leaks(&replaces()));
+        found.extend(leaks(&replaces().with_framing(DialogFraming::UriHeader)));
+        found.extend(leaks(&SipJoin::parse(
+            "a@example.com;to-tag=t;from-tag=f;x=y",
+        )?));
+        found.extend(leaks(&SipTargetDialog::parse(
+            "a@example.com;local-tag=l;remote-tag=r;x",
+        )?));
+        found.extend(leaks(&addr()));
+        found.extend(leaks(&SipHeaderAddrList::parse(
+            "<sip:a@example.com>;tag=t",
+        )?));
+        found.extend(leaks(&ContactList::new(vec![addr()])?));
+        found.extend(leaks(&ContactList::wildcard()));
+        found.extend(leaks(&via()));
+        found.extend(leaks(&first::<SipVia, _>(
+            "SIP/2.0/UDP 198.51.100.1:5060;branch=z9hG4bK1",
+            SipVia::entries,
+        )));
+        found.extend(leaks(&SipAccept::parse("application/sdp;q=0.5")?));
+        found.extend(leaks(&SipAcceptEncoding::parse("gzip;q=0.5")?));
+        found.extend(leaks(&SipAcceptLanguage::parse("fr;q=0.8")?));
+        found.extend(leaks(&SipWarning::parse(r#"399 example.com "x""#)?));
+        found.extend(leaks(&SipSecurity::parse("digest;d-alg=md5;q=0.1")?));
+        found.extend(leaks(&SipAuthValue::parse(
+            r#"Digest realm="example.com", qop=auth"#,
+        )?));
+        found.extend(leaks(&SipAuthValue::from_token68("Bearer", "abc")?));
+        found.extend(leaks(&UriInfo::parse(
+            "<https://example.com/i.png>;purpose=icon",
+        )?));
+        found.extend(leaks(&SipGeolocation::parse(
+            "<cid:loc@example.com>;inserted-by=example.com",
+        )?));
+        found.extend(leaks(&HistoryInfo::parse("<sip:a@example.com>;index=1")?));
+        found.extend(leaks(&SipCallId::new("a@example.com")?));
+        found.extend(leaks(&SipReasonCause::new("16")?));
+        found.extend(leaks(&DialogFraming::Header));
+        found.extend(leaks(&DialogFraming::UriHeader));
+        found.extend(leaks(addr().params()));
+        found.extend(leaks(&SipHeader::CallId));
+        assert!(found.is_empty(), "{}", found.join("\n"));
+        Ok(())
     }
 
     fn refuses_field<T: Serialize + DeserializeOwned + std::fmt::Debug>(value: &T, key: &str) {
