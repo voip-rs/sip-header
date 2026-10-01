@@ -195,6 +195,7 @@ mod serde_round_trip {
     use serde::de::DeserializeOwned;
     use serde::Serialize;
     use serde_json::json;
+    use sip_header::{HeaderParse, ListParse, SipJoin};
 
     fn round_trip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: T) {
         let json = serde_json::to_value(&value).unwrap();
@@ -251,10 +252,142 @@ mod serde_round_trip {
         Ok(())
     }
 
+    fn pinned<T>(value: &T, expected: serde_json::Value)
+    where
+        T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
+    {
+        let json = serde_json::to_value(value).unwrap();
+        assert_eq!(json, expected, "{json}");
+        assert_eq!(&serde_json::from_value::<T>(json).unwrap(), value);
+    }
+
+    fn first<L: ListParse, E: Clone>(raw: &str, entries: impl Fn(&L) -> &[E]) -> E {
+        entries(&L::parse(raw).unwrap())[0].clone()
+    }
+
+    #[test]
+    fn parsed_values_serialize_as_pinned_parts() {
+        pinned(
+            &SipReason::parse(r#"SIP;cause=200;text="Call completed elsewhere";foo=bar"#).unwrap(),
+            json!({
+                "protocol": "SIP",
+                "cause": "200",
+                "text": "Call completed elsewhere",
+                "params": [["foo", "bar", false]],
+            }),
+        );
+        pinned(
+            &SipJoin::parse("a@example.com;to-tag=t;from-tag=f").unwrap(),
+            json!({
+                "call_id": "a@example.com",
+                "to_tag": "t",
+                "from_tag": "f",
+                "params": [],
+                "framing": "header",
+            }),
+        );
+        pinned(
+            &SipTargetDialog::parse("a@example.com;local-tag=l;remote-tag=r;x").unwrap(),
+            json!({
+                "call_id": "a@example.com",
+                "local_tag": "l",
+                "remote_tag": "r",
+                "params": [["x", null, false]],
+                "framing": "header",
+            }),
+        );
+        pinned(
+            &first(
+                "<cid:loc@example.com>;inserted-by=example.com",
+                SipGeolocation::entries,
+            ),
+            json!({
+                "uri": {"other": {"scheme": "cid", "rest": "loc@example.com"}},
+                "params": [["inserted-by", "example.com", false]],
+            }),
+        );
+        pinned(
+            &first("gzip;q=0.5", SipAcceptEncoding::entries),
+            json!({"encoding": "gzip", "params": [["q", "0.5", false]]}),
+        );
+        pinned(
+            &first("fr;q=0.8", SipAcceptLanguage::entries),
+            json!({"language": "fr", "params": [["q", "0.8", false]]}),
+        );
+        pinned(
+            &first("application/sdp;q=0.5", SipAccept::entries),
+            json!({
+                "media_type": "application",
+                "subtype": "sdp",
+                "params": [["q", "0.5", false]],
+            }),
+        );
+        pinned(
+            &first("<https://example.com/i.png>;purpose=icon", UriInfo::entries),
+            json!({
+                "uri": {"other": {"scheme": "https", "rest": "//example.com/i.png"}},
+                "params": [["purpose", "icon", false]],
+            }),
+        );
+        pinned(
+            &first(
+                "SIP/2.0/UDP 198.51.100.1:5060;rport;branch=z9hG4bK1",
+                SipVia::entries,
+            ),
+            json!({
+                "protocol": "SIP",
+                "version": "2.0",
+                "transport": "UDP",
+                "host": {"ipv4": "198.51.100.1"},
+                "port": 5060,
+                "rport": null,
+                "params": [["branch", "z9hG4bK1", false]],
+            }),
+        );
+        pinned(
+            &first(r#"399 example.com "x""#, SipWarning::entries),
+            json!({"code": 399, "agent": "example.com", "text": "x"}),
+        );
+        pinned(
+            &first("digest;d-alg=md5;q=0.1", SipSecurity::entries),
+            json!({
+                "mechanism": "digest",
+                "params": [["d-alg", "md5", false], ["q", "0.1", false]],
+            }),
+        );
+        pinned(
+            &first("<sip:a@example.com>;index=1", HistoryInfo::entries),
+            json!({"addr": {
+                "display_name": null,
+                "uri": {"sip": {
+                    "scheme": "sip",
+                    "user": "a",
+                    "user_params": [],
+                    "password": null,
+                    "host": {"hostname": "example.com"},
+                    "port": null,
+                    "params": [],
+                    "headers": [],
+                    "fragment": null,
+                }},
+                "tag": null,
+                "params": [["index", "1", false]],
+            }}),
+        );
+        pinned(
+            &SipAuthValue::parse(r#"Digest realm="example.com", qop=auth"#).unwrap(),
+            json!({
+                "scheme": "Digest",
+                "params": [["realm", "example.com", true], ["qop", "auth", false]],
+                "token68": null,
+            }),
+        );
+    }
+
     #[test]
     fn serializes_as_parts_with_every_field() -> R {
-        assert_eq!(
-            serde_json::to_value(addr()).unwrap(),
+        pinned(
+            &addr(),
             json!({
                 "display_name": "Alice Smith",
                 "uri": {"sip": {
@@ -270,10 +403,10 @@ mod serde_round_trip {
                 }},
                 "tag": "abc",
                 "params": [["lr", null, false]],
-            })
+            }),
         );
-        assert_eq!(
-            serde_json::to_value(replaces()).unwrap(),
+        pinned(
+            &replaces(),
             json!({
                 "call_id": "a@example.com",
                 "to_tag": "t",
@@ -281,11 +414,11 @@ mod serde_round_trip {
                 "early_only": true,
                 "params": [["foo", "bar", false]],
                 "framing": "header",
-            })
+            }),
         );
-        assert_eq!(
-            serde_json::to_value(SipAuthValue::from_token68("Bearer", "abc")?).unwrap(),
-            json!({"scheme": "Bearer", "params": [], "token68": "abc"})
+        pinned(
+            &SipAuthValue::from_token68("Bearer", "abc")?,
+            json!({"scheme": "Bearer", "params": [], "token68": "abc"}),
         );
         assert_eq!(
             serde_json::to_value(ContactList::wildcard()).unwrap(),
