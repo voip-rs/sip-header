@@ -121,7 +121,7 @@ serde_parts!(SipHeaderAddr, SipHeaderAddrParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipHeaderAddrParts {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_parts::field::display_name")]
     display_name: Option<String>,
     uri: sip_uri::Uri,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]

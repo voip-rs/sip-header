@@ -94,6 +94,7 @@ serde_parts!(SipSecurityMechanism, SipSecurityMechanismParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipSecurityMechanismParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::mechanism")]
     mechanism: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,

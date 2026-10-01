@@ -116,7 +116,9 @@ serde_parts!(SipAcceptEntry, SipAcceptEntryParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipAcceptEntryParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::media_type")]
     media_type: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::subtype")]
     subtype: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,

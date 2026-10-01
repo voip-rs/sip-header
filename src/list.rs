@@ -47,7 +47,11 @@ macro_rules! list_type {
         #[cfg(feature = "serde")]
         impl<'de> serde::Deserialize<'de> for $Type {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let entries = <Vec<$Entry> as serde::Deserialize>::deserialize(deserializer)?;
+                let entries = $crate::serde_parts::shaped::<Vec<$Entry>, _>(
+                    deserializer,
+                    stringify!($Type),
+                    "a sequence",
+                )?;
                 Self::new(entries).map_err(<D::Error as serde::de::Error>::custom)
             }
         }
@@ -77,7 +81,12 @@ macro_rules! list_type {
         #[cfg(feature = "serde")]
         impl<'de> serde::Deserialize<'de> for $Type {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                <Vec<$Entry> as serde::Deserialize>::deserialize(deserializer).map(Self::new)
+                $crate::serde_parts::shaped::<Vec<$Entry>, _>(
+                    deserializer,
+                    stringify!($Type),
+                    "a sequence",
+                )
+                .map(Self::new)
             }
         }
 

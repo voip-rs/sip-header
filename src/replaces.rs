@@ -57,14 +57,17 @@ serde_parts!(SipReplaces, SipReplacesParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipReplacesParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::call_id")]
     call_id: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::to_tag")]
     to_tag: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::from_tag")]
     from_tag: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_parts::field::early_only")]
     early_only: bool,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: crate::HeaderParams,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_parts::field::framing")]
     framing: DialogFraming,
 }
 

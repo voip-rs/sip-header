@@ -552,6 +552,12 @@ mod serde_round_trip {
                     .flatten()
                 {
                     let m = e.to_string();
+                    if m.starts_with("invalid ") && !m.contains("expected") {
+                        found.push(format!(
+                            "{} {pointer:?} <- {substitute}: no expected type: {m}",
+                            std::any::type_name::<T>()
+                        ));
+                    }
                     if m.contains(MARKER) || m.contains(&MARKER_NUMBER.to_string()) {
                         found.push(format!(
                             "{} {pointer:?} <- {substitute}: {m}",

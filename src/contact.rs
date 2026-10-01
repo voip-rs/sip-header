@@ -243,6 +243,18 @@ impl serde::Serialize for ContactList {
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for ContactList {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::serde_parts::shaped(deserializer, "ContactList", "\"*\" or a sequence")
+            .map(|Wire(c)| c)
+    }
+}
+
+/// The `"*"` or sequence a [`ContactList`] reads from.
+#[cfg(feature = "serde")]
+struct Wire(ContactList);
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Wire {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct Visitor;
 
         impl<'de> serde::de::Visitor<'de> for Visitor {
@@ -272,7 +284,9 @@ impl<'de> serde::Deserialize<'de> for ContactList {
             }
         }
 
-        deserializer.deserialize_any(Visitor)
+        deserializer
+            .deserialize_any(Visitor)
+            .map(Wire)
     }
 }
 

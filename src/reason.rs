@@ -27,11 +27,7 @@ use crate::RawParam;
 ///
 /// Digit for digit: `016` and `16` differ, as their wire forms do.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "String", into = "String")
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(into = "String"))]
 pub struct SipReasonCause(String);
 
 impl SipReasonCause {
@@ -58,6 +54,19 @@ impl SipReasonCause {
 impl From<u16> for SipReasonCause {
     fn from(cause: u16) -> Self {
         SipReasonCause(cause.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SipReasonCause {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let digits = crate::serde_parts::leaf(
+            deserializer,
+            "Reason cause",
+            "a string",
+            <String as serde::Deserialize>::deserialize,
+        )?;
+        Self::new(digits).map_err(serde::de::Error::custom)
     }
 }
 
@@ -255,10 +264,11 @@ serde_parts!(SipReason, SipReasonParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipReasonParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::protocol")]
     protocol: String,
     #[serde(default)]
     cause: Option<SipReasonCause>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_parts::field::text")]
     text: Option<String>,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,

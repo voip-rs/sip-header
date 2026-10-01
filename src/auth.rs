@@ -383,9 +383,11 @@ serde_parts!(SipAuthValue, SipAuthValueParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipAuthValueParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::scheme")]
     scheme: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
+    #[serde(default, deserialize_with = "crate::serde_parts::field::token68")]
     token68: Option<String>,
 }
 

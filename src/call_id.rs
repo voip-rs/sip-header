@@ -65,11 +65,7 @@ fn is_word_char(c: char) -> bool {
 /// Byte for byte (RFC 3261 section 8.1.1.4): two values differing only in
 /// case are different Call-IDs. [`Hash`] follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "String", into = "String")
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(into = "String"))]
 pub struct SipCallId {
     value: String,
     at: Option<usize>,
@@ -181,6 +177,19 @@ impl HeaderParse for SipCallId {
             );
             Ok(Parsed::new(id, warnings))
         })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SipCallId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = crate::serde_parts::leaf(
+            deserializer,
+            "Call-ID",
+            "a string",
+            <String as serde::Deserialize>::deserialize,
+        )?;
+        Self::new(value).map_err(serde::de::Error::custom)
     }
 }
 

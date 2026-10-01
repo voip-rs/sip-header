@@ -119,8 +119,11 @@ serde_parts!(SipWarningEntry, SipWarningEntryParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipWarningEntryParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::code")]
     code: u16,
+    #[serde(deserialize_with = "crate::serde_parts::field::agent")]
     agent: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::text")]
     text: String,
 }
 

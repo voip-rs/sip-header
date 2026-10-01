@@ -28,12 +28,15 @@ serde_parts!(SipTargetDialog, SipTargetDialogParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipTargetDialogParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::call_id")]
     call_id: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::local_tag")]
     local_tag: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::remote_tag")]
     remote_tag: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: crate::HeaderParams,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::serde_parts::field::framing")]
     framing: DialogFraming,
 }
 

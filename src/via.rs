@@ -220,10 +220,14 @@ serde_parts!(SipViaEntry, SipViaEntryParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipViaEntryParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::protocol")]
     protocol: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::version")]
     version: String,
+    #[serde(deserialize_with = "crate::serde_parts::field::transport")]
     transport: String,
     host: Host,
+    #[serde(default, deserialize_with = "crate::serde_parts::field::port")]
     port: Option<u16>,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,

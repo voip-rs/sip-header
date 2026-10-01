@@ -741,6 +741,26 @@ impl serde::Serialize for HeaderParams {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Param {
+    /// `[name, value, quoted]`, unchecked.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Fields(
+            #[serde(deserialize_with = "crate::serde_parts::field::name")] String,
+            #[serde(deserialize_with = "crate::serde_parts::field::value")] Option<String>,
+            #[serde(deserialize_with = "crate::serde_parts::field::quoted")] bool,
+        );
+        let Fields(name, value, quoted) =
+            crate::serde_parts::shaped(deserializer, "parameter", "[name, value, quoted]")?;
+        Ok(Param {
+            name,
+            value,
+            quoted,
+        })
+    }
+}
+
 /// `[[name, value, quoted]]` as the parameters of an owner that checks them
 /// in its own grammar; refuses a quoted flag and CR, LF or NUL.
 #[cfg(feature = "serde")]
@@ -748,11 +768,19 @@ pub(crate) fn deserialize_unchecked<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<HeaderParams, D::Error> {
     use serde::de::Error;
-    use serde::Deserialize;
 
-    let entries = <Vec<(String, Option<String>, bool)>>::deserialize(deserializer)?;
+    let entries: Vec<Param> = crate::serde_parts::shaped(
+        deserializer,
+        "`params`",
+        "a sequence of [name, value, quoted]",
+    )?;
     let mut params = HeaderParams::default();
-    for (name, value, quoted) in entries {
+    for Param {
+        name,
+        value,
+        quoted,
+    } in entries
+    {
         if value.is_none() && quoted {
             return Err(D::Error::custom("a quoted parameter needs a value"));
         }

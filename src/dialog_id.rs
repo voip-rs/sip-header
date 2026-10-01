@@ -15,11 +15,6 @@ pub(crate) mod sealed {
 
 /// How a dialog identifier is framed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "kebab-case")
-)]
 #[non_exhaustive]
 pub enum DialogFraming {
     /// The value as a header field carries it.
@@ -28,6 +23,42 @@ pub enum DialogFraming {
     /// Percent-encoded as a URI header (`<sip:…?Replaces=…>`), where `@`,
     /// `;` and `=` stay encoded.
     UriHeader,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(
+    remote = "DialogFraming",
+    rename = "DialogFraming",
+    rename_all = "kebab-case"
+)]
+enum DialogFramingDef {
+    Header,
+    UriHeader,
+}
+
+#[cfg(feature = "serde")]
+impl crate::serde_parts::Expected for DialogFraming {
+    const TEXT: &'static str = "\"header\" or \"uri-header\"";
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for DialogFraming {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        DialogFramingDef::serialize(self, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DialogFraming {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::serde_parts::leaf(
+            deserializer,
+            "dialog framing",
+            <DialogFraming as crate::serde_parts::Expected>::TEXT,
+            DialogFramingDef::deserialize,
+        )
+    }
 }
 
 /// The tag names a dialog-identifier header uses. Sealed.

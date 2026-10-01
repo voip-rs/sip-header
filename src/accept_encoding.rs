@@ -84,6 +84,7 @@ serde_parts!(SipAcceptEncodingEntry, SipAcceptEncodingEntryParts);
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SipAcceptEncodingEntryParts {
+    #[serde(deserialize_with = "crate::serde_parts::field::encoding")]
     encoding: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
