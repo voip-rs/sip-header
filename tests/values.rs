@@ -477,6 +477,43 @@ mod serde_round_trip {
         rejects::<SipReason>(json!({"protocol": "S;IP", "cause": null, "text": "secret"}));
     }
 
+    fn refuses_field<T: Serialize + DeserializeOwned + std::fmt::Debug>(value: &T, key: &str) {
+        let mut json = serde_json::to_value(value).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .insert(key.into(), json!("secret"));
+        rejects::<T>(json);
+    }
+
+    #[test]
+    fn unknown_fields_are_refused() -> R {
+        fn unknown<T: Serialize + DeserializeOwned + std::fmt::Debug>(value: &T) {
+            refuses_field(value, "unknown");
+        }
+        unknown(&addr());
+        unknown(&replaces());
+        unknown(&SipTargetDialog::new("a@example.com", "l", "r")?);
+        unknown(&SipJoin::parse("a@example.com;to-tag=t;from-tag=f").unwrap());
+        unknown(&SipReason::new("SIP")?.with_cause(302));
+        unknown(&SipAuthValue::parse(r#"Digest realm="example.com""#).unwrap());
+        unknown(&first("<cid:loc@example.com>", SipGeolocation::entries));
+        unknown(&first("gzip;q=0.5", SipAcceptEncoding::entries));
+        unknown(&first("fr;q=0.8", SipAcceptLanguage::entries));
+        unknown(&first("application/sdp", SipAccept::entries));
+        unknown(&first("<https://example.com/i.png>", UriInfo::entries));
+        unknown(&first("SIP/2.0/UDP 198.51.100.1", SipVia::entries));
+        unknown(&first(r#"399 example.com "x""#, SipWarning::entries));
+        unknown(&first("digest;q=0.1", SipSecurity::entries));
+        unknown(&first("<sip:a@example.com>;index=1", HistoryInfo::entries));
+        Ok(())
+    }
+
+    #[test]
+    fn tag_and_rport_fields_are_refused() {
+        refuses_field(&addr(), "tag");
+        refuses_field(&first("SIP/2.0/UDP 198.51.100.1", SipVia::entries), "rport");
+    }
+
     #[test]
     fn control_chars_are_rejected_in_every_field() {
         rejects::<SipHeaderAddr>(json!({
