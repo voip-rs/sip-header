@@ -158,7 +158,7 @@ impl DialogId {
         let wire = self.wire_form::<K>()?;
         match self.framing {
             DialogFraming::Header => f.write_str(&wire),
-            DialogFraming::UriHeader => f.write_str(&sip_uri::encode_uri_header(&wire)),
+            DialogFraming::UriHeader => f.write_str(&sip_uri::encoding::encode_header(&wire)),
         }
     }
 }
