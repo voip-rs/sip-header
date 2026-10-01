@@ -211,6 +211,8 @@ assert_eq!(
 
 ## Migrating from 0.3
 
+**Import `sip_header::prelude::*` first.** Every `parse` is a trait method (`HeaderParse`, `UriHeaderParse`, sip-uri's `UriParse`), so naming the type is not enough on its own: `UriInfo::parse(s)` without the prelude fails with E0599 ("no associated function `parse`"), and `s.parse::<sip_uri::Uri>()` fails with E0277 ("the trait bound ... `FromStr` is not satisfied"); neither error names the missing import. The prelude covers both; without it, `sip_uri::Uri` needs its own `use sip_header::sip_uri::UriParse;`.
+
 | Area | 0.3 | 0.4 |
 |---|---|---|
 | parsing | `"…".parse::<T>()`, inherent `T::parse` | `HeaderParse::parse`, `parse_with_warnings`, `parse_strict`; `use sip_header::prelude::*` |
@@ -240,7 +242,7 @@ assert_eq!(
 | shapes | Contact `*` beside addresses is `Err` | dropped, keeping the addresses, with a `WildcardNotAlone` warning |
 | shapes | `SipCallId<'a>` borrowing its input | owned `SipCallId`; `new()` refuses a breach of `word ["@" word]` |
 | shapes | `UriInfoEntry { data, metadata }` pub fields | `new(Uri)`; `uri() -> &Uri`, `param()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
-| shapes | `UriInfoEntry.data`, the URI as received | `uri()` is canonical; `uri_span()`, and `span()` over the whole entry, on `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` give a `Span` (row index and byte range) the caller slices its own rows with: `span.slice(&rows)` or `span.get(row)`; `None` when built or deserialized, and ignored by `Eq`, `Hash` and serde |
+| shapes | `UriInfoEntry.data`, the URI as received | `uri()` is canonical; `uri_span()`, and `span()` over the whole entry, on `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` give a `Span` (row index and byte range): `entry.uri_span()` then `Span::get` against the raw row it came from, or `Span::slice(&rows)` beside `from_rows`; `None` when built or deserialized, and ignored by `Eq`, `Hash` and serde |
 | shapes | `SipGeolocation::parse` infallible, `refs() -> &[SipGeolocationRef]`, `url()`/`urls()` yield `&str` | `Err` when no entry yields a URI; `SipGeolocationEntry` with `new(Uri)`, `uri()`, `cid()`; `url()`/`urls()` yield `&Uri`; `SipGeolocationRef` removed |
 | shapes | `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry` |
 | shapes | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`: `cause() -> Option<&SipReasonCause>` keeps the digits (`as_u16()`), extension parameters in `params()` |
@@ -266,11 +268,22 @@ assert_eq!(
 | message | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | message | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` (`iter()` for the pairs); `SipMessageHeaders` is a `SipHeaderRows` store over the message, its rows a `SipHeaderFields` through `fields()` / `into_fields()` |
 | message | a private `Vec<(String, String)>` store with its own name matching | sip-header-catalog's `SipHeaderFields` (`From<Vec<(String, String)>>`, `push`, `map_values`, `remove`), or `SipHeaderField` for one header |
-| message | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them; `extract_request_line` returns the `RequestLine` with `method()`, `uri_text()` and `version()` as received and their spans, and a first line without three parts is an error spanning it |
+| message | `extract_request_uri() -> Option<String>`, the URI as received | `Result<Option<sip_uri::Uri>, ParseError>`, `None` for a status line; `extract_request_uri_with_warnings` reports the URI's warnings and `RequestLineWhitespace`, `extract_request_uri_strict` refuses them; like-for-like text: `extract_request_line(msg)?.map(RequestLine::uri_text)`; `extract_request_line` returns the `RequestLine` with `method()`, `uri_text()` and `version()` as received and their spans, and a first line without three parts is an error spanning it |
 | serde | `SipHeader` as its Rust variant name (`"CallId"`) | its canonical wire name (`"Call-ID"`); deserialize accepts any spelling `parse_name` does |
 | serde | `define_header_enum!` derives serde when the invoking crate has a `serde` feature | opt in per invocation with the `serde,` arm and the catalog's `serde` feature: wire names, any spelling accepted; an invocation without it gets no serde, and the invocation itself still compiles; a crate whose serde is optional writes `serde(cfg(feature = "serde")),` and forwards sip-header-catalog/serde from its feature; to keep 0.3's variant-name JSON, put `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` on the enum inside the invocation |
 | serde | no serde on value types | structured serde; parameters as `[[name, value, quoted]]`, the first `tag` and `rport` as fields of their own; deserialize accepts exactly the values a parse can produce; `serde_str` adapters for the wire text |
-| dependencies | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri` |
+| dependencies | sip-uri 0.2 | sip-uri 0.3, re-exported as `sip_header::sip_uri`; see [sip-uri's migration guide](https://github.com/ticpu/sip-uri/blob/7d61ea16593cb7da6dfa4c73cf17287c169bc1d1/docs/migrating-from-0.2.md) for its own changes, such as `UrnUri::nid()`/`nss()` returning `Option` |
+
+### Changes that still compile
+
+These raise no compiler error against 0.3 code, but change behavior.
+
+| Area | 0.3 | 0.4 |
+|---|---|---|
+| validity check | a failed `Uri::parse` (sip-uri) or any sip-header `parse` rejects non-conformant input | `parse` accepts it leniently; `parse_strict` refuses it, or `parse_with_warnings` reports and forwards the breach |
+| forwarding received text | `to_string()` on a parsed value matches the input text | `to_string()` prints the canonical form (e.g. escape hex upper-cased, params re-quoted per the type's rule); forwarding the text as received needs the value's span, not `to_string()` |
+
+Prefer `from_rows` over joining header rows with `,` before parsing, and `SipMessageHeaders::new(msg)` over a store built from repeated `extract_from` calls.
 
 ## Modules
 
