@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
     ContactList, DialogFraming, Field, HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry,
-    ListParse, ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding,
+    ListParse, ParamsMut, ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding,
     SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
     SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields,
     SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList,
@@ -305,6 +305,205 @@ proptest! {
             };
             prop_assert_eq!(back, Ok(t), "{:?}", wire);
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ParamOp {
+    Push(String, Option<String>),
+    PushQuoted(String, String),
+    Set(String, Option<String>),
+    SetQuoted(String, String),
+    Remove(String),
+    Retain(Vec<bool>),
+}
+
+/// Arbitrary names, beside the ones some owner reserves or gives a meaning.
+fn param_name() -> impl Strategy<Value = String> {
+    const NAMED: &[&str] = &[
+        "tag",
+        "TAG",
+        "index",
+        "rport",
+        "to-tag",
+        "From-Tag",
+        "local-tag",
+        "remote-tag",
+        "early-only",
+        "cause",
+        "text",
+        "q",
+        "realm",
+        "lr",
+    ];
+    prop_oneof![
+        2 => field(),
+        1 => prop::sample::select(NAMED).prop_map(str::to_string),
+    ]
+}
+
+fn param_value() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => field(),
+        1 => Just("0.5".to_string()),
+        1 => Just("1".to_string()),
+    ]
+}
+
+fn param_op() -> impl Strategy<Value = ParamOp> {
+    prop_oneof![
+        (param_name(), prop::option::of(param_value())).prop_map(|(n, v)| ParamOp::Push(n, v)),
+        (param_name(), param_value()).prop_map(|(n, v)| ParamOp::PushQuoted(n, v)),
+        (param_name(), prop::option::of(param_value())).prop_map(|(n, v)| ParamOp::Set(n, v)),
+        (param_name(), param_value()).prop_map(|(n, v)| ParamOp::SetQuoted(n, v)),
+        param_name().prop_map(ParamOp::Remove),
+        prop::collection::vec(any::<bool>(), 1..4).prop_map(ParamOp::Retain),
+    ]
+}
+
+fn apply(op: &ParamOp, mut g: ParamsMut<'_>) -> Result<(), ParseError> {
+    match op {
+        ParamOp::Push(n, v) => g.push(n, v.as_deref()),
+        ParamOp::PushQuoted(n, v) => g.push_quoted(n, v),
+        ParamOp::Set(n, v) => g.set(n, v.as_deref()),
+        ParamOp::SetQuoted(n, v) => g.set_quoted(n, v),
+        ParamOp::Remove(n) => g
+            .remove(n)
+            .map(drop),
+        ParamOp::Retain(keep) => {
+            let mut i = 0;
+            g.retain(|_, _| {
+                i += 1;
+                keep[(i - 1) % keep.len()]
+            });
+            Ok(())
+        }
+    }
+}
+
+/// Each of `ops` either fails and leaves `value` as it was, or leaves a
+/// value that, as `wrap` frames it, reads back strictly.
+fn guard_ops_read_back<T, W>(
+    mut value: T,
+    ops: &[ParamOp],
+    guard: for<'a> fn(&'a mut T) -> ParamsMut<'a>,
+    wrap: impl Fn(T) -> W,
+) -> Result<(), TestCaseError>
+where
+    T: Clone + PartialEq + std::fmt::Debug + std::fmt::Display,
+    W: HeaderParse + std::fmt::Display + std::fmt::Debug + PartialEq + Clone + Serde,
+{
+    strict_round_trip(wrap(value.clone()))?;
+    for op in ops {
+        let before = value.clone();
+        if apply(op, guard(&mut value)).is_err() {
+            prop_assert_eq!(&value, &before, "{:?}", op);
+            prop_assert_eq!(value.to_string(), before.to_string(), "{:?}", op);
+        } else {
+            strict_round_trip(wrap(value.clone()))?;
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn guard_ops_leave_a_value_that_reads_back(
+        uri in uri(),
+        ops in prop::collection::vec(param_op(), 1..6),
+    ) {
+        let addr = SipHeaderAddr::new(uri.clone()).and_then(|a| a.with_tag("abc")).unwrap();
+        guard_ops_read_back(addr.clone(), &ops, SipHeaderAddr::params_mut, |a| a)?;
+        guard_ops_read_back(
+            HistoryInfoEntry::new(addr, "1.1").unwrap(),
+            &ops,
+            HistoryInfoEntry::params_mut,
+            |e| HistoryInfo::new(vec![e]).unwrap(),
+        )?;
+        guard_ops_read_back(
+            SipViaEntry::new("SIP", "2.0", "UDP", Host::IPv4([198, 51, 100, 1].into()))
+                .unwrap()
+                .with_rport(None),
+            &ops,
+            SipViaEntry::params_mut,
+            |v| SipVia::new(vec![v]).unwrap(),
+        )?;
+        guard_ops_read_back(
+            SipAuthValue::new("Digest").and_then(|a| a.with_param("realm", "example.com")).unwrap(),
+            &ops,
+            SipAuthValue::params_mut,
+            |a| a,
+        )?;
+        guard_ops_read_back(
+            SipAuthValue::from_token68("Bearer", "abc.def").unwrap(),
+            &ops,
+            SipAuthValue::params_mut,
+            |a| a,
+        )?;
+        guard_ops_read_back(
+            SipReplaces::new("a@example.com", "t", "f").unwrap().with_early_only(true),
+            &ops,
+            SipReplaces::params_mut,
+            |r| r,
+        )?;
+        guard_ops_read_back(
+            SipTargetDialog::new("a@example.com", "l", "r").unwrap(),
+            &ops,
+            SipTargetDialog::params_mut,
+            |t| t,
+        )?;
+        guard_ops_read_back(
+            SipJoin::new("a@example.com", "t", "f").unwrap(),
+            &ops,
+            SipJoin::params_mut,
+            |j| j,
+        )?;
+        guard_ops_read_back(
+            SipReason::new("Q.850")
+                .unwrap()
+                .with_cause(SipReasonCause::new("16").unwrap()),
+            &ops,
+            SipReason::params_mut,
+            |r| r,
+        )?;
+        guard_ops_read_back(
+            SipAcceptEntry::new("application", "sdp").unwrap(),
+            &ops,
+            SipAcceptEntry::params_mut,
+            |e| SipAccept::new(vec![e]),
+        )?;
+        guard_ops_read_back(
+            SipAcceptEncodingEntry::new("gzip").unwrap(),
+            &ops,
+            SipAcceptEncodingEntry::params_mut,
+            |e| SipAcceptEncoding::new(vec![e]),
+        )?;
+        guard_ops_read_back(
+            SipAcceptLanguageEntry::new("fr-ca").unwrap(),
+            &ops,
+            SipAcceptLanguageEntry::params_mut,
+            |e| SipAcceptLanguage::new(vec![e]),
+        )?;
+        guard_ops_read_back(
+            SipSecurityMechanism::new("digest").unwrap(),
+            &ops,
+            SipSecurityMechanism::params_mut,
+            |m| SipSecurity::new(vec![m]).unwrap(),
+        )?;
+        guard_ops_read_back(
+            UriInfoEntry::new(uri.clone()).unwrap(),
+            &ops,
+            UriInfoEntry::params_mut,
+            |e| UriInfo::new(vec![e]).unwrap(),
+        )?;
+        guard_ops_read_back(
+            SipGeolocationEntry::new(uri).unwrap(),
+            &ops,
+            SipGeolocationEntry::params_mut,
+            |e| SipGeolocation::new(vec![e]).unwrap(),
+        )?;
     }
 }
 

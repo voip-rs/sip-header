@@ -3,8 +3,9 @@ use std::hash::{Hash, Hasher};
 
 use sip_header::sip_uri::{Uri, UriParse};
 use sip_header::{
-    FaultCode, Field, HeaderParams, HeaderParse, HistoryInfoEntry, ParseError, SipAuthValue,
-    SipHeaderAddr, SipReplaces, SipTargetDialog, SipViaEntry, WarningCode,
+    FaultCode, Field, HeaderParams, HeaderParse, HistoryInfoEntry, ParamsMut, ParseError,
+    SipAuthValue, SipHeaderAddr, SipJoin, SipReason, SipReplaces, SipTargetDialog, SipVia,
+    SipViaEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -303,6 +304,227 @@ fn auth_params_separate_with_comma() {
     );
     assert!(SipAuthValue::new("Digest")
         .and_then(|a| a.with_param("a b", "x"))
+        .is_err());
+}
+
+fn is_fault<T: std::fmt::Debug>(r: Result<T, ParseError>, code: FaultCode) -> bool {
+    matches!(r, Err(ParseError::Malformed(f)) if f.code == code)
+}
+
+/// `retain` offers only the keys its guard may drop, and every key it
+/// keeps is refused by every other operation, leaving `value` unchanged.
+fn reserved_keys_survive_retain_and_refuse_the_rest<T>(
+    mut value: T,
+    guard: for<'a> fn(&'a mut T) -> ParamsMut<'a>,
+) where
+    T: Clone + PartialEq + std::fmt::Debug,
+{
+    let mut offered = Vec::new();
+    guard(&mut value).retain(|name, _| {
+        offered.push(name.to_owned());
+        false
+    });
+    let kept: Vec<String> = guard(&mut value)
+        .iter()
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    assert!(!offered.is_empty() && !kept.is_empty(), "{value:?}");
+    for name in &kept {
+        assert!(!offered.contains(name), "{name}");
+        let before = value.clone();
+        let mut g = guard(&mut value);
+        assert!(is_misplaced_param(g.remove(name)), "{name}");
+        assert!(is_misplaced_param(g.push(name, Some("x"))), "{name}");
+        assert!(is_misplaced_param(g.push_quoted(name, "x")), "{name}");
+        assert!(is_misplaced_param(g.set(name, Some("x"))), "{name}");
+        assert!(is_misplaced_param(g.set_quoted(name, "x")), "{name}");
+        drop(g);
+        assert_eq!(value, before);
+    }
+    for name in &offered {
+        assert_eq!(guard(&mut value).remove(name), Ok(0), "{name}");
+    }
+}
+
+#[test]
+fn guard_retain_never_offers_a_reserved_key() {
+    reserved_keys_survive_retain_and_refuse_the_rest(
+        SipHeaderAddr::parse("<sip:a@example.com>;tag=1;lr;x=2").unwrap(),
+        SipHeaderAddr::params_mut,
+    );
+    reserved_keys_survive_retain_and_refuse_the_rest(
+        SipVia::parse("SIP/2.0/UDP 198.51.100.1;rport;branch=z9hG4bK1")
+            .unwrap()
+            .into_entries()
+            .remove(0),
+        SipViaEntry::params_mut,
+    );
+    reserved_keys_survive_retain_and_refuse_the_rest(
+        SipReason::parse("Q.850;cause=16;location=LN;cause=17").unwrap(),
+        SipReason::params_mut,
+    );
+    reserved_keys_survive_retain_and_refuse_the_rest(
+        HistoryInfoEntry::new(
+            SipHeaderAddr::parse("<sip:a@example.com>;tag=1;x").unwrap(),
+            "1.1",
+        )
+        .unwrap(),
+        HistoryInfoEntry::params_mut,
+    );
+}
+
+#[test]
+fn guard_refuses_dialog_tags() {
+    let mut r = SipReplaces::new("a@example.com", "t", "f").unwrap();
+    for key in ["to-tag", "From-Tag", "early-only"] {
+        assert!(is_misplaced_param(
+            r.params_mut()
+                .remove(key)
+        ));
+        assert!(is_misplaced_param(
+            r.params_mut()
+                .push(key, None)
+        ));
+    }
+    let mut t = SipTargetDialog::new("a@example.com", "l", "r").unwrap();
+    t.params_mut()
+        .push("early-only", None)
+        .unwrap();
+    assert!(is_misplaced_param(
+        t.params_mut()
+            .remove("local-tag")
+    ));
+    assert_eq!(
+        t.to_string(),
+        "a@example.com;local-tag=l;remote-tag=r;early-only"
+    );
+    let mut j = SipJoin::new("a@example.com", "t", "f").unwrap();
+    assert!(is_misplaced_param(
+        j.params_mut()
+            .set("to-tag", Some("x"))
+    ));
+}
+
+#[test]
+fn guard_push_set_remove_follow_wire_order() {
+    let mut a = addr();
+    let mut g = a.params_mut();
+    g.push("B", Some("1"))
+        .unwrap();
+    g.push_quoted("a", "x")
+        .unwrap();
+    assert!(is_fault(g.push("b", None), FaultCode::Duplicate));
+    g.set("b", Some("2"))
+        .unwrap();
+    g.set_quoted("c", "a b")
+        .unwrap();
+    assert!(g
+        .push("a b", None)
+        .is_err());
+    assert!(g
+        .set("d", Some("x\r\ny"))
+        .is_err());
+    assert_eq!(g.get("A"), Some(Some("x")));
+    assert!(g.is_quoted("a"));
+    assert_eq!(g.remove("C"), Ok(1));
+    assert_eq!(g.remove("c"), Ok(0));
+    drop(g);
+    assert_eq!(a.to_string(), r#"<sip:alice@example.com>;b=2;a="x""#);
+}
+
+#[test]
+fn guard_clears_spans_only_when_it_changes_the_value() {
+    let mut a = SipHeaderAddr::parse("<sip:a@example.com>;x=1").unwrap();
+    assert!(a
+        .span()
+        .is_some());
+    assert_eq!(
+        a.params_mut()
+            .get("x"),
+        Some(Some("1"))
+    );
+    assert!(a
+        .params_mut()
+        .push("x", None)
+        .is_err());
+    assert_eq!(
+        a.params_mut()
+            .remove("absent"),
+        Ok(0)
+    );
+    a.params_mut()
+        .retain(|_, _| true);
+    assert!(a
+        .span()
+        .is_some());
+    assert!(a
+        .uri_span()
+        .is_some());
+    a.params_mut()
+        .retain(|_, _| false);
+    assert_eq!(a.span(), None);
+    assert_eq!(a.uri_span(), None);
+}
+
+#[test]
+fn auth_guard_refuses_flags_quotes_and_drops_token68() {
+    let mut auth = SipAuthValue::from_token68("Bearer", "abc.def").unwrap();
+    assert!(auth
+        .params_mut()
+        .push("stale", None)
+        .is_err());
+    assert!(auth
+        .params_mut()
+        .set("stale", None)
+        .is_err());
+    assert_eq!(auth.token68(), Some("abc.def"));
+    let mut g = auth.params_mut();
+    g.set("realm", Some("example.com"))
+        .unwrap();
+    g.push("algorithm", Some("MD5"))
+        .unwrap();
+    assert!(g.is_quoted("realm"));
+    assert!(!g.is_quoted("algorithm"));
+    drop(g);
+    assert_eq!(auth.token68(), None);
+    assert_eq!(
+        auth.to_string(),
+        r#"Bearer realm="example.com", algorithm=MD5"#
+    );
+    assert_eq!(
+        auth.params_mut()
+            .remove("REALM"),
+        Ok(1)
+    );
+    assert_eq!(auth.to_string(), "Bearer algorithm=MD5");
+}
+
+#[test]
+fn standalone_params_build_and_mutate() {
+    let mut p = HeaderParams::new()
+        .with("Lr", None)
+        .and_then(|p| p.with_quoted("n", "a b"))
+        .unwrap();
+    assert_eq!(p.to_string(), r#";lr;n="a b""#);
+    assert!(is_fault(p.push("LR", None), FaultCode::Duplicate));
+    assert!(p
+        .push("a b", None)
+        .is_err());
+    assert!(p
+        .push("a", Some("x\ny"))
+        .is_err());
+    p.set("LR", Some("1"))
+        .unwrap();
+    p.set_quoted("q", "t")
+        .unwrap();
+    p.push_quoted("r", "u")
+        .unwrap();
+    assert_eq!(p.to_string(), r#";lr=1;n="a b";q="t";r="u""#);
+    assert_eq!(p.remove("N"), 1);
+    p.retain(|name, _| name != "lr");
+    assert_eq!(p.to_string(), r#";q="t";r="u""#);
+    assert!(HeaderParams::new()
+        .with("x", Some("\0"))
         .is_err());
 }
 
