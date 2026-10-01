@@ -155,3 +155,20 @@ fn dialog_adapters_write_header_framing() -> R {
     assert_eq!(back.replaces, framed.with_framing(DialogFraming::Header));
     Ok(())
 }
+
+#[test]
+fn a_param_name_the_uri_policy_masks_is_masked_in_the_header() -> R {
+    let addr =
+        SipHeaderAddr::parse("<sip:alice@example.com;ParticipantId=1>;participantid=2;other=3")?;
+    let how = HeaderRedaction::new(
+        Redaction::default()
+            .user(UserMask::Visible)
+            .params(["PARTICIPANTID"]),
+    );
+    assert_eq!(
+        addr.redacted(&how)
+            .to_string(),
+        "<sip:alice@example.com;ParticipantId=***>;participantid=***;other=3"
+    );
+    Ok(())
+}
