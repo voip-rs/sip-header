@@ -187,9 +187,11 @@ mod tests {
 
     use super::Span;
     use crate::scrub::scrub;
+    use crate::token_list::TokenList;
     use crate::{
-        ContactList, HeaderParse, HistoryInfo, ListParse, SipGeolocation, SipHeaderAddr,
-        SipHeaderAddrList, UriInfo,
+        split_comma_entries, ContactList, HeaderParse, HistoryInfo, ListParse, ParseError, Parsed,
+        SipGeolocation, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipWarning, UriInfo,
+        WarningCode,
     };
 
     const BASES: &[&str] = &[
@@ -325,6 +327,85 @@ mod tests {
         );
     }
 
+    type Framing<L> = Option<(L, Vec<(WarningCode, Option<usize>)>)>;
+
+    /// The list and its warnings other than the dropped control characters.
+    fn framing<L>(parsed: Result<Parsed<L>, ParseError>) -> Framing<L> {
+        parsed
+            .ok()
+            .map(|p| {
+                let codes = p
+                    .warnings
+                    .iter()
+                    .filter(|w| w.code != WarningCode::ControlChar)
+                    .map(|w| (w.code, w.entry))
+                    .collect();
+                (p.value, codes)
+            })
+    }
+
+    fn token_framing(row: &str) -> Framing<String> {
+        framing(TokenList::from_rows(SipHeader::Require, vec![row]))
+            .map(|(l, codes)| (l.to_string(), codes))
+    }
+
+    #[test]
+    fn a_dropped_control_character_never_changes_list_framing() {
+        let bases = BASES
+            .iter()
+            .copied()
+            .chain([
+                "<sip:a@example.com>;tag=1,",
+                r#"399 example.com "a, b", 399 example.org "c""#,
+                r#"a;x="1,2", b"#,
+            ]);
+        for base in bases {
+            let bounds = (0..=base.len()).filter(|&i| base.is_char_boundary(i));
+            for (at, control) in bounds.flat_map(|i| ["\0", "\r", "\n", "\\\0"].map(|c| (i, c))) {
+                let mut row = base.to_string();
+                row.insert_str(at, control);
+                let clean = scrub(&row)
+                    .text
+                    .into_owned();
+                assert_eq!(
+                    framing(SipHeaderAddrList::parse_with_warnings(&row)),
+                    framing(SipHeaderAddrList::parse_with_warnings(&clean)),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    framing(ContactList::parse_with_warnings(&row)),
+                    framing(ContactList::parse_with_warnings(&clean)),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    framing(HistoryInfo::parse_with_warnings(&row)),
+                    framing(HistoryInfo::parse_with_warnings(&clean)),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    framing(UriInfo::parse_with_warnings(&row)),
+                    framing(UriInfo::parse_with_warnings(&clean)),
+                    "{row:?}"
+                );
+                assert_eq!(
+                    framing(SipWarning::parse_with_warnings(&row)),
+                    framing(SipWarning::parse_with_warnings(&clean)),
+                    "{row:?}"
+                );
+                assert_eq!(token_framing(&row), token_framing(&clean), "{row:?}");
+                let entries: Vec<String> = split_comma_entries(&row)
+                    .into_iter()
+                    .map(|e| {
+                        scrub(e)
+                            .text
+                            .into_owned()
+                    })
+                    .collect();
+                assert_eq!(entries, split_comma_entries(&clean), "{row:?}");
+            }
+        }
+    }
+
     fn one<E: Clone>(entries: &[E]) -> Option<E> {
         match entries {
             [one] => Some(one.clone()),
@@ -332,40 +413,96 @@ mod tests {
         }
     }
 
+    /// Every span of every list `a` and `b` parse to, as rows, reads back.
+    fn spans_read_back(a: &str, b: &str) -> Result<(), TestCaseError> {
+        let rows = [a, b];
+        if let Ok(l) = UriInfo::from_rows(rows) {
+            check(
+                &rows,
+                l.entries(),
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| {
+                    UriInfo::parse(t)
+                        .ok()
+                        .and_then(|l| one(l.entries()))
+                },
+            )?;
+        }
+        if let Ok(l) = SipGeolocation::from_rows(rows) {
+            check(
+                &rows,
+                l.entries(),
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| {
+                    SipGeolocation::parse(t)
+                        .ok()
+                        .and_then(|l| one(l.entries()))
+                },
+            )?;
+        }
+        if let Ok(l) = HistoryInfo::from_rows(rows) {
+            check(
+                &rows,
+                l.entries(),
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| {
+                    HistoryInfo::parse(t)
+                        .ok()
+                        .and_then(|l| one(l.entries()))
+                },
+            )?;
+        }
+        if let Ok(l) = SipHeaderAddrList::from_rows(rows) {
+            check(
+                &rows,
+                l.entries(),
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| {
+                    SipHeaderAddrList::parse(t)
+                        .ok()
+                        .and_then(|l| one(l.entries()))
+                },
+            )?;
+        }
+        if let Ok(l) = ContactList::from_rows(rows) {
+            check(
+                &rows,
+                l.addrs(),
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| {
+                    ContactList::parse(t)
+                        .ok()
+                        .and_then(|l| one(l.addrs()))
+                },
+            )?;
+        }
+        if let Ok(addr) = SipHeaderAddr::parse(a) {
+            check(
+                &rows[..1],
+                &[addr],
+                |e| (e.span(), e.uri_span()),
+                |e| e.uri(),
+                |t| SipHeaderAddr::parse(t).ok(),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_control_before_a_display_name_keeps_its_spans() {
+        let base = BASES[0];
+        spans_read_back(&format!("\0{}", base.replacen("Alice", "Ali<ce", 1)), base).unwrap();
+    }
+
     proptest! {
         #[test]
         fn span_text_reads_back_as_its_value(a in row(), b in row()) {
-            let rows = [a.as_str(), b.as_str()];
-            if let Ok(l) = UriInfo::from_rows(rows) {
-                check(&rows, l.entries(), |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    UriInfo::parse(t).ok().and_then(|l| one(l.entries()))
-                })?;
-            }
-            if let Ok(l) = SipGeolocation::from_rows(rows) {
-                check(&rows, l.entries(), |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    SipGeolocation::parse(t).ok().and_then(|l| one(l.entries()))
-                })?;
-            }
-            if let Ok(l) = HistoryInfo::from_rows(rows) {
-                check(&rows, l.entries(), |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    HistoryInfo::parse(t).ok().and_then(|l| one(l.entries()))
-                })?;
-            }
-            if let Ok(l) = SipHeaderAddrList::from_rows(rows) {
-                check(&rows, l.entries(), |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    SipHeaderAddrList::parse(t).ok().and_then(|l| one(l.entries()))
-                })?;
-            }
-            if let Ok(l) = ContactList::from_rows(rows) {
-                check(&rows, l.addrs(), |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    ContactList::parse(t).ok().and_then(|l| one(l.addrs()))
-                })?;
-            }
-            if let Ok(addr) = SipHeaderAddr::parse(&a) {
-                check(&rows[..1], &[addr], |e| (e.span(), e.uri_span()), |e| e.uri(), |t| {
-                    SipHeaderAddr::parse(t).ok()
-                })?;
-            }
+            spans_read_back(&a, &b)?;
         }
     }
 }
