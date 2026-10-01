@@ -7,14 +7,14 @@ use std::ops::Range;
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, Field, HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry,
-    ListParse, ParamsMut, ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding,
-    SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
-    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields,
-    SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList,
-    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
-    SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse, UriInfo,
-    UriInfoEntry, WarningCode,
+    ContactList, DialogFraming, Field, HeaderEquivalence, HeaderParse, HeaderRedaction,
+    HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Redact,
+    SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
+    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeader,
+    SipHeaderAddr, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason,
+    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+    SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
+    UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -637,6 +637,136 @@ proptest! {
         let input = inject(base.1, &snippets);
         check_kind(base.0, &input)?;
     }
+
+    #[test]
+    fn equal_values_are_equivalent(
+        base in prop::sample::select(CORPUS),
+        snippets in prop::collection::vec((0.0..=1.0f64, injected()), 0..4),
+    ) {
+        check_equivalence(base.0, &inject(base.1, &snippets))?;
+    }
+
+    #[test]
+    fn case_and_order_permutations_are_equivalent(
+        (params, shuffled) in ext_params()
+            .prop_flat_map(|p| (Just(p.clone()), Just(p).prop_shuffle())),
+        mask in any::<u64>(),
+    ) {
+        let tail = |params: &[(String, String)], flip: bool| {
+            params
+                .iter()
+                .map(|(k, v)| format!(";{k}={v}"))
+                .map(|p| if flip { flip_case(&p, mask) } else { p })
+                .collect::<String>()
+        };
+        let (a, b) = (tail(&params, false), tail(&shuffled, true));
+        permuted::<SipViaEntry>(
+            &format!("SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1{a}"),
+            &flip_case(&format!("SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1{b}"), mask),
+            |s| SipVia::parse(s).map(|v| v.entries()[0].clone()),
+        )?;
+        permuted::<SipReason>(
+            &format!("Q.850;cause=16{a}"),
+            &flip_case(&format!("Q.850;cause=16{b}"), mask),
+            SipReason::parse,
+        )?;
+        permuted::<SipHeaderAddr>(
+            &format!("<sip:alice@example.com>;tag=t1{a}"),
+            &format!("<sip:alice@example.com>{}", flip_case(&format!(";tag=t1{b}"), mask)),
+            SipHeaderAddr::parse,
+        )?;
+        permuted::<SipReplaces>(
+            &format!("a@example.com;to-tag=t;from-tag=f{a}"),
+            &format!("a@example.com{}", flip_case(&format!(";to-tag=t;from-tag=f{b}"), mask)),
+            SipReplaces::parse,
+        )?;
+        let auth = |params: &[(String, String)], flip: bool| {
+            let scheme = if flip { flip_case("Digest", mask) } else { "Digest".into() };
+            let params: Vec<String> = params
+                .iter()
+                .map(|(k, v)| format!("{}={v}", if flip { flip_case(k, mask) } else { k.clone() }))
+                .collect();
+            format!("{scheme} {}", params.join(", "))
+        };
+        permuted::<SipAuthValue>(&auth(&params, false), &auth(&shuffled, true), SipAuthValue::parse)?;
+    }
+}
+
+/// Header parameters outside every reserved name, with distinct names.
+fn ext_params() -> impl Strategy<Value = Vec<(String, String)>> {
+    prop::collection::btree_map("x[a-z]{0,3}", "[a-zA-Z0-9]{1,4}", 0..4).prop_map(|m| {
+        m.into_iter()
+            .collect()
+    })
+}
+
+/// `s` with the ASCII case of each char flipped where `mask` has a bit set.
+fn flip_case(s: &str, mask: u64) -> String {
+    s.chars()
+        .enumerate()
+        .map(|(i, c)| match mask >> (i % 64) & 1 {
+            1 if c.is_ascii_lowercase() => c.to_ascii_uppercase(),
+            1 => c.to_ascii_lowercase(),
+            _ => c,
+        })
+        .collect()
+}
+
+/// `a` and `b` parse to equivalent values, equal exactly when their wire
+/// forms are.
+fn permuted<T>(
+    a: &str,
+    b: &str,
+    parse: impl Fn(&str) -> Result<T, ParseError>,
+) -> Result<(), TestCaseError>
+where
+    T: HeaderEquivalence + std::fmt::Display + std::fmt::Debug + PartialEq,
+{
+    let (a, b) = (parse(a), parse(b));
+    prop_assert!(a.is_ok() && b.is_ok(), "{:?} {:?}", a, b);
+    let (a, b) = (a.unwrap(), b.unwrap());
+    prop_assert!(a.equivalent(&b) && b.equivalent(&a), "{:?} {:?}", a, b);
+    prop_assert_eq!(a == b, a.to_string() == b.to_string(), "{:?} {:?}", a, b);
+    Ok(())
+}
+
+/// A lenient parse of `input` equals its reparse, and both are equivalent
+/// to themselves and each other.
+fn equal_is_equivalent<T>(
+    input: &str,
+    parse: impl Fn(&str) -> Result<T, ParseError>,
+) -> Result<(), TestCaseError>
+where
+    T: HeaderEquivalence + std::fmt::Display + std::fmt::Debug + PartialEq,
+{
+    let Ok(a) = parse(input) else {
+        return Ok(());
+    };
+    let b = parse(&a.to_string()).map_err(|e| TestCaseError::fail(e.to_string()))?;
+    prop_assert_eq!(&a, &b, "{:?}", input);
+    prop_assert!(
+        a.equivalent(&a) && a.equivalent(&b) && b.equivalent(&a),
+        "{:?}",
+        input
+    );
+    Ok(())
+}
+
+fn check_equivalence(kind: &str, input: &str) -> Result<(), TestCaseError> {
+    match kind {
+        "addr" => equal_is_equivalent(input, SipHeaderAddr::parse),
+        "via" => equal_is_equivalent(input, SipVia::parse),
+        "auth" => equal_is_equivalent(input, SipAuthValue::parse),
+        "replaces" => equal_is_equivalent(input, SipReplaces::parse),
+        "replaces-uri" => equal_is_equivalent(input, SipReplaces::parse_uri_header),
+        "target-dialog" => equal_is_equivalent(input, SipTargetDialog::parse),
+        "join" => equal_is_equivalent(input, SipJoin::parse),
+        "reason" => {
+            equal_is_equivalent(input, SipReason::parse)?;
+            equal_is_equivalent(input, SipReasonList::parse)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Parse `input` as the one row of `header`, handed in through a holder
@@ -1170,22 +1300,14 @@ fn redact_masks_credentials_and_follows_the_user_mask() {
 }
 
 #[test]
-fn auth_scheme_keeps_case_and_compares_without_it() {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let hash = |a: &SipAuthValue| {
-        let mut h = DefaultHasher::new();
-        a.hash(&mut h);
-        h.finish()
-    };
+fn auth_scheme_keeps_case_in_equality_not_in_equivalence() {
     let upper = SipAuthValue::parse(r#"DIGEST realm="a""#).unwrap();
     let lower = SipAuthValue::parse(r#"digest realm="a""#).unwrap();
     assert_eq!(upper.scheme(), "DIGEST");
     assert_eq!(upper.to_string(), r#"DIGEST realm="a""#);
-    assert_eq!(upper, lower);
-    assert_eq!(hash(&upper), hash(&lower));
-    assert_ne!(upper, SipAuthValue::parse(r#"Digest realm="b""#).unwrap());
+    assert_ne!(upper, lower);
+    assert!(upper.equivalent(&lower));
+    assert!(!upper.equivalent(&SipAuthValue::parse(r#"Digest realm="b""#).unwrap()));
     assert_ne!(
         SipAuthValue::parse("Bearer abc").unwrap(),
         SipAuthValue::parse("Bearer ABC").unwrap()

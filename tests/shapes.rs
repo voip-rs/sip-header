@@ -420,15 +420,17 @@ fn blank_entry_beside_real_ones_is_empty_entry() {
 
 mod equality_and_case {
     use std::collections::hash_map::DefaultHasher;
+    use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
 
     use sip_header::{
-        ContactList, Fault, HeaderParams, HeaderParse, HistoryInfo, HistoryInfoEntry, ParseError,
-        ParseWarning, Parsed, QValue, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
-        SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-        SipGeolocationEntry, SipHeaderAddr, SipJoin, SipReason, SipReasonCause, SipReplaces,
-        SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
-        SipWarningEntry, UriFault, UriInfo, UriInfoEntry,
+        ContactList, Fault, HeaderEquivalence, HeaderParams, HeaderParse, HistoryInfo,
+        HistoryInfoEntry, ParseError, ParseWarning, Parsed, QValue, SipAccept, SipAcceptEncoding,
+        SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
+        SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderLookup, SipJoin,
+        SipReason, SipReasonCause, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+        SipVia, SipViaEntry, SipWarning, SipWarningEntry, UriFault, UriHeaderParse, UriInfo,
+        UriInfoEntry,
     };
 
     type R = Result<(), ParseError>;
@@ -486,16 +488,152 @@ mod equality_and_case {
         assert_eq!(hash(&a), hash(&b));
     }
 
+    fn equivalent_only<T: HeaderParse + HeaderEquivalence + Eq + std::fmt::Debug>(
+        a: &str,
+        b: &str,
+    ) {
+        let (a, b) = (T::parse(a).unwrap(), T::parse(b).unwrap());
+        assert_ne!(a, b);
+        assert!(a.equivalent(&b), "{a:?} {b:?}");
+        assert!(b.equivalent(&a), "{b:?} {a:?}");
+    }
+
+    fn not_equivalent<T: HeaderParse + HeaderEquivalence + std::fmt::Debug>(a: &str, b: &str) {
+        let (a, b) = (T::parse(a).unwrap(), T::parse(b).unwrap());
+        assert!(!a.equivalent(&b), "{a:?} {b:?}");
+        assert!(!b.equivalent(&a), "{b:?} {a:?}");
+    }
+
+    #[test]
+    fn from_and_to_match_by_uri_and_shared_params() {
+        let addr = "<sip:alice@example.com>";
+        equivalent_only::<SipHeaderAddr>(
+            "Alice <sip:alice@EXAMPLE.com>;tag=AbC;x=1;y=2",
+            "<sip:alice@example.com>;y=2;tag=abc",
+        );
+        equivalent_only::<SipHeaderAddr>(&format!("{addr};x=A"), &format!("{addr};x=a"));
+        equivalent_only::<SipHeaderAddr>(&format!("{addr};x=a"), &format!(r#"{addr};x="a""#));
+        not_equivalent::<SipHeaderAddr>(&format!(r#"{addr};x="A""#), &format!("{addr};x=a"));
+        not_equivalent::<SipHeaderAddr>(&format!("{addr};tag=a"), addr);
+        not_equivalent::<SipHeaderAddr>(&format!("{addr};x"), &format!("{addr};x=1"));
+        not_equivalent::<SipHeaderAddr>("<sip:alice@example.com>", "<sip:bob@example.com>");
+        not_equivalent::<SipHeaderAddr>("<sip:Alice@example.com>", "<sip:alice@example.com>");
+    }
+
+    #[test]
+    fn via_needs_the_same_parameter_set() {
+        let via = "SIP/2.0/UDP 198.51.100.1";
+        equivalent_only::<SipVia>(
+            &format!("{via};branch=z9hG4bKa;received=198.51.100.2"),
+            &format!("{via};RECEIVED=198.51.100.2;branch=Z9HG4BKA"),
+        );
+        not_equivalent::<SipVia>(&format!("{via};branch=a"), &format!("{via};branch=a;rport"));
+        not_equivalent::<SipVia>(via, "SIP/2.0/UDP 198.51.100.1:5060");
+        not_equivalent::<SipVia>(&format!("{via}, {via}"), via);
+    }
+
+    #[test]
+    fn auth_values_ignore_quoting_but_not_case() {
+        equivalent_only::<SipAuthValue>(
+            r#"Digest realm="a", algorithm=MD5"#,
+            r#"digest ALGORITHM="MD5", Realm="a""#,
+        );
+        not_equivalent::<SipAuthValue>(r#"Digest realm="a""#, r#"Digest realm="A""#);
+        not_equivalent::<SipAuthValue>(r#"Digest realm="a""#, r#"Digest realm="a", qop=auth"#);
+        not_equivalent::<SipAuthValue>("Bearer abc", "Bearer ABC");
+    }
+
+    #[test]
+    fn reason_text_compares_exactly() {
+        equivalent_only::<SipReason>(
+            r#"Q.850;cause=16;text="x";a=B;c"#,
+            r#"q.850;C;text="x";A=b;cause=16"#,
+        );
+        not_equivalent::<SipReason>(r#"SIP;text="x""#, r#"SIP;text="X""#);
+        not_equivalent::<SipReason>("SIP;cause=16", "SIP;cause=016");
+        not_equivalent::<SipReason>("SIP;cause=16", "SIP;cause=16;a");
+    }
+
+    #[test]
+    fn dialog_ids_match_call_id_exactly_and_tags_as_tokens() -> R {
+        equivalent_only::<SipReplaces>(
+            "a@example.com;to-tag=T;from-tag=f;x=1;early-only",
+            "a@example.com;early-only;X=1;from-tag=F;to-tag=t",
+        );
+        equivalent_only::<SipJoin>(
+            "a@example.com;to-tag=T;from-tag=f",
+            "a@example.com;to-tag=t;from-tag=F",
+        );
+        equivalent_only::<SipTargetDialog>(
+            "a@example.com;local-tag=L;remote-tag=r",
+            "a@example.com;local-tag=l;remote-tag=R",
+        );
+        not_equivalent::<SipReplaces>(
+            "a@example.com;to-tag=t;from-tag=f",
+            "A@example.com;to-tag=t;from-tag=f",
+        );
+        not_equivalent::<SipReplaces>(
+            "a@example.com;to-tag=t;from-tag=f",
+            "a@example.com;to-tag=t;from-tag=f;early-only",
+        );
+        not_equivalent::<SipJoin>(
+            "a@example.com;to-tag=t;from-tag=f",
+            "a@example.com;to-tag=f;from-tag=t",
+        );
+        let header = SipReplaces::parse("a@example.com;to-tag=t;from-tag=f")?;
+        let encoded = SipReplaces::parse_uri_header("a%40example.com%3Bto-tag%3Dt%3Bfrom-tag%3Df")?;
+        assert_ne!(header, encoded);
+        assert!(header.equivalent(&encoded));
+        Ok(())
+    }
+
+    #[test]
+    fn token_lists_follow_their_header_case_rule_in_order() -> R {
+        let headers = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let upper = headers(&[("Supported", "Timer, 100rel"), ("Allow", "INVITE, ACK")]);
+        let lower = headers(&[("Supported", "timer, 100REL"), ("Allow", "invite, ack")]);
+        let swapped = headers(&[("Supported", "100rel, timer")]);
+        let (a, b) = (
+            upper
+                .supported()?
+                .unwrap(),
+            lower
+                .supported()?
+                .unwrap(),
+        );
+        assert_ne!(a, b);
+        assert!(a.equivalent(&b));
+        assert!(!a.equivalent(
+            &swapped
+                .supported()?
+                .unwrap()
+        ));
+        assert!(!upper
+            .allow()?
+            .unwrap()
+            .equivalent(
+                &lower
+                    .allow()?
+                    .unwrap()
+            ));
+        Ok(())
+    }
+
     #[test]
     fn equal_values_hash_equal() {
-        same::<SipAccept>("Text/Plain;a=1;b=2", "text/plain;b=2;a=1");
+        same::<SipAccept>("Text/Plain;A=1;b=2", "text/plain;a=1;b=2");
         same::<SipVia>(
             "SIP/2.0/UDP Example.COM;branch=x",
             "SIP/2.0/UDP example.com;branch=x",
         );
         same::<SipHeaderAddr>(
-            "<sip:a@example.com>;x=1;tag=t",
-            "<sip:a@example.com>;tag=t;x=1",
+            "<sip:a@example.com>;X=1;tag=t",
+            "<sip:a@example.com>;x=1;TAG=t",
         );
         same::<ContactList>("*", " * ");
         same::<SipReason>("SIP;text=\"a\";cause=1", "SIP;cause=1;text=\"a\"");
@@ -506,18 +644,17 @@ mod equality_and_case {
     }
 
     #[test]
-    fn protocol_tokens_compare_without_case_and_print_as_sent() -> R {
-        same::<SipVia>(
+    fn protocol_tokens_are_equivalent_without_case_and_equal_as_sent() -> R {
+        equivalent_only::<SipVia>(
             "SIP/2.0/UDP 198.51.100.1;branch=x",
             "sip/2.0/udp 198.51.100.1;branch=x",
         );
-        same::<SipVia>("SIP/2.0A/TLS 198.51.100.1", "SIP/2.0a/tls 198.51.100.1");
-        same::<SipReason>("Q.850;cause=16", "q.850;cause=16");
-        assert_ne!(
-            SipVia::parse("SIP/2.0/UDP 198.51.100.1")?,
-            SipVia::parse("SIP/2.0/TCP 198.51.100.1")?
-        );
-        assert_ne!(SipReason::parse("SIP")?, SipReason::parse("Q.850")?);
+        equivalent_only::<SipVia>("SIP/2.0A/TLS 198.51.100.1", "SIP/2.0a/tls 198.51.100.1");
+        equivalent_only::<SipReason>("Q.850;cause=16", "q.850;cause=16");
+        equivalent_only::<SipAuthValue>("Digest realm=\"a\"", "DIGEST realm=\"a\"");
+        assert!(!SipVia::parse("SIP/2.0/UDP 198.51.100.1")?
+            .equivalent(&SipVia::parse("SIP/2.0/TCP 198.51.100.1")?));
+        assert!(!SipReason::parse("SIP")?.equivalent(&SipReason::parse("Q.850")?));
         let via = SipVia::parse("sip/2.0/Udp 198.51.100.1")?;
         assert_eq!(via.to_string(), "sip/2.0/Udp 198.51.100.1");
         assert_eq!(

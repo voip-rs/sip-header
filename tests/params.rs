@@ -216,13 +216,14 @@ fn display_escapes_and_parses_back() {
 }
 
 #[test]
-fn equality_ignores_order_across_keys_only() {
+fn equality_follows_wire_order_and_quoting() {
     let ab = params_of(";a=1;b=2");
-    let ba = params_of(";b=2;a=1");
-    assert_eq!(ab, ba);
-    assert_eq!(hash_of(&ab), hash_of(&ba));
+    assert_ne!(ab, params_of(";b=2;a=1"));
+    assert_eq!(ab, params_of(";A=1;B=2"));
+    assert_eq!(hash_of(&ab), hash_of(&params_of(";A=1;B=2")));
+    assert_ne!(params_of(";a=x"), params_of(";a=X"));
     assert_ne!(params_of(";a=1;a=2"), params_of(";a=2;a=1"));
-    assert_eq!(params_of(";a=1;b=0;a=2"), params_of(";b=0;a=1;a=2"));
+    assert_ne!(params_of(";a=1;b=0;a=2"), params_of(";b=0;a=1;a=2"));
     assert_ne!(params_of(";a=x"), params_of(r#";a="x""#));
     assert_ne!(params_of(";a"), params_of(r#";a="""#));
     assert_ne!(params_of(";a=1"), params_of(";a=1;a=1"));
@@ -617,6 +618,8 @@ mod serde_shape {
             r#";tag="a b""#,
             r#";tag="a";tag=b"#,
             ";tag;tag=a",
+            ";x;tag=a",
+            ";tag=a;x;tag=b",
         ] {
             let a = SipHeaderAddr::parse(&format!("<sip:alice@example.com>{tail}")).unwrap();
             reads_back(&a);
@@ -629,8 +632,16 @@ mod serde_shape {
         let v = serde_json::to_value(&a).unwrap();
         assert_eq!(v["tag"], json!(null));
         assert_eq!(v["params"], json!([["tag", "a b", true]]));
+        let a = SipHeaderAddr::parse("<sip:alice@example.com>;x;tag=a").unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["tag"], json!(null));
+        assert_eq!(
+            v["params"],
+            json!([["x", null, false], ["tag", "a", false]])
+        );
 
         for input in [
+            "SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1;rport",
             "SIP/2.0/UDP 198.51.100.1;rport;rport=5060",
             "SIP/2.0/UDP 198.51.100.1;rport=05060",
             r#"SIP/2.0/UDP 198.51.100.1;rport="5060""#,
