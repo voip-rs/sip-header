@@ -21,7 +21,7 @@ fn named_imports_win_over_the_sip_uri_glob() -> Result<(), ParseError> {
         ))
     })?;
     assert_eq!(
-        uri.redacted(Redaction::default())
+        uri.redacted(&Redaction::default())
             .to_string(),
         "sip:***@example.com"
     );
@@ -47,7 +47,7 @@ fn the_prelude_brings_every_extension_trait() -> Result<(), ParseError> {
     );
     let list = SipHeaderAddrList::parse("<sip:+15551234567@example.com>")?;
     assert_eq!(
-        list.redacted(Redaction::default())
+        list.redacted(&sip_header::HeaderRedaction::default())
             .to_string(),
         "<sip:***@example.com>"
     );

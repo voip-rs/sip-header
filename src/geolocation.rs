@@ -125,7 +125,7 @@ impl fmt::Display for SipGeolocationEntry {
 }
 
 impl SipGeolocationEntry {
-    fn write_redacted(&self, f: &mut fmt::Formatter<'_>, how: HeaderRedaction<'_>) -> fmt::Result {
+    fn write_redacted(&self, f: &mut fmt::Formatter<'_>, how: &HeaderRedaction) -> fmt::Result {
         f.write_char('<')?;
         if how.masks_location() {
             if let Some(scheme) = self
@@ -155,12 +155,12 @@ impl SipGeolocationEntry {
 impl Redact for SipGeolocation {
     /// Render for logs: each reference as its scheme and `***` unless `how`
     /// shows locations, and then through sip-uri's redaction.
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
-        RedactedGeolocation(self, how.into())
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedGeolocation(self, how)
     }
 }
 
-struct RedactedGeolocation<'a>(&'a SipGeolocation, HeaderRedaction<'a>);
+struct RedactedGeolocation<'a>(&'a SipGeolocation, &'a HeaderRedaction);
 
 impl fmt::Display for RedactedGeolocation<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

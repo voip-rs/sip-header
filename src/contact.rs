@@ -105,12 +105,12 @@ impl fmt::Display for ContactList {
 impl Redact for ContactList {
     /// Render for logs: `*`, or every address as
     /// [`SipHeaderAddr`]'s rendering writes it.
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
-        RedactedContacts(self, how.into())
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedContacts(self, how)
     }
 }
 
-struct RedactedContacts<'a>(&'a ContactList, HeaderRedaction<'a>);
+struct RedactedContacts<'a>(&'a ContactList, &'a HeaderRedaction);
 
 impl fmt::Display for RedactedContacts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

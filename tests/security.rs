@@ -7,13 +7,14 @@ use std::ops::Range;
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, Field, HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse,
-    ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
-    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
-    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields, SipHeaderLookup,
-    SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
-    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
-    TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
+    ContactList, DialogFraming, Field, HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry,
+    ListParse, ParseError, ParseWarning, Redact, SipAccept, SipAcceptEncoding,
+    SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
+    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderFields,
+    SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList,
+    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
+    SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse, UriInfo,
+    UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -949,19 +950,21 @@ fn redact_masks_credentials_and_follows_the_user_mask() {
     ))
     .unwrap();
     assert_eq!(
-        auth.redacted(Redaction::default())
+        auth.redacted(&HeaderRedaction::default())
             .to_string(),
         r#"Digest username="***", realm="example.com", uri="sip:***@example.com", response="***", algorithm=MD5"#
     );
     assert_eq!(
-        auth.redacted(Redaction::default().user(UserMask::Visible))
-            .to_string(),
+        auth.redacted(&HeaderRedaction::new(
+            Redaction::default().user(UserMask::Visible)
+        ))
+        .to_string(),
         r#"Digest username="alice", realm="example.com", uri="sip:+15551234567@example.com", response="***", algorithm=MD5"#
     );
     let bearer = SipAuthValue::parse(&format!("Bearer {}", SECRETS[3])).unwrap();
     assert_eq!(
         bearer
-            .redacted(Redaction::default())
+            .redacted(&HeaderRedaction::default())
             .to_string(),
         "Bearer ***"
     );

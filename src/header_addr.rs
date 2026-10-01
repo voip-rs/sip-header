@@ -404,8 +404,7 @@ impl AddrParts for SipHeaderAddr {
 }
 
 impl Redact for SipHeaderAddr {
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
-        let how = how.into();
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
         let shows_user = how
             .uri()
             .user_mask()
@@ -427,8 +426,8 @@ impl Redact for SipHeaderAddr {
 }
 
 impl Redact for SipHeaderAddrList {
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a {
-        RedactedList(self.entries(), how.into())
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedList(self.entries(), how)
     }
 }
 
@@ -1566,20 +1565,21 @@ mod tests {
     fn redacted_masks_display_name_with_user() {
         use sip_uri::{Redaction, UserMask};
 
+        let user = |mask| HeaderRedaction::new(Redaction::default().user(mask));
         let addr = SipHeaderAddr::parse(r#""Alice Smith" <sip:+15551234567@example.com>;tag=abc"#)
             .unwrap();
         assert_eq!(
-            addr.redacted(Redaction::default())
+            addr.redacted(&HeaderRedaction::default())
                 .to_string(),
             "*** <sip:***@example.com>;tag=abc"
         );
         assert_eq!(
-            addr.redacted(Redaction::default().user(UserMask::KeepLast(4)))
+            addr.redacted(&user(UserMask::KeepLast(4)))
                 .to_string(),
             "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
         );
         assert_eq!(
-            addr.redacted(Redaction::default().user(UserMask::Visible))
+            addr.redacted(&user(UserMask::Visible))
                 .to_string(),
             addr.to_string()
         );
@@ -1587,18 +1587,16 @@ mod tests {
 
     #[test]
     fn redacted_without_display_name_and_tel() {
-        use sip_uri::Redaction;
-
         let addr =
             SipHeaderAddr::parse("<sip:alice@example.com;transport=tcp>;expires=60").unwrap();
         assert_eq!(
-            addr.redacted(Redaction::default())
+            addr.redacted(&HeaderRedaction::default())
                 .to_string(),
             "<sip:***@example.com;transport=tcp>;expires=60"
         );
         let tel = SipHeaderAddr::parse("<tel:+15551234567>;tag=t").unwrap();
         assert_eq!(
-            tel.redacted(Redaction::default())
+            tel.redacted(&HeaderRedaction::default())
                 .to_string(),
             "<tel:***>;tag=t"
         );

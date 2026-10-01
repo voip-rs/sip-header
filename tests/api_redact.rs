@@ -14,18 +14,20 @@ const CONTACT: &str = r#""Alice" <sip:+15551234567@198.51.100.1>;+sip.instance="
 fn instance_and_gruu_params_are_masked_by_default() -> R {
     let addr = SipHeaderAddr::parse(CONTACT)?;
     assert_eq!(
-        addr.redacted(HeaderRedaction::default())
+        addr.redacted(&HeaderRedaction::default())
             .to_string(),
         "*** <sip:***@198.51.100.1>;+sip.instance=***;reg-id=1;pub-gruu=***"
     );
     assert_eq!(
-        addr.redacted(Redaction::default().user(UserMask::KeepLast(4)))
-            .to_string(),
+        addr.redacted(&HeaderRedaction::new(
+            Redaction::default().user(UserMask::KeepLast(4))
+        ))
+        .to_string(),
         "*** <sip:+xxxxxxx4567@198.51.100.1>;+sip.instance=***;reg-id=1;pub-gruu=***"
     );
     let shown = HeaderRedaction::new(Redaction::default().user(UserMask::Visible)).show_instance();
     assert_eq!(
-        addr.redacted(shown)
+        addr.redacted(&shown)
             .to_string(),
         addr.to_string()
     );
@@ -37,13 +39,13 @@ fn lists_render_every_entry_redacted() -> R {
     let contacts = ContactList::parse(&format!("{CONTACT}, <sip:bob@example.com>"))?;
     assert_eq!(
         contacts
-            .redacted(HeaderRedaction::default())
+            .redacted(&HeaderRedaction::default())
             .to_string(),
         "*** <sip:***@198.51.100.1>;+sip.instance=***;reg-id=1;pub-gruu=***, <sip:***@example.com>"
     );
     assert_eq!(
         ContactList::wildcard()
-            .redacted(HeaderRedaction::default())
+            .redacted(&HeaderRedaction::default())
             .to_string(),
         "*"
     );
@@ -51,7 +53,7 @@ fn lists_render_every_entry_redacted() -> R {
         SipHeaderAddrList::parse("<sip:+15551234567@p1.example.com;lr>, <sip:p2.example.com;lr>")?;
     assert_eq!(
         route
-            .redacted(HeaderRedaction::default())
+            .redacted(&HeaderRedaction::default())
             .to_string(),
         "<sip:***@p1.example.com;lr>, <sip:p2.example.com;lr>"
     );
@@ -64,12 +66,12 @@ fn geolocation_refs_are_masked_by_default() -> R {
         "<cid:loc-1234@example.com>, <https://lis.example.com/held/tok>;inserted-by=example.org",
     )?;
     assert_eq!(
-        geo.redacted(HeaderRedaction::default())
+        geo.redacted(&HeaderRedaction::default())
             .to_string(),
         "<cid:***>, <https:***>;inserted-by=example.org"
     );
     assert_eq!(
-        geo.redacted(HeaderRedaction::default().show_location())
+        geo.redacted(&HeaderRedaction::default().show_location())
             .to_string(),
         geo.to_string()
     );
@@ -79,9 +81,12 @@ fn geolocation_refs_are_masked_by_default() -> R {
 #[test]
 fn header_redaction_wraps_the_uri_redaction() {
     let uri = Redaction::default().user(UserMask::KeepLast(2));
-    assert_eq!(HeaderRedaction::new(uri).uri(), uri);
-    assert_eq!(HeaderRedaction::from(uri), HeaderRedaction::new(uri));
-    assert_eq!(HeaderRedaction::default().uri(), Redaction::default());
+    assert_eq!(HeaderRedaction::new(uri.clone()).uri(), &uri);
+    assert_eq!(
+        HeaderRedaction::from(uri.clone()),
+        HeaderRedaction::new(uri)
+    );
+    assert_eq!(HeaderRedaction::default().uri(), &Redaction::default());
 }
 
 #[test]

@@ -300,34 +300,28 @@ impl Redact for SipAuthValue {
     /// through sip-uri's redaction (`***` when it is no URI).
     ///
     /// ```
-    /// use sip_header::{HeaderParse, Redact, SipAuthValue};
-    /// use sip_uri::Redaction;
+    /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipAuthValue};
     ///
     /// let auth = SipAuthValue::parse(
     ///     r#"Digest username="alice", uri="sip:+15551234567@example.com", response="6629f""#,
     /// )?;
     /// assert_eq!(
-    ///     auth.redacted(Redaction::default()).to_string(),
+    ///     auth.redacted(&HeaderRedaction::default()).to_string(),
     ///     r#"Digest username="***", uri="sip:***@example.com", response="***""#
     /// );
     /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    fn redacted<'a>(
-        &'a self,
-        how: impl Into<crate::redact::HeaderRedaction<'a>>,
-    ) -> impl fmt::Display + 'a {
+    fn redacted<'a>(&'a self, how: &'a crate::redact::HeaderRedaction) -> impl fmt::Display + 'a {
         RedactedAuth {
             auth: self,
-            how: how
-                .into()
-                .uri(),
+            how: how.uri(),
         }
     }
 }
 
 struct RedactedAuth<'a> {
     auth: &'a SipAuthValue,
-    how: sip_uri::Redaction<'a>,
+    how: &'a sip_uri::Redaction,
 }
 
 impl fmt::Display for RedactedAuth<'_> {

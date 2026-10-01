@@ -94,7 +94,7 @@ fn addr_refuses_a_uri_that_breaks_its_brackets() {
 fn addr_redacted_masks_name_and_user() {
     let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>;tag=abc"#).unwrap();
     assert_eq!(
-        addr.redacted(sip_header::sip_uri::Redaction::default())
+        addr.redacted(&sip_header::HeaderRedaction::default())
             .to_string(),
         "*** <sip:***@example.com>;tag=abc"
     );

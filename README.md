@@ -198,12 +198,11 @@ assert_eq!(fields.via()?.unwrap().len(), 1);
 
 ```rust
 use sip_header::prelude::*;
-use sip_header::sip_uri::Redaction;
-use sip_header::SipHeaderAddr;
+use sip_header::{HeaderRedaction, SipHeaderAddr};
 
 let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
 assert_eq!(
-    addr.redacted(Redaction::default()).to_string(),
+    addr.redacted(&HeaderRedaction::default()).to_string(),
     "*** <sip:***@example.com>;tag=abc"
 );
 # Ok::<(), sip_header::ParseError>(())

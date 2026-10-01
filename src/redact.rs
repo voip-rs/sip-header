@@ -15,21 +15,22 @@ pub trait Redact: sealed::Sealed {
     /// [`Display`](fmt::Display) writes them.
     ///
     /// ```
-    /// use sip_header::{HeaderParse, Redact, SipHeaderAddr};
+    /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
     /// use sip_uri::{Redaction, UserMask};
     ///
     /// let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
     /// assert_eq!(
-    ///     addr.redacted(Redaction::default()).to_string(),
+    ///     addr.redacted(&HeaderRedaction::default()).to_string(),
     ///     "*** <sip:***@example.com>;tag=abc"
     /// );
+    /// let last_four = HeaderRedaction::new(Redaction::default().user(UserMask::KeepLast(4)));
     /// assert_eq!(
-    ///     addr.redacted(Redaction::default().user(UserMask::KeepLast(4))).to_string(),
+    ///     addr.redacted(&last_four).to_string(),
     ///     "*** <sip:+xxxxxxx4567@example.com>;tag=abc"
     /// );
     /// # Ok::<(), sip_header::ParseError>(())
     /// ```
-    fn redacted<'a>(&'a self, how: impl Into<HeaderRedaction<'a>>) -> impl fmt::Display + 'a;
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a;
 }
 
 /// Header parameters whose value names a device or a user: RFC 5626
@@ -50,28 +51,28 @@ const IDENTITY_PARAMS: &[&str] = &["+sip.instance", "pub-gruu", "temp-gruu"];
 ///
 /// let addr = SipHeaderAddr::parse(r#"<sip:+15551234567@example.com>;+sip.instance="<urn:uuid:1>""#)?;
 /// assert_eq!(
-///     addr.redacted(HeaderRedaction::default()).to_string(),
+///     addr.redacted(&HeaderRedaction::default()).to_string(),
 ///     "<sip:***@example.com>;+sip.instance=***"
 /// );
 /// let how = HeaderRedaction::new(Redaction::default().user(UserMask::KeepLast(4))).show_instance();
 /// assert_eq!(
-///     addr.redacted(how).to_string(),
+///     addr.redacted(&how).to_string(),
 ///     r#"<sip:+xxxxxxx4567@example.com>;+sip.instance="<urn:uuid:1>""#
 /// );
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub struct HeaderRedaction<'a> {
-    uri: Redaction<'a>,
+pub struct HeaderRedaction {
+    uri: Redaction,
     show_instance: bool,
     show_location: bool,
 }
 
-impl<'a> HeaderRedaction<'a> {
+impl HeaderRedaction {
     /// Render URIs as `uri` says, masking what [`default`](Self::default)
     /// masks besides.
-    pub fn new(uri: Redaction<'a>) -> Self {
+    pub fn new(uri: Redaction) -> Self {
         HeaderRedaction {
             uri,
             ..HeaderRedaction::default()
@@ -79,8 +80,8 @@ impl<'a> HeaderRedaction<'a> {
     }
 
     /// The URI redaction.
-    pub fn uri(&self) -> Redaction<'a> {
-        self.uri
+    pub fn uri(&self) -> &Redaction {
+        &self.uri
     }
 
     /// Render the identity parameters as sent.
@@ -110,14 +111,14 @@ impl<'a> HeaderRedaction<'a> {
     }
 }
 
-impl<'a> From<Redaction<'a>> for HeaderRedaction<'a> {
-    fn from(uri: Redaction<'a>) -> Self {
+impl From<Redaction> for HeaderRedaction {
+    fn from(uri: Redaction) -> Self {
         HeaderRedaction::new(uri)
     }
 }
 
 /// Every entry redacted, joined as list Display joins them.
-pub(crate) struct RedactedList<'a, T>(pub(crate) &'a [T], pub(crate) HeaderRedaction<'a>);
+pub(crate) struct RedactedList<'a, T>(pub(crate) &'a [T], pub(crate) &'a HeaderRedaction);
 
 impl<T: Redact> fmt::Display for RedactedList<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
