@@ -121,8 +121,8 @@ fn tag_form(value: Option<&str>) -> bool {
 #[cfg(feature = "serde")]
 serde_parts!(SipHeaderAddr, SipHeaderAddrParts);
 
-/// `tag` holds the first `tag` parameter when it is a bare `token`; any
-/// other `tag` stays in `params`.
+/// `tag` holds the first parameter when it is a `tag` and a bare `token`;
+/// any other `tag` stays in `params`.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipHeaderAddrParts {

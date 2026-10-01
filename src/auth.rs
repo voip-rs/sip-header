@@ -1,7 +1,6 @@
 //! SIP authentication value parser (RFC 3261 §20.7, §20.27, §20.28, §20.44).
 
 use std::fmt::{self, Write as _};
-use std::hash::{Hash, Hasher};
 
 use sip_uri::{UriParse, UriRedact};
 
@@ -34,13 +33,14 @@ use crate::traits::{sealed, HeaderParse};
 ///
 /// # Equality
 ///
-/// The scheme compares case-insensitively (RFC 9110 §11.1) and keeps the
-/// case it was written in; parameters compare as [`HeaderParams`] does and
-/// a `token68` byte for byte. [`Hash`] follows the same rule.
+/// The scheme compares in the case it was written in, parameters as
+/// [`HeaderParams`] does and a `token68` byte for byte. [`Hash`] follows the
+/// same rule; [`HeaderEquivalence`](crate::HeaderEquivalence) compares as
+/// RFC 7235 §2.1 does.
 ///
 /// [`Debug`](fmt::Debug) masks the `token68` and the values of `response`,
 /// `nonce`, `cnonce`, `nextnonce`, `rspauth` and `auts`.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipAuthValue {
     scheme: String,
@@ -245,27 +245,6 @@ impl fmt::Display for SipAuthValue {
         }
 
         Ok(())
-    }
-}
-
-impl PartialEq for SipAuthValue {
-    fn eq(&self, other: &Self) -> bool {
-        self.scheme
-            .eq_ignore_ascii_case(&other.scheme)
-            && self.params == other.params
-            && self.token68 == other.token68
-    }
-}
-
-impl Eq for SipAuthValue {}
-
-impl Hash for SipAuthValue {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        crate::hash_ignore_ascii_case(&self.scheme, state);
-        self.params
-            .hash(state);
-        self.token68
-            .hash(state);
     }
 }
 

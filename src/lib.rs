@@ -82,6 +82,7 @@ mod check;
 pub mod conference_info;
 mod contact;
 mod diagnostic;
+mod equivalence;
 mod error;
 mod geolocation;
 mod header;
@@ -105,14 +106,14 @@ mod uri_info;
 mod via;
 mod warning;
 
-/// The extension traits: parsing, lookup, extraction and redaction, ours
-/// and sip-uri's.
+/// The extension traits: parsing, lookup, extraction, equivalence and
+/// redaction, ours and sip-uri's.
 pub mod prelude {
     #[cfg(feature = "message")]
     pub use crate::message::SipHeaderExtract;
     pub use crate::{
-        AddrParts, HeaderParse, ListParse, Redact, SipHeaderLookup, SipHeaderRows,
-        SipHeaderRowsExt, UriHeaderParse,
+        AddrParts, HeaderEquivalence, HeaderParse, ListParse, Redact, SipHeaderLookup,
+        SipHeaderRows, SipHeaderRowsExt, UriHeaderParse,
     };
     pub use sip_uri::{UriParse, UriRedact};
 }
@@ -125,6 +126,7 @@ pub use call_id::SipCallId;
 pub use contact::ContactList;
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
+pub use equivalence::HeaderEquivalence;
 pub use error::{Fault, FaultCode, ParseError, UriFault};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry};
 pub use header::{SipHeaderLookup, TypedHeader};
@@ -197,15 +199,6 @@ pub(crate) fn is_token(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
             .all(is_token_char)
-}
-
-/// Hash `s` as [`str::eq_ignore_ascii_case`] compares it, terminated so
-/// adjacent fields cannot run together.
-pub(crate) fn hash_ignore_ascii_case<H: std::hash::Hasher>(s: &str, state: &mut H) {
-    for b in s.bytes() {
-        state.write_u8(b.to_ascii_lowercase());
-    }
-    state.write_u8(0xff);
 }
 
 /// Whether `value` opens a quoted-string that never closes.

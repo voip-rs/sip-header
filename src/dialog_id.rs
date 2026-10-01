@@ -168,6 +168,14 @@ macro_rules! dialog_id_type {
     ($Type:ident, $first:ident, $set_first:ident => $first_name:literal, $second:ident, $set_second:ident => $second_name:literal, early_only: $early:literal) => {
         impl $crate::dialog_id::sealed::Sealed for $Type {}
 
+        impl $crate::equivalence::sealed::Sealed for $Type {}
+
+        impl $crate::HeaderEquivalence for $Type {
+            fn equivalent(&self, other: &Self) -> bool {
+                $crate::equivalence::dialogs_equivalent(&self.0, &other.0)
+            }
+        }
+
         impl $crate::dialog_id::DialogKind for $Type {
             const FIRST_TAG: &'static str = $first_name;
             const SECOND_TAG: &'static str = $second_name;

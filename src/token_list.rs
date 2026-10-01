@@ -31,8 +31,9 @@ use crate::RowEntry;
 ///
 /// # Equality
 ///
-/// Token by token, in order, byte for byte. [`contains`](Self::contains)
-/// applies the header's own case rule instead.
+/// Token by token, in order, byte for byte.
+/// [`HeaderEquivalence`](crate::HeaderEquivalence) and
+/// [`contains`](Self::contains) apply the header's own case rule instead.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TokenList<'a> {
     tokens: Vec<Cow<'a, str>>,

@@ -2,7 +2,6 @@
 //! shares (RFC 3261 §25.1), and the comma-separated `auth-param` list.
 
 use std::fmt::{self, Write as _};
-use std::hash::{Hash, Hasher};
 use std::net::Ipv6Addr;
 
 pub(crate) use crate::check::checked_token;
@@ -286,9 +285,8 @@ impl Drop for ParamsMut<'_> {
 ///
 /// # Equality
 ///
-/// Two parameter sets are equal when each name carries the same values,
-/// with the same quoting, in the same order; the order of different names
-/// is ignored. [`Hash`] follows the same rule.
+/// Two parameter sets are equal when they hold the same parameters with the
+/// same quoting in the same order. [`Hash`] follows the same rule.
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipHeaderAddr};
@@ -301,7 +299,7 @@ impl Drop for ParamsMut<'_> {
 /// assert_eq!(p.to_string(), r#";lr;note="a b";tag=x"#);
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct HeaderParams(Vec<Param>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -573,37 +571,41 @@ impl HeaderParams {
         self.0[first] = Param::new(name.to_string(), value, quoted);
     }
 
-    /// Remove the first `name` when it is unquoted and `setter_form`
-    /// accepts its value, returning that value, for a serde mirror that
-    /// carries it in a field of its own.
+    /// Whether the first parameter is `name`, unquoted, with a value
+    /// `setter_form` accepts.
+    #[cfg(feature = "serde")]
+    fn leads_with(&self, name: &str, setter_form: impl Fn(Option<&str>) -> bool) -> bool {
+        self.0
+            .first()
+            .is_some_and(|p| {
+                p.name == name
+                    && !p.quoted
+                    && setter_form(
+                        p.value
+                            .as_deref(),
+                    )
+            })
+    }
+
+    /// Remove the first parameter when it [`leads_with`](Self::leads_with)
+    /// `name`, returning its value, for a serde mirror that carries it in a
+    /// field of its own.
     #[cfg(feature = "serde")]
     pub(crate) fn take_first(
         &mut self,
         name: &str,
         setter_form: impl Fn(Option<&str>) -> bool,
     ) -> Option<Option<String>> {
-        let i = self
-            .0
-            .iter()
-            .position(|p| p.name == name)?;
-        let p = &self.0[i];
-        if p.quoted
-            || !setter_form(
-                p.value
-                    .as_deref(),
-            )
-        {
-            return None;
-        }
-        Some(
-            self.0
-                .remove(i)
-                .value,
-        )
+        self.leads_with(name, setter_form)
+            .then(|| {
+                self.0
+                    .remove(0)
+                    .value
+            })
     }
 
-    /// Undo [`take_first`](Self::take_first): put `value` back before the
-    /// other `name`s, or refuse a first `name` it would have taken.
+    /// Undo [`take_first`](Self::take_first): put `value` back first, or
+    /// refuse parameters it would have taken from.
     #[cfg(feature = "serde")]
     pub(crate) fn restore_first(
         &mut self,
@@ -611,32 +613,14 @@ impl HeaderParams {
         value: Option<Option<String>>,
         setter_form: impl Fn(Option<&str>) -> bool,
     ) -> Result<(), ParseError> {
-        let first = self
-            .0
-            .iter()
-            .position(|p| p.name == name);
         match value {
             Some(value) => {
-                let p = Param::new(name.to_string(), value, false);
                 self.0
-                    .insert(
-                        first.unwrap_or(
-                            self.0
-                                .len(),
-                        ),
-                        p,
-                    );
+                    .insert(0, Param::new(name.to_string(), value, false));
             }
             None => {
-                if let Some(p) = first.map(|i| &self.0[i]) {
-                    if !p.quoted
-                        && setter_form(
-                            p.value
-                                .as_deref(),
-                        )
-                    {
-                        return Err(param_fault(FaultCode::Misplaced));
-                    }
+                if self.leads_with(name, setter_form) {
+                    return Err(param_fault(FaultCode::Misplaced));
                 }
             }
         }
@@ -740,19 +724,6 @@ impl HeaderParams {
         }
         Ok(())
     }
-
-    /// Stable by name, so one name's values keep their order.
-    fn sorted(&self) -> Vec<&Param> {
-        let mut sorted: Vec<&Param> = self
-            .0
-            .iter()
-            .collect();
-        sorted.sort_by(|a, b| {
-            a.name
-                .cmp(&b.name)
-        });
-        sorted
-    }
 }
 
 fn is_reserved(reserved: &[&str], name: &str) -> bool {
@@ -766,21 +737,6 @@ fn refuse_reserved(reserved: &[&str], name: &str) -> Result<(), ParseError> {
         return Err(param_fault(FaultCode::Misplaced));
     }
     Ok(())
-}
-
-impl PartialEq for HeaderParams {
-    fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.sorted() == other.sorted()
-    }
-}
-
-impl Eq for HeaderParams {}
-
-impl Hash for HeaderParams {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.sorted()
-            .hash(state);
-    }
 }
 
 impl fmt::Display for HeaderParams {
@@ -972,24 +928,21 @@ mod tests {
     #[test]
     fn take_first_only_the_setter_form() {
         let token = |v: Option<&str>| v.is_some_and(is_token);
-        let (mut p, _) = read(r#";x;tag="a";tag=b"#);
-        assert_eq!(p.take_first("tag", token), None);
-        assert_eq!(
-            p.restore_first("tag", None, token),
-            Ok(()),
-            "a quoted first tag stays"
-        );
-        let (mut p, _) = read(";x;tag=a;tag=b");
+        for kept in [r#";tag="a";tag=b"#, ";x;tag=a"] {
+            let (mut p, _) = read(kept);
+            assert_eq!(p.take_first("tag", token), None, "{kept}");
+            assert_eq!(p.restore_first("tag", None, token), Ok(()), "{kept}");
+        }
+        let (mut p, _) = read(";tag=a;x;tag=b");
         assert_eq!(p.take_first("tag", token), Some(Some("a".into())));
         assert_eq!(p.to_string(), ";x;tag=b");
-        assert_eq!(
-            p.clone()
-                .restore_first("tag", None, token),
-            Err(param_fault(FaultCode::Misplaced))
-        );
         p.restore_first("tag", Some(Some("a".into())), token)
             .unwrap();
-        assert_eq!(p.to_string(), ";x;tag=a;tag=b");
+        assert_eq!(p.to_string(), ";tag=a;x;tag=b");
+        assert_eq!(
+            p.restore_first("tag", None, token),
+            Err(param_fault(FaultCode::Misplaced))
+        );
     }
 
     #[test]
