@@ -68,16 +68,16 @@ impl SipViaEntry {
     /// the host prints as text sip-uri's strict host grammar reads back as
     /// the same host.
     pub fn new(
-        protocol: impl Into<String>,
-        version: impl Into<String>,
-        transport: impl Into<String>,
+        protocol: impl AsRef<str>,
+        version: impl AsRef<str>,
+        transport: impl AsRef<str>,
         host: Host,
     ) -> Result<Self, ParseError> {
-        let token = |part: String| checked_token(Field::SentProtocol, part);
+        let token = |part: &str| checked_token(Field::SentProtocol, part);
         let entry = SipViaEntry::unchecked(
-            token(protocol.into())?,
-            token(version.into())?,
-            token(transport.into())?,
+            token(protocol.as_ref())?,
+            token(version.as_ref())?,
+            token(transport.as_ref())?,
             host,
         );
         if Host::parse_strict(

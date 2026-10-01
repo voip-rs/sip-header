@@ -79,13 +79,13 @@ impl SipCallId {
     /// Errors on an empty word or a character outside `word`, including a
     /// second `@`, whitespace, and the separators that would let a value carry
     /// a parameter or a second header line.
-    pub fn new(value: impl Into<String>) -> Result<Self, ParseError> {
-        let value = value.into();
+    pub fn new(value: impl AsRef<str>) -> Result<Self, ParseError> {
+        let value = value.as_ref();
         if value.is_empty() {
             return Err(ParseError::empty(Field::CallId));
         }
         let mut warnings = Vec::new();
-        let id = read(value, 0, &mut warnings);
+        let id = read(value.to_owned(), 0, &mut warnings);
         match warnings.first() {
             Some(w) => Err(ParseError::malformed(
                 Field::CallId,

@@ -50,8 +50,8 @@ impl SipWarningEntry {
     /// or `token`, and the text free of CR, LF and NUL.
     pub fn new(
         code: u16,
-        agent: impl Into<String>,
-        text: impl Into<String>,
+        agent: impl AsRef<str>,
+        text: impl AsRef<str>,
     ) -> Result<Self, ParseError> {
         if !(WARN_CODE_MIN..=WARN_CODE_MAX).contains(&code) {
             return Err(ParseError::malformed(
@@ -60,13 +60,19 @@ impl SipWarningEntry {
                 None,
             ));
         }
-        let agent = agent.into();
-        if !is_hostport(&agent) {
-            crate::check::checked_token(Field::Agent, agent.clone())?;
-        }
-        let text = text.into();
-        crate::check::refuse_controls(Field::Text, &text)?;
-        Ok(SipWarningEntry { code, agent, text })
+        let agent = agent.as_ref();
+        let agent = if is_hostport(agent) {
+            agent.to_owned()
+        } else {
+            crate::check::checked_token(Field::Agent, agent)?
+        };
+        let text = text.as_ref();
+        crate::check::refuse_controls(Field::Text, text)?;
+        Ok(SipWarningEntry {
+            code,
+            agent,
+            text: text.to_owned(),
+        })
     }
 
     /// The warning code, below 100 only as parsed.

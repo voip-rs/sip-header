@@ -95,7 +95,7 @@ fn reserved_keys_refuse_the_generic_setter() {
     .unwrap();
     assert!(is_misplaced_param(
         via.clone()
-            .with_param("rport", None::<&str>)
+            .with_param("rport", None)
     ));
     let via = via.with_rport(Some(5060));
     assert_eq!(via.rport(), Some(Some(5060)));
@@ -109,7 +109,7 @@ fn reserved_keys_refuse_the_generic_setter() {
         assert!(
             is_misplaced_param(
                 r.clone()
-                    .with_param(key, None::<&str>)
+                    .with_param(key, None)
             ),
             "{key}"
         );
@@ -129,7 +129,7 @@ fn reserved_keys_refuse_the_generic_setter() {
             .with_param("local-tag", Some("x"))
     ));
     assert_eq!(
-        t.with_param("early-only", None::<&str>)
+        t.with_param("early-only", None)
             .and_then(|t| t.with_remote_tag("r2"))
             .map(|t| t.to_string()),
         Ok("a@example.com;local-tag=l;remote-tag=r2;early-only".to_string())
@@ -164,7 +164,7 @@ fn values_are_bare_only_when_a_token_or_host() {
         .and_then(|a| a.with_param("branch", Some("z9hG4bK1")))
         .and_then(|a| a.with_param("note", Some("a b")))
         .and_then(|a| a.with_param("e", Some("")))
-        .and_then(|a| a.with_param("f", None::<&str>))
+        .and_then(|a| a.with_param("f", None))
         .unwrap();
     assert_eq!(
         a.to_string(),
@@ -315,7 +315,7 @@ mod serde_shape {
     fn params_serialize_as_name_value_quoted() {
         let a = addr()
             .with_tag("abc")
-            .and_then(|a| a.with_param("lr", None::<&str>))
+            .and_then(|a| a.with_param("lr", None))
             .and_then(|a| a.with_param("note", Some("a b")))
             .and_then(|a| a.with_param("x", Some("1")))
             .unwrap();

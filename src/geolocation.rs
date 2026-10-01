@@ -481,7 +481,7 @@ mod tests {
             .uri_span()
             .is_some());
         let entry = entry
-            .with_param("flag", None::<&str>)
+            .with_param("flag", None)
             .unwrap();
         assert_eq!(entry.span(), None);
         assert_eq!(entry.uri_span(), None);

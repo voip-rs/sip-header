@@ -37,10 +37,10 @@ pub struct SipReasonCause(String);
 
 impl SipReasonCause {
     /// Errors unless `digits` is one ASCII digit or more.
-    pub fn new(digits: impl Into<String>) -> Result<Self, ParseError> {
-        let digits = digits.into();
-        crate::check::only(Field::Cause, &digits, |c| c.is_ascii_digit())?;
-        Ok(SipReasonCause(digits))
+    pub fn new(digits: impl AsRef<str>) -> Result<Self, ParseError> {
+        let digits = digits.as_ref();
+        crate::check::only(Field::Cause, digits, |c| c.is_ascii_digit())?;
+        Ok(SipReasonCause(digits.to_owned()))
     }
 
     /// The digits as written.
@@ -133,8 +133,8 @@ impl SipReason {
     /// A reason for `protocol`, with no cause, text or parameters.
     ///
     /// Errors unless `protocol` is a `token`.
-    pub fn new(protocol: impl Into<String>) -> Result<Self, ParseError> {
-        checked_token(Field::Protocol, protocol.into()).map(Self::unchecked)
+    pub fn new(protocol: impl AsRef<str>) -> Result<Self, ParseError> {
+        checked_token(Field::Protocol, protocol.as_ref()).map(Self::unchecked)
     }
 
     /// Set the cause.
@@ -146,10 +146,10 @@ impl SipReason {
     /// Set the text, unquoted; [`Display`](fmt::Display) always quotes it.
     ///
     /// Errors when `text` holds CR, LF or NUL.
-    pub fn with_text(mut self, text: impl Into<String>) -> Result<Self, ParseError> {
-        let text = text.into();
-        crate::check::refuse_controls(Field::Text, &text)?;
-        self.text = Some(text);
+    pub fn with_text(mut self, text: impl AsRef<str>) -> Result<Self, ParseError> {
+        let text = text.as_ref();
+        crate::check::refuse_controls(Field::Text, text)?;
+        self.text = Some(text.to_owned());
         Ok(self)
     }
 

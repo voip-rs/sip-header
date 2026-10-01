@@ -5,12 +5,12 @@
 
 use std::fmt;
 
-use crate::check::checked_token;
+use crate::check::only;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
-use crate::is_token;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::{is_token, is_token_char};
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 ///
@@ -52,18 +52,12 @@ impl SipAcceptEntry {
     /// An entry for `media_type/subtype`, both lowercased, with no parameters.
     ///
     /// Errors unless both are `token`s.
-    pub fn new(
-        media_type: impl Into<String>,
-        subtype: impl AsRef<str>,
-    ) -> Result<Self, ParseError> {
-        let media_type = checked_token(Field::MediaRange, media_type.into())?;
-        let subtype = checked_token(
-            Field::MediaRange,
-            subtype
-                .as_ref()
-                .to_string(),
-        )?;
-        Ok(Self::unchecked(&media_type, &subtype))
+    pub fn new(media_type: impl AsRef<str>, subtype: impl AsRef<str>) -> Result<Self, ParseError> {
+        let (media_type, subtype) = (media_type.as_ref(), subtype.as_ref());
+        for part in [media_type, subtype] {
+            only(Field::MediaRange, part, is_token_char)?;
+        }
+        Ok(Self::unchecked(media_type, subtype))
     }
 
     fn unchecked(media_type: &str, subtype: &str) -> Self {

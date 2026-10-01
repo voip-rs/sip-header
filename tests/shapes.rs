@@ -222,7 +222,7 @@ fn join_has_no_early_only() -> R {
     assert_eq!((join.to_tag(), join.from_tag()), ("t", "f"));
     assert_eq!(join.param("early-only"), Some(None));
     assert_eq!(join.to_string(), wire);
-    let built = SipJoin::new("a@example.com", "t", "f")?.with_param("early-only", None::<&str>)?;
+    let built = SipJoin::new("a@example.com", "t", "f")?.with_param("early-only", None)?;
     assert_eq!(built, join);
     assert!(SipJoin::new("a@example.com", "t", "f")?
         .with_param("from-tag", Some("x"))

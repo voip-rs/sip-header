@@ -212,10 +212,10 @@ impl SipHeaderAddr {
     ///     .is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn with_display_name(mut self, name: impl Into<String>) -> Result<Self, ParseError> {
-        let name = name.into();
-        crate::check::refuse_controls(Field::DisplayName, &name)?;
-        self.display_name = (!name.is_empty()).then_some(name);
+    pub fn with_display_name(mut self, name: impl AsRef<str>) -> Result<Self, ParseError> {
+        let name = name.as_ref();
+        crate::check::refuse_controls(Field::DisplayName, name)?;
+        self.display_name = (!name.is_empty()).then(|| name.to_owned());
         self.clear_spans();
         Ok(self)
     }
@@ -229,15 +229,15 @@ impl SipHeaderAddr {
     /// use sip_uri::{Uri, UriParse};
     ///
     /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
-    ///     .with_param("lr", None::<&str>)?
+    ///     .with_param("lr", None)?
     ///     .with_param("note", Some("a;b"))?
     ///     .with_tag("abc")?;
     /// assert_eq!(addr.to_string(), r#"<sip:alice@example.com>;lr;note="a;b";tag=abc"#);
     /// assert!(addr.with_param("tag", Some("x")).is_err());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn with_tag(mut self, tag: impl Into<String>) -> Result<Self, ParseError> {
-        let tag = crate::params::checked_token(Field::Tag, tag.into())?;
+    pub fn with_tag(mut self, tag: impl AsRef<str>) -> Result<Self, ParseError> {
+        let tag = crate::params::checked_token(Field::Tag, tag.as_ref())?;
         self.params
             .replace("tag", Some(tag), false);
         self.clear_spans();
@@ -896,7 +896,7 @@ mod tests {
             .unwrap()
             .with_tag("abc123")
             .unwrap()
-            .with_param("lr", None::<String>)
+            .with_param("lr", None)
             .unwrap();
         assert_eq!(addr.display_name(), Some("Alice"));
         assert_eq!(addr.tag(), Some("abc123"));
@@ -1033,7 +1033,7 @@ mod tests {
         let uri = sip_uri::Uri::parse("sip:proxy@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
             .unwrap()
-            .with_param("lr", None::<String>)
+            .with_param("lr", None)
             .unwrap();
         assert_eq!(addr.param("lr"), Some(None));
         assert_eq!(addr.to_string(), "<sip:proxy@example.com>;lr");
@@ -1069,7 +1069,7 @@ mod tests {
     fn with_param_clears_spans() {
         let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
         let addr = addr
-            .with_param("lr", None::<&str>)
+            .with_param("lr", None)
             .unwrap();
         assert_eq!(addr.span(), None);
         assert_eq!(addr.uri_span(), None);

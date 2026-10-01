@@ -39,8 +39,8 @@ impl SipSecurityMechanism {
     /// A mechanism by name, lowercased, with no parameters.
     ///
     /// Errors unless the name is a `token`.
-    pub fn new(mechanism: impl Into<String>) -> Result<Self, ParseError> {
-        checked_token(Field::Mechanism, mechanism.into()).map(Self::unchecked)
+    pub fn new(mechanism: impl AsRef<str>) -> Result<Self, ParseError> {
+        checked_token(Field::Mechanism, mechanism.as_ref()).map(Self::unchecked)
     }
 
     fn unchecked(mut mechanism: String) -> Self {

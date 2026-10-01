@@ -106,7 +106,7 @@ macro_rules! with_params {
         for (k, val, quoted) in $params {
             v = match (val, quoted) {
                 (Some(val), true) => v.with_quoted_param(k, val),
-                (val, _) => v.with_param(k, val),
+                (val, _) => v.with_param(k, val.as_deref()),
             }?;
         }
         Ok::<_, ParseError>(v)

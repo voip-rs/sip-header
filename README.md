@@ -227,6 +227,7 @@ assert_eq!(
 | errors | `Utf8Error` from `SipHeaderAddr::param()` and `HistoryInfoEntry::reason()` | `ParseError`; `reason_with_warnings()` reports Reason breaches |
 | errors | `ConferenceInfoError::Xml(String)` | opaque `ConferenceInfoError` with `kind()` and the XML layer's error as `source()` |
 | constructors | `SipHeaderAddr::new(uri) -> Self`; `with_display_name`, `with_param` unchecked, `try_with_*` validate | every `new` and `with_*` returns `Result`, `try_with_*` removed: CR, LF, NUL, a field's delimiters, empty mandatory parts, non-token text where a token belongs and a warn-code outside `100..=999` are refused, so a built value parses back strictly as itself |
+| constructors | names and text as `impl Into<String>`, `with_param(key, Option<impl Into<String>>)` | names and text as `impl AsRef<str>`, optional values as `Option<&str>`: `with_param("lr", None)`, `with_param(key, value.as_deref())` |
 | params | `params()` as `&[(String, String)]`, `&[(String, Option<String>)]` or an iterator, values as sent with their quotes | `params() -> &HeaderParams`: `iter()`, `get()`, `is_quoted()`; values unescaped |
 | params | `param()` returns `Option<&str>` on the Accept family, `UriInfoEntry`, `SipAuthValue` | `Option<Option<&str>>` everywhere; `Some(None)` is a flag |
 | params | `SipHeaderAddr::param()` percent-decodes, `param_raw()` does not | one `param()`; header parameters are never percent-decoded |

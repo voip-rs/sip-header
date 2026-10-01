@@ -77,8 +77,8 @@ impl SipAuthValue {
     /// A value with the given scheme and no parameters.
     ///
     /// Errors unless the scheme is a `token`.
-    pub fn new(scheme: impl Into<String>) -> Result<Self, ParseError> {
-        checked_token(Field::Scheme, scheme.into()).map(Self::unchecked)
+    pub fn new(scheme: impl AsRef<str>) -> Result<Self, ParseError> {
+        checked_token(Field::Scheme, scheme.as_ref()).map(Self::unchecked)
     }
 
     /// A value carrying a `token68` credential (RFC 9110 §11.2) instead of
@@ -87,14 +87,14 @@ impl SipAuthValue {
     /// Errors unless the scheme is a `token` and `token68` matches its
     /// grammar.
     pub fn from_token68(
-        scheme: impl Into<String>,
-        token68: impl Into<String>,
+        scheme: impl AsRef<str>,
+        token68: impl AsRef<str>,
     ) -> Result<Self, ParseError> {
-        let token68 = token68.into();
+        let token68 = token68.as_ref();
         if token68.is_empty() {
             return Err(ParseError::empty(Field::Credentials));
         }
-        if !is_token68(&token68) {
+        if !is_token68(token68) {
             return Err(ParseError::malformed(
                 Field::Credentials,
                 FaultCode::InvalidChar,
@@ -102,19 +102,19 @@ impl SipAuthValue {
             ));
         }
         Ok(SipAuthValue {
-            token68: Some(token68),
+            token68: Some(token68.to_owned()),
             ..Self::new(scheme)?
         })
     }
 
-    fn set(mut self, key: &str, value: String, quoted: bool) -> Result<Self, ParseError> {
+    fn set(mut self, key: &str, value: &str, quoted: bool) -> Result<Self, ParseError> {
         let quoted = quoted
-            || !is_token(&value)
+            || !is_token(value)
             || MUST_QUOTE_PARAMS
                 .iter()
                 .any(|k| k.eq_ignore_ascii_case(key));
         self.params
-            .set(key, Some(value), quoted)?;
+            .set(key, Some(value.to_owned()), quoted)?;
         self.token68 = None;
         Ok(self)
     }
@@ -128,18 +128,18 @@ impl SipAuthValue {
     pub fn with_param(
         self,
         key: impl AsRef<str>,
-        value: impl Into<String>,
+        value: impl AsRef<str>,
     ) -> Result<Self, ParseError> {
-        self.set(key.as_ref(), value.into(), false)
+        self.set(key.as_ref(), value.as_ref(), false)
     }
 
     /// [`with_param`](Self::with_param), the value always quoted.
     pub fn with_quoted_param(
         self,
         key: impl AsRef<str>,
-        value: impl Into<String>,
+        value: impl AsRef<str>,
     ) -> Result<Self, ParseError> {
-        self.set(key.as_ref(), value.into(), true)
+        self.set(key.as_ref(), value.as_ref(), true)
     }
 
     /// Returns the authentication scheme (e.g., "Digest", "Bearer").

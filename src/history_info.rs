@@ -35,7 +35,7 @@ impl HistoryInfoEntry {
     ///
     /// Errors unless `index` is RFC 7044 §9.1 dot-separated digit runs
     /// such as `1.2`.
-    pub fn new(addr: SipHeaderAddr, index: impl Into<String>) -> Result<Self, ParseError> {
+    pub fn new(addr: SipHeaderAddr, index: impl AsRef<str>) -> Result<Self, ParseError> {
         HistoryInfoEntry { addr }.with_index(index)
     }
 
@@ -84,8 +84,8 @@ impl HistoryInfoEntry {
     }
 
     /// Set `index`, as [`new`](Self::new) does.
-    pub fn with_index(mut self, index: impl Into<String>) -> Result<Self, ParseError> {
-        let index = index.into();
+    pub fn with_index(mut self, index: impl AsRef<str>) -> Result<Self, ParseError> {
+        let index = index.as_ref();
         let valid = index
             .split('.')
             .all(|n| {
@@ -102,7 +102,7 @@ impl HistoryInfoEntry {
         }
         self.addr
             .params_mut()
-            .replace("index", Some(index), false);
+            .replace("index", Some(index.to_owned()), false);
         self.addr
             .clear_spans();
         Ok(self)

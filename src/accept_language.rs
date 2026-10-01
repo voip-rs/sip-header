@@ -39,19 +39,19 @@ impl SipAcceptLanguageEntry {
     /// An entry for the given language range, lowercased, with no parameters.
     ///
     /// Errors unless it is an RFC 3261 §20.3 `language-range`.
-    pub fn new(language: impl Into<String>) -> Result<Self, ParseError> {
-        let language = language.into();
+    pub fn new(language: impl AsRef<str>) -> Result<Self, ParseError> {
+        let language = language.as_ref();
         if language.is_empty() {
             return Err(ParseError::empty(Field::Language));
         }
-        if !is_language_range(&language) {
+        if !is_language_range(language) {
             return Err(ParseError::malformed(
                 Field::Language,
                 FaultCode::InvalidChar,
                 None,
             ));
         }
-        Ok(Self::unchecked(language))
+        Ok(Self::unchecked(language.to_owned()))
     }
 
     fn unchecked(mut language: String) -> Self {

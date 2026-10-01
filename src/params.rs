@@ -42,12 +42,11 @@ macro_rules! header_params {
             pub fn with_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: Option<impl Into<String>>,
+                value: Option<&str>,
             ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.map(Into::into);
-                $check(key.as_ref(), value.as_deref(), false)?;
+                $check(key.as_ref(), value, false)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), value, false)?;
+                    .set_unreserved($reserved, key.as_ref(), value.map(str::to_owned), false)?;
                 Ok(self)
             }
 
@@ -56,12 +55,12 @@ macro_rules! header_params {
             pub fn with_quoted_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: impl Into<String>,
+                value: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.into();
-                $check(key.as_ref(), Some(&value), true)?;
+                let value = value.as_ref();
+                $check(key.as_ref(), Some(value), true)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), Some(value), true)?;
+                    .set_unreserved($reserved, key.as_ref(), Some(value.to_owned()), true)?;
                 Ok(self)
             }
 
@@ -91,12 +90,11 @@ macro_rules! header_params {
             pub fn with_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: Option<impl Into<String>>,
+                value: Option<&str>,
             ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.map(Into::into);
-                $crate::params::any_value(key.as_ref(), value.as_deref(), false)?;
+                $crate::params::any_value(key.as_ref(), value, false)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), value, false)?;
+                    .set_unreserved($reserved, key.as_ref(), value.map(str::to_owned), false)?;
                 self.span = None;
                 self.uri_span = None;
                 Ok(self)
@@ -107,12 +105,12 @@ macro_rules! header_params {
             pub fn with_quoted_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: impl Into<String>,
+                value: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.into();
-                $crate::params::any_value(key.as_ref(), Some(&value), true)?;
+                let value = value.as_ref();
+                $crate::params::any_value(key.as_ref(), Some(value), true)?;
                 self.params
-                    .set_unreserved($reserved, key.as_ref(), Some(value), true)?;
+                    .set_unreserved($reserved, key.as_ref(), Some(value.to_owned()), true)?;
                 self.span = None;
                 self.uri_span = None;
                 Ok(self)
@@ -219,7 +217,9 @@ fn param_fault(code: FaultCode) -> ParseError {
 
 /// `name` lowercased, or the fault that keeps it from being a `token`.
 fn checked_name(name: &str) -> Result<String, ParseError> {
-    checked_token(Field::Param, name.to_ascii_lowercase())
+    let mut name = checked_token(Field::Param, name)?;
+    name.make_ascii_lowercase();
+    Ok(name)
 }
 
 /// The `check` of a header whose grammar gives no parameter a meaning of

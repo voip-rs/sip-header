@@ -55,9 +55,9 @@ pub(crate) struct DialogId {
 impl DialogId {
     /// Errors unless `call_id` is a `callid` and both tags are `token`s.
     pub(crate) fn new(
-        call_id: String,
-        first_tag: String,
-        second_tag: String,
+        call_id: &str,
+        first_tag: &str,
+        second_tag: &str,
     ) -> Result<Self, ParseError> {
         Ok(DialogId {
             call_id: SipCallId::new(call_id)?.into(),
@@ -85,7 +85,7 @@ impl DialogId {
     }
 
     /// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
-    pub(crate) fn set_call_id(&mut self, call_id: String) -> Result<(), ParseError> {
+    pub(crate) fn set_call_id(&mut self, call_id: &str) -> Result<(), ParseError> {
         self.call_id = SipCallId::new(call_id)?.into();
         Ok(())
     }
@@ -120,12 +120,12 @@ impl DialogId {
         &mut self.params
     }
 
-    pub(crate) fn set_first_tag(&mut self, tag: String) -> Result<(), ParseError> {
+    pub(crate) fn set_first_tag(&mut self, tag: &str) -> Result<(), ParseError> {
         self.first_tag = checked_token(Field::Tag, tag)?;
         Ok(())
     }
 
-    pub(crate) fn set_second_tag(&mut self, tag: String) -> Result<(), ParseError> {
+    pub(crate) fn set_second_tag(&mut self, tag: &str) -> Result<(), ParseError> {
         self.second_tag = checked_token(Field::Tag, tag)?;
         Ok(())
     }
@@ -185,11 +185,11 @@ macro_rules! dialog_id_type {
             /// Errors unless the Call-ID is an RFC 3261 §25.1
             /// `callid = word [ "@" word ]` and both tags are `token`s.
             pub fn new(
-                call_id: impl Into<String>,
-                $first: impl Into<String>,
-                $second: impl Into<String>,
+                call_id: impl AsRef<str>,
+                $first: impl AsRef<str>,
+                $second: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
-                $crate::dialog_id::DialogId::new(call_id.into(), $first.into(), $second.into())
+                $crate::dialog_id::DialogId::new(call_id.as_ref(), $first.as_ref(), $second.as_ref())
                     .map(Self)
             }
 
@@ -199,14 +199,14 @@ macro_rules! dialog_id_type {
             pub fn with_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: Option<impl Into<String>>,
+                value: Option<&str>,
             ) -> Result<Self, $crate::error::ParseError> {
                 self.0
                     .params_mut()
                     .set_unreserved(
                         <Self as $crate::dialog_id::DialogKind>::RESERVED,
                         key.as_ref(),
-                        value.map(Into::into),
+                        value.map(str::to_owned),
                         false,
                     )?;
                 Ok(self)
@@ -217,14 +217,14 @@ macro_rules! dialog_id_type {
             pub fn with_quoted_param(
                 mut self,
                 key: impl AsRef<str>,
-                value: impl Into<String>,
+                value: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
                 self.0
                     .params_mut()
                     .set_unreserved(
                         <Self as $crate::dialog_id::DialogKind>::RESERVED,
                         key.as_ref(),
-                        Some(value.into()),
+                        Some(value.as_ref().to_owned()),
                         true,
                     )?;
                 Ok(self)
@@ -233,20 +233,20 @@ macro_rules! dialog_id_type {
             #[doc = concat!("Returns this value with a different `", $first_name, "`, a `token`.")]
             pub fn $set_first(
                 mut self,
-                tag: impl Into<String>,
+                tag: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
                 self.0
-                    .set_first_tag(tag.into())?;
+                    .set_first_tag(tag.as_ref())?;
                 Ok(self)
             }
 
             #[doc = concat!("Returns this value with a different `", $second_name, "`, a `token`.")]
             pub fn $set_second(
                 mut self,
-                tag: impl Into<String>,
+                tag: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
                 self.0
-                    .set_second_tag(tag.into())?;
+                    .set_second_tag(tag.as_ref())?;
                 Ok(self)
             }
 
@@ -268,10 +268,10 @@ macro_rules! dialog_id_type {
             /// ```
             pub fn with_call_id(
                 mut self,
-                call_id: impl Into<String>,
+                call_id: impl AsRef<str>,
             ) -> Result<Self, $crate::error::ParseError> {
                 self.0
-                    .set_call_id(call_id.into())?;
+                    .set_call_id(call_id.as_ref())?;
                 Ok(self)
             }
 

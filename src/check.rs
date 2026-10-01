@@ -64,9 +64,9 @@ pub(crate) fn checked_uri(field: Field, uri: sip_uri::Uri) -> Result<sip_uri::Ur
 }
 
 /// `value` when it is a `token`, the fault on `field` otherwise.
-pub(crate) fn checked_token(field: Field, value: String) -> Result<String, ParseError> {
-    only(field, &value, crate::is_token_char)?;
-    Ok(value)
+pub(crate) fn checked_token(field: Field, value: &str) -> Result<String, ParseError> {
+    only(field, value, crate::is_token_char)?;
+    Ok(value.to_owned())
 }
 
 /// `value` when `parse` reads its wire form back as `value`, so that the

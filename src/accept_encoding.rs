@@ -41,8 +41,8 @@ impl SipAcceptEncodingEntry {
     /// An entry for the given content-coding, lowercased, with no parameters.
     ///
     /// Errors unless the coding is a `token`.
-    pub fn new(encoding: impl Into<String>) -> Result<Self, ParseError> {
-        checked_token(Field::Coding, encoding.into()).map(Self::unchecked)
+    pub fn new(encoding: impl AsRef<str>) -> Result<Self, ParseError> {
+        checked_token(Field::Coding, encoding.as_ref()).map(Self::unchecked)
     }
 
     fn unchecked(mut encoding: String) -> Self {

@@ -36,7 +36,7 @@ fn addr_builder_lowercases_keys() -> R {
     let addr = SipHeaderAddr::new(uri("sip:alice@example.com"))?
         .with_display_name("Alice Smith")?
         .with_tag("abc")?
-        .with_param("lr", None::<&str>)?;
+        .with_param("lr", None)?;
     assert_eq!(addr.tag(), Some("abc"));
     built_as(addr, r#""Alice Smith" <sip:alice@example.com>;tag=abc;lr"#);
     Ok(())

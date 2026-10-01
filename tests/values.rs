@@ -23,7 +23,7 @@ fn addr() -> SipHeaderAddr {
     SipHeaderAddr::new(alice())
         .and_then(|a| a.with_display_name("Alice Smith"))
         .and_then(|a| a.with_tag("abc"))
-        .and_then(|a| a.with_param("lr", None::<&str>))
+        .and_then(|a| a.with_param("lr", None))
         .unwrap()
 }
 
