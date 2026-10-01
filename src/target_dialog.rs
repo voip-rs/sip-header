@@ -24,6 +24,7 @@ serde_parts!(SipTargetDialog, SipTargetDialogParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipTargetDialogParts {
     call_id: String,
     local_tag: String,

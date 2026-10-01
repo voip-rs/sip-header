@@ -156,6 +156,7 @@ serde_parts!(HistoryInfoEntry, HistoryInfoEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HistoryInfoEntryParts {
     addr: SipHeaderAddr,
 }

@@ -243,6 +243,7 @@ serde_parts!(SipGeolocationEntry, SipGeolocationEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipGeolocationEntryParts {
     uri: Uri,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]

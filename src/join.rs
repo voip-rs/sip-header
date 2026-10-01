@@ -33,6 +33,7 @@ serde_parts!(SipJoin, SipJoinParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipJoinParts {
     call_id: String,
     to_tag: String,

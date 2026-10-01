@@ -243,6 +243,7 @@ serde_parts!(SipReason, SipReasonParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipReasonParts {
     protocol: String,
     #[serde(default)]

@@ -115,6 +115,7 @@ serde_parts!(SipWarningEntry, SipWarningEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipWarningEntryParts {
     code: u16,
     agent: String,

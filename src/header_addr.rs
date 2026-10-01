@@ -117,6 +117,7 @@ serde_parts!(SipHeaderAddr, SipHeaderAddrParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipHeaderAddrParts {
     #[serde(default)]
     display_name: Option<String>,

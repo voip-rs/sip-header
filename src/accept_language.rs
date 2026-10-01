@@ -89,6 +89,7 @@ serde_parts!(SipAcceptLanguageEntry, SipAcceptLanguageEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipAcceptLanguageEntryParts {
     language: String,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]

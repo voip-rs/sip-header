@@ -216,6 +216,7 @@ serde_parts!(SipViaEntry, SipViaEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipViaEntryParts {
     protocol: String,
     version: String,

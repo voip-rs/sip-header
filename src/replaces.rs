@@ -53,6 +53,7 @@ serde_parts!(SipReplaces, SipReplacesParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipReplacesParts {
     call_id: String,
     to_tag: String,

@@ -112,6 +112,7 @@ serde_parts!(SipAcceptEntry, SipAcceptEntryParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SipAcceptEntryParts {
     media_type: String,
     subtype: String,
