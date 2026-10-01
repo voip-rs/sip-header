@@ -513,7 +513,10 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             warn(warnings, WarningCode::TrailingBackslash, at + raw.len() - 2);
         }
     }
-    if split.trailing_comma {
+    if split
+        .tail
+        .is_some()
+    {
         warnings.push(
             ParseWarning::new(Field::Credentials, WarningCode::TrailingComma)
                 .at(crate::offset_in(input, rest) + rest.len() - 1),

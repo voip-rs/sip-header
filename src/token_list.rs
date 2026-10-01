@@ -92,12 +92,9 @@ impl<'a> TokenList<'a> {
             crate::row_entries(rows, crate::QuoteStart::Param).collect();
         let comma = |i: usize, entry: &RowEntry<'_>| {
             entry
-                .comma
-                .then(|| {
-                    entry
-                        .trailing_comma()
-                        .in_entry(i)
-                })
+                .final_comma()
+                .into_iter()
+                .map(move |w| w.in_entry(i))
         };
         let mut list = TokenList {
             tokens: Vec::with_capacity(entries.len()),
@@ -110,26 +107,29 @@ impl<'a> TokenList<'a> {
         if entries
             .iter()
             .all(|e| {
-                e.text
+                scrub(e.text)
+                    .text
                     .trim()
                     .is_empty()
             })
         {
             return match header {
                 SipHeader::Allow | SipHeader::Supported => {
-                    let lone = matches!(entries.as_slice(), [e] if !e.comma);
+                    let lone = matches!(entries.as_slice(), [e] if e.comma.is_none());
                     for (i, e) in entries
                         .iter()
                         .enumerate()
                     {
-                        let empty = (!lone).then(|| {
-                            crate::empty_entry(Field::Entry, 0)
-                                .relocate(&e.relocation())
-                                .in_entry(i)
-                        });
+                        let empty = (!lone).then(|| crate::empty_entry(Field::Entry, 0));
                         warnings.extend(
-                            empty
+                            scrub(e.text)
+                                .warnings
                                 .into_iter()
+                                .chain(empty)
+                                .map(|w| {
+                                    w.relocate(&e.relocation())
+                                        .in_entry(i)
+                                })
                                 .chain(comma(i, e)),
                         );
                     }

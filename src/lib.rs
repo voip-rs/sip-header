@@ -479,6 +479,9 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
 /// alone. The typed lists split by their own grammar, which admits fewer
 /// starts.
 ///
+/// CR, LF and NUL are dropped before framing, as the list parsers drop
+/// them, and each entry is the slice of `raw` its text came from.
+///
 /// Entries are returned untrimmed. An empty entry between two commas is
 /// kept; the empty text after a final comma is not an entry, and
 /// [`split_comma_entries_with_warnings`] reports that comma.
@@ -509,19 +512,22 @@ pub fn split_comma_entries_with_warnings(raw: &str) -> Parsed<Vec<&str>> {
     let warnings = split
         .entries
         .last()
-        .filter(|_| split.trailing_comma)
-        .map(|last| {
-            RowEntry::new(raw, None, last, true)
-                .trailing_comma()
-                .in_entry(
-                    split
-                        .entries
-                        .len()
-                        - 1,
-                )
+        .zip(split.tail)
+        .map(|(last, tail)| {
+            RowEntry::new(raw, None, last, Some(tail))
+                .final_comma()
+                .into_iter()
+                .map(|w| {
+                    w.in_entry(
+                        split
+                            .entries
+                            .len()
+                            - 1,
+                    )
+                })
+                .collect()
         })
-        .into_iter()
-        .collect();
+        .unwrap_or_default();
     Parsed::new(split.entries, warnings)
 }
 
@@ -534,13 +540,19 @@ pub(crate) struct RowEntry<'a> {
     pub(crate) base: Option<usize>,
     /// The entry, untrimmed.
     pub(crate) text: &'a str,
-    /// Whether a final comma follows the entry.
-    pub(crate) comma: bool,
+    /// After a final comma that follows the entry, the dropped text that
+    /// ends the row; `None` without one.
+    pub(crate) comma: Option<&'a str>,
 }
 
 impl<'a> RowEntry<'a> {
     /// `text`, a slice of `row`, the row at index `index`.
-    pub(crate) fn new(row: &str, index: Option<usize>, text: &'a str, comma: bool) -> Self {
+    pub(crate) fn new(
+        row: &str,
+        index: Option<usize>,
+        text: &'a str,
+        comma: Option<&'a str>,
+    ) -> Self {
         RowEntry {
             row: index,
             base: span::row_offset(row, text),
@@ -555,7 +567,7 @@ impl<'a> RowEntry<'a> {
             row: Some(index),
             base: Some(0),
             text,
-            comma: false,
+            comma: None,
         }
     }
 
@@ -564,13 +576,32 @@ impl<'a> RowEntry<'a> {
         span::Relocation::shift(self.base, self.row)
     }
 
-    /// [`WarningCode::TrailingComma`] at the comma after the entry.
-    pub(crate) fn trailing_comma(&self) -> ParseWarning {
-        ParseWarning::new(Field::Entry, WarningCode::TrailingComma)
-            .at(self
-                .text
-                .len())
-            .relocate(&self.relocation())
+    /// [`WarningCode::TrailingComma`] at a final comma after the entry,
+    /// then the control characters dropped after it.
+    pub(crate) fn final_comma(&self) -> Vec<ParseWarning> {
+        let Some(tail) = self.comma else {
+            return Vec::new();
+        };
+        let at = self
+            .text
+            .len();
+        let after = span::Relocation::shift(
+            self.base
+                .map(|b| b + at + 1),
+            self.row,
+        );
+        std::iter::once(
+            ParseWarning::new(Field::Entry, WarningCode::TrailingComma)
+                .at(at)
+                .relocate(&self.relocation()),
+        )
+        .chain(
+            scrub::scrub(tail)
+                .warnings
+                .into_iter()
+                .map(|w| w.relocate(&after)),
+        )
+        .collect()
     }
 }
 
@@ -583,8 +614,9 @@ pub(crate) fn empty_entry(field: Field, at: usize) -> ParseWarning {
 pub(crate) struct Split<'a> {
     /// The entries, untrimmed.
     pub(crate) entries: Vec<&'a str>,
-    /// Whether a `,` ends the text, with no entry after it.
-    pub(crate) trailing_comma: bool,
+    /// When a `,` ends the text, with no entry after it, the dropped text
+    /// after that comma.
+    pub(crate) tail: Option<&'a str>,
 }
 
 /// The entries of `row`, the row at index `index`, split at its top-level
@@ -598,17 +630,25 @@ pub(crate) fn split_row(
     let last = split
         .entries
         .len()
-        .checked_sub(1)
-        .filter(|_| split.trailing_comma);
+        .checked_sub(1);
     let blank = split
         .entries
         .is_empty()
-        .then(|| RowEntry::new(row, index, row, false));
+        .then(|| RowEntry::new(row, index, row, None));
     split
         .entries
         .into_iter()
         .enumerate()
-        .map(move |(i, e)| RowEntry::new(row, index, e, Some(i) == last))
+        .map(move |(i, e)| {
+            RowEntry::new(
+                row,
+                index,
+                e,
+                split
+                    .tail
+                    .filter(|_| Some(i) == last),
+            )
+        })
         .chain(blank)
 }
 
@@ -640,8 +680,29 @@ pub(crate) enum QuoteStart {
 /// [`split_comma_entries`], a `"` opening a quoted string only where
 /// `rule` lets one start.
 pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Split<'_> {
-    let bytes = raw.as_bytes();
+    let scrubbed = scrub::scrub(raw);
+    let text = &scrubbed.text;
     let mut entries = Vec::new();
+    let mut start = 0;
+    let mut raw_start = 0;
+    for comma in top_level_commas(text, rule) {
+        let raw_comma = scrubbed.source(comma);
+        entries.push(&raw[raw_start..raw_comma]);
+        start = comma + 1;
+        raw_start = raw_comma + 1;
+    }
+    let rest = &raw[raw_start..];
+    let tail = (start > 0 && start == text.len()).then_some(rest);
+    if start < text.len() {
+        entries.push(rest);
+    }
+    Split { entries, tail }
+}
+
+/// Positions of the commas in `text` that separate list entries.
+fn top_level_commas(text: &str, rule: QuoteStart) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut commas = Vec::new();
     let mut depth = 0u32;
     let mut start = 0;
     let mut in_params = false;
@@ -650,7 +711,7 @@ pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Split<'_> {
     while i < bytes.len() {
         match bytes[i] {
             b'"' if depth == 0 && opens_quoted_string(&bytes[start..i], in_params, rule) => {
-                if let Some(close) = closing_quote(&raw[i + 1..]) {
+                if let Some(close) = closing_quote(&text[i + 1..]) {
                     i += close + 1;
                 }
             }
@@ -658,7 +719,7 @@ pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Split<'_> {
             b'>' => depth = depth.saturating_sub(1),
             b';' if depth == 0 => in_params = true,
             b',' if depth == 0 => {
-                entries.push(&raw[start..i]);
+                commas.push(i);
                 start = i + 1;
                 in_params = false;
             }
@@ -666,14 +727,7 @@ pub(crate) fn split_entries(raw: &str, rule: QuoteStart) -> Split<'_> {
         }
         i += 1;
     }
-    let trailing_comma = start > 0 && start == raw.len();
-    if start < raw.len() {
-        entries.push(&raw[start..]);
-    }
-    Split {
-        entries,
-        trailing_comma,
-    }
+    commas
 }
 
 /// Whether a `"` following `before`, the entry so far, stands where `rule`

@@ -29,6 +29,11 @@ impl Scrubbed<'_> {
     pub(crate) fn relocation(&self) -> Relocation<'_> {
         Relocation::unshift(&self.shifts)
     }
+
+    /// Where the byte at `pos` in [`text`](Self::text) sits in the original input.
+    pub(crate) fn source(&self, pos: usize) -> usize {
+        crate::span::unshifted(&self.shifts, pos)
+    }
 }
 
 /// Replace each RFC 3261 §25.1 `LWS` holding a CRLF by one SP, and drop

@@ -292,7 +292,7 @@ pub(crate) trait CommaList: Sized {
                 .is_empty()
         };
         let empty_list = Self::BLANK_ENTRIES_ARE_EMPTY
-            && matches!(entries.as_slice(), [(e, s)] if !e.comma && is_blank(s));
+            && matches!(entries.as_slice(), [(e, s)] if e.comma.is_none() && is_blank(s));
         let rows: Vec<Option<usize>> = entries
             .iter()
             .map(|(e, _)| e.row)
@@ -304,9 +304,7 @@ pub(crate) trait CommaList: Sized {
             .enumerate()
         {
             let in_row = entry.relocation();
-            let comma = entry
-                .comma
-                .then(|| entry.trailing_comma());
+            let comma = entry.final_comma();
             let own: Vec<ParseWarning> = std::mem::take(&mut scrubbed.warnings)
                 .into_iter()
                 .map(|w| w.relocate(&in_row))

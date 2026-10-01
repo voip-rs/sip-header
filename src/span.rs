@@ -152,7 +152,7 @@ impl<'a> Relocation<'a> {
 
     /// Where the byte at `pos` came from.
     pub(crate) fn start(&self, pos: usize) -> Option<usize> {
-        Some(self.base? + pos + self.removed(|s| s.at <= pos))
+        Some(self.base? + unshifted(self.shifts, pos))
     }
 
     /// Where the text ending before `pos` ended.
@@ -166,12 +166,21 @@ impl<'a> Relocation<'a> {
     }
 
     fn removed(&self, before: impl Fn(&Shift) -> bool) -> usize {
-        self.shifts
-            .iter()
-            .take_while(|s| before(s))
-            .last()
-            .map_or(0, |s| s.removed)
+        removed(self.shifts, before)
     }
+}
+
+fn removed(shifts: &[Shift], before: impl Fn(&Shift) -> bool) -> usize {
+    shifts
+        .iter()
+        .take_while(|s| before(s))
+        .last()
+        .map_or(0, |s| s.removed)
+}
+
+/// Where the byte at `pos`, in text a scrub left, came from.
+pub(crate) fn unshifted(shifts: &[Shift], pos: usize) -> usize {
+    pos + removed(shifts, |s| s.at <= pos)
 }
 
 /// Byte offset of `inner` within `outer`, when `inner` lies inside it.
@@ -355,6 +364,7 @@ mod tests {
             .iter()
             .copied()
             .chain([
+                "",
                 "<sip:a@example.com>;tag=1,",
                 r#"399 example.com "a, b", 399 example.org "c""#,
                 r#"a;x="1,2", b"#,
@@ -393,6 +403,14 @@ mod tests {
                     "{row:?}"
                 );
                 assert_eq!(token_framing(&row), token_framing(&clean), "{row:?}");
+                if let Ok(p) = SipHeaderAddrList::parse_with_warnings(&row) {
+                    assert!(
+                        p.warnings
+                            .iter()
+                            .any(|w| w.code == WarningCode::ControlChar),
+                        "{row:?}"
+                    );
+                }
                 let entries: Vec<String> = split_comma_entries(&row)
                     .into_iter()
                     .map(|e| {
