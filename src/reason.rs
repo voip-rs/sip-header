@@ -75,6 +75,12 @@ impl From<SipReasonCause> for String {
     }
 }
 
+impl AsRef<str> for SipReasonCause {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl fmt::Display for SipReasonCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)

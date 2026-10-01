@@ -157,6 +157,12 @@ impl fmt::Display for SipCallId {
     }
 }
 
+impl AsRef<str> for SipCallId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl sealed::Sealed for SipCallId {}
 
 impl HeaderParse for SipCallId {
