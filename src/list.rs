@@ -24,6 +24,24 @@ macro_rules! list_type {
                 }
                 Ok(Self(entries))
             }
+
+            /// Remove and return the entry at `index`, `None` when there is
+            /// none; errors on the last entry, which the grammar needs.
+            pub fn remove(
+                &mut self,
+                index: usize,
+            ) -> Result<Option<$Entry>, $crate::error::ParseError> {
+                $crate::list::remove_needed(&mut self.0, index)
+            }
+
+            /// Keep only the entries for which `keep` returns `true`, in
+            /// order; errors, the list unchanged, when none would be kept.
+            pub fn retain(
+                &mut self,
+                keep: impl FnMut(&$Entry) -> bool,
+            ) -> Result<(), $crate::error::ParseError> {
+                $crate::list::retain_needed(&mut self.0, keep)
+            }
         }
 
         #[cfg(feature = "serde")]
@@ -41,6 +59,18 @@ macro_rules! list_type {
             /// Build from entries; this header's grammar admits the empty list.
             pub fn new(entries: Vec<$Entry>) -> Self {
                 Self(entries)
+            }
+
+            /// Remove and return the entry at `index`, `None` when there is
+            /// none.
+            pub fn remove(&mut self, index: usize) -> Option<$Entry> {
+                (index < self.0.len()).then(|| self.0.remove(index))
+            }
+
+            /// Keep only the entries for which `keep` returns `true`, in order.
+            pub fn retain(&mut self, keep: impl FnMut(&$Entry) -> bool) {
+                self.0
+                    .retain(keep);
             }
         }
 
@@ -79,6 +109,18 @@ macro_rules! list_type {
             /// Consume self and return the entries as a `Vec`.
             pub fn into_entries(self) -> Vec<$Entry> {
                 self.0
+            }
+
+            /// The entries, in order.
+            pub fn iter(&self) -> std::slice::Iter<'_, $Entry> {
+                self.0
+                    .iter()
+            }
+
+            /// Append an entry.
+            pub fn push(&mut self, entry: $Entry) {
+                self.0
+                    .push(entry);
             }
 
             /// Number of entries.
@@ -120,6 +162,42 @@ macro_rules! list_type {
             }
         }
     };
+}
+
+/// Remove `entries[index]`, refusing the last entry of a list whose
+/// grammar needs one.
+pub(crate) fn remove_needed<T>(
+    entries: &mut Vec<T>,
+    index: usize,
+) -> Result<Option<T>, ParseError> {
+    if index >= entries.len() {
+        return Ok(None);
+    }
+    if entries.len() == 1 {
+        return Err(ParseError::empty(Field::Value));
+    }
+    Ok(Some(entries.remove(index)))
+}
+
+/// Keep the entries `keep` accepts, refusing, the entries unchanged, to
+/// keep none of a list whose grammar needs one.
+pub(crate) fn retain_needed<T>(
+    entries: &mut Vec<T>,
+    mut keep: impl FnMut(&T) -> bool,
+) -> Result<(), ParseError> {
+    let kept: Vec<bool> = entries
+        .iter()
+        .map(&mut keep)
+        .collect();
+    if !kept.contains(&true) {
+        return Err(ParseError::empty(Field::Value));
+    }
+    let mut kept = kept.into_iter();
+    entries.retain(|_| {
+        kept.next()
+            .unwrap_or(true)
+    });
+    Ok(())
 }
 
 /// A header value of the form `entry *(COMMA entry)`.

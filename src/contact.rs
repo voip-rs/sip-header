@@ -7,7 +7,7 @@
 use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::error::ParseError;
+use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
@@ -82,6 +82,47 @@ impl ContactList {
     pub fn is_empty(&self) -> bool {
         self.addrs()
             .is_empty()
+    }
+
+    /// The addresses, in order; none for the wildcard.
+    pub fn iter(&self) -> std::slice::Iter<'_, SipHeaderAddr> {
+        self.addrs()
+            .iter()
+    }
+
+    /// Append an address; errors on the wildcard, which stands alone.
+    pub fn push(&mut self, addr: SipHeaderAddr) -> Result<(), ParseError> {
+        match &mut self.0 {
+            Contacts::Wildcard => Err(ParseError::malformed(
+                Field::Entry,
+                FaultCode::Misplaced,
+                None,
+            )),
+            Contacts::Addrs(addrs) => {
+                addrs.push(addr);
+                Ok(())
+            }
+        }
+    }
+
+    /// Remove and return the address at `index`, `None` when there is none
+    /// or for the wildcard; errors on the last address, which the grammar
+    /// needs.
+    pub fn remove(&mut self, index: usize) -> Result<Option<SipHeaderAddr>, ParseError> {
+        match &mut self.0 {
+            Contacts::Wildcard => Ok(None),
+            Contacts::Addrs(addrs) => crate::list::remove_needed(addrs, index),
+        }
+    }
+
+    /// Keep only the addresses for which `keep` returns `true`, in order;
+    /// errors, the list unchanged, when none would be kept. The wildcard
+    /// has none to offer and stays.
+    pub fn retain(&mut self, keep: impl FnMut(&SipHeaderAddr) -> bool) -> Result<(), ParseError> {
+        match &mut self.0 {
+            Contacts::Wildcard => Ok(()),
+            Contacts::Addrs(addrs) => crate::list::retain_needed(addrs, keep),
+        }
     }
 
     /// Consume self and return the addresses; empty for the wildcard.

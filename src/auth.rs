@@ -9,7 +9,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
-use crate::params::HeaderParams;
+use crate::params::{HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::redact::Redact;
 use crate::traits::{sealed, HeaderParse};
 
@@ -102,39 +102,45 @@ impl SipAuthValue {
         })
     }
 
-    fn set(mut self, key: &str, value: &str, quoted: bool) -> Result<Self, ParseError> {
-        let quoted = quoted
-            || !is_token(value)
-            || MUST_QUOTE_PARAMS
-                .iter()
-                .any(|k| k.eq_ignore_ascii_case(key));
-        self.params
-            .set(key, Some(value.to_owned()), quoted)?;
-        self.token68 = None;
+    /// The `auth-param`s, to edit through a guard that refuses a flag,
+    /// which `auth-param` has no form for.
+    ///
+    /// [`Display`](fmt::Display) quotes a value where RFC 2617 requires it
+    /// or it is not a `token`. Parameters and a `token68` exclude each
+    /// other, so adding or setting one drops a `token68` the value held.
+    pub fn params_mut(&mut self) -> ParamsMut<'_> {
+        ParamsMut::new(
+            &mut self.params,
+            ParamRule {
+                reserved: &[],
+                check: check_auth_param,
+            },
+            Owner::Token68(&mut self.token68),
+        )
+    }
+
+    /// [`ParamsMut::set`] on [`params_mut`](Self::params_mut), returning
+    /// the value.
+    pub fn with_param(
+        mut self,
+        key: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ParseError> {
+        self.params_mut()
+            .set(key, Some(value.as_ref()))?;
         Ok(self)
     }
 
-    /// Set a parameter, replacing one of the same name in place; the key
-    /// must be a `token`. [`Display`](fmt::Display) quotes the value where
-    /// RFC 2617 requires it or it is not a `token`.
-    ///
-    /// Parameters and a `token68` exclude each other, so this drops a
-    /// `token68` the value held.
-    pub fn with_param(
-        self,
-        key: impl AsRef<str>,
-        value: impl AsRef<str>,
-    ) -> Result<Self, ParseError> {
-        self.set(key.as_ref(), value.as_ref(), false)
-    }
-
-    /// [`with_param`](Self::with_param), the value always quoted.
+    /// [`ParamsMut::set_quoted`] on [`params_mut`](Self::params_mut),
+    /// returning the value.
     pub fn with_quoted_param(
-        self,
+        mut self,
         key: impl AsRef<str>,
         value: impl AsRef<str>,
     ) -> Result<Self, ParseError> {
-        self.set(key.as_ref(), value.as_ref(), true)
+        self.params_mut()
+            .set_quoted(key, value)?;
+        Ok(self)
     }
 
     /// Returns the authentication scheme (e.g., "Digest", "Bearer").
@@ -203,6 +209,23 @@ impl SipAuthValue {
 const MUST_QUOTE_PARAMS: &[&str] = &[
     "realm", "domain", "nonce", "opaque", "username", "uri", "response", "cnonce",
 ];
+
+/// Refuses a flag; quotes a value [`MUST_QUOTE_PARAMS`] names or that is
+/// not a `token`.
+fn check_auth_param(key: &str, value: Option<&str>, quoted: bool) -> Result<bool, ParseError> {
+    let Some(value) = value else {
+        return Err(ParseError::malformed(
+            Field::Param,
+            FaultCode::Missing,
+            None,
+        ));
+    };
+    Ok(quoted
+        || !is_token(value)
+        || MUST_QUOTE_PARAMS
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(key)))
+}
 
 impl fmt::Display for SipAuthValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

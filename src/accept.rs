@@ -34,12 +34,12 @@ pub(crate) fn check_accept_param(
     key: &str,
     value: Option<&str>,
     quoted: bool,
-) -> Result<(), ParseError> {
+) -> Result<bool, ParseError> {
     match value {
         Some(v) if key.eq_ignore_ascii_case("q") && (quoted || !is_qvalue(v)) => Err(
             ParseError::malformed(Field::Qvalue, FaultCode::InvalidNumber, None),
         ),
-        _ => Ok(()),
+        _ => Ok(quoted),
     }
 }
 

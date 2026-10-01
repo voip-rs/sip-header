@@ -137,7 +137,7 @@ pub use message::{
     extract_request_uri_strict, extract_request_uri_with_warnings, ExtractedHeaders, RequestLine,
     SipHeaderExtract, SipMessageHeaders,
 };
-pub use params::HeaderParams;
+pub use params::{HeaderParams, ParamsMut};
 pub use reason::{SipReason, SipReasonCause, SipReasonList};
 pub use redact::{HeaderRedaction, Redact};
 pub use replaces::SipReplaces;

@@ -38,7 +38,7 @@ pub trait DialogKind: sealed::Sealed {
     const SECOND_TAG: &'static str;
     /// Whether the header defines the `early-only` flag.
     const EARLY_ONLY: bool;
-    /// Parameter names set through typed setters, which `with_param` refuses.
+    /// Parameter names set through typed setters, which `params_mut` refuses.
     const RESERVED: &'static [&'static str];
 }
 
@@ -193,41 +193,18 @@ macro_rules! dialog_id_type {
                     .map(Self)
             }
 
-            /// Set a generic parameter, replacing one of the same name in
-            /// place; the key must be a `token` other than the names this
-            /// header sets through its typed setters.
-            pub fn with_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: Option<&str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                self.0
-                    .params_mut()
-                    .set_unreserved(
-                        <Self as $crate::dialog_id::DialogKind>::RESERVED,
-                        key.as_ref(),
-                        value.map(str::to_owned),
-                        false,
-                    )?;
-                Ok(self)
-            }
-
-            /// [`with_param`](Self::with_param), the value written as a
-            /// `quoted-string` even where it could be bare.
-            pub fn with_quoted_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: impl AsRef<str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                self.0
-                    .params_mut()
-                    .set_unreserved(
-                        <Self as $crate::dialog_id::DialogKind>::RESERVED,
-                        key.as_ref(),
-                        Some(value.as_ref().to_owned()),
-                        true,
-                    )?;
-                Ok(self)
+            /// The generic parameters, to edit through a guard that refuses
+            /// the names this header sets through its typed setters.
+            pub fn params_mut(&mut self) -> $crate::params::ParamsMut<'_> {
+                $crate::params::ParamsMut::new(
+                    self.0
+                        .params_mut(),
+                    $crate::params::ParamRule {
+                        reserved: <Self as $crate::dialog_id::DialogKind>::RESERVED,
+                        check: $crate::params::any_value,
+                    },
+                    $crate::params::Owner::Plain,
+                )
             }
 
             #[doc = concat!("Returns this value with a different `", $first_name, "`, a `token`.")]
@@ -325,6 +302,8 @@ macro_rules! dialog_id_type {
                     .get(key)
             }
         }
+
+        header_params!(@builders $Type);
 
         impl std::fmt::Display for $Type {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -9,14 +9,13 @@ pub(crate) use crate::check::checked_token;
 use crate::check::refuse_controls;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::span::Span;
 use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 
-/// `with_param`, `with_quoted_param`, `params` and `param` for a type
-/// holding its parameters in a `params: HeaderParams` field; `reserved`
-/// names the keys it sets through typed setters, `check` refuses what
-/// the header's own grammar gives a meaning it would not parse back to,
-/// and `clear_spans` has the two setters clear `span` and `uri_span` on a
-/// type carrying those fields.
+/// `params_mut`, `with_param`, `with_quoted_param`, `params` and `param`
+/// for a type holding its parameters in a `params: HeaderParams` field;
+/// `reserved` and `check` make its [`ParamRule`], and `clear_spans` has
+/// the guard clear `span` and `uri_span`.
 macro_rules! header_params {
     ($Type:ident) => {
         header_params!($Type, reserved: &[], check: $crate::params::any_value);
@@ -32,90 +31,44 @@ macro_rules! header_params {
     };
     ($Type:ident, reserved: $reserved:expr, check: $check:path) => {
         impl $Type {
-            /// Set a parameter, replacing the first of the same name in place
-            /// and dropping the rest.
-            ///
-            /// The key must be a `token` this type does not set through a
-            /// typed setter. The value is unescaped text, which
-            /// [`Display`](std::fmt::Display) quotes unless it is a `token`
-            /// or a host.
-            pub fn with_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: Option<&str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                $check(key.as_ref(), value, false)?;
-                self.params
-                    .set_unreserved($reserved, key.as_ref(), value.map(str::to_owned), false)?;
-                Ok(self)
-            }
-
-            /// [`with_param`](Self::with_param), the value written as a
-            /// `quoted-string` even where it could be bare.
-            pub fn with_quoted_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: impl AsRef<str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.as_ref();
-                $check(key.as_ref(), Some(value), true)?;
-                self.params
-                    .set_unreserved($reserved, key.as_ref(), Some(value.to_owned()), true)?;
-                Ok(self)
-            }
-
-            /// The parameters, in wire order.
-            pub fn params(&self) -> &$crate::params::HeaderParams {
-                &self.params
-            }
-
-            /// [`HeaderParams::get`](crate::HeaderParams::get) on
-            /// [`params`](Self::params).
-            pub fn param(&self, key: &str) -> Option<Option<&str>> {
-                self.params
-                    .get(key)
+            /// The parameters, to edit through a guard that runs this
+            /// header's checks.
+            pub fn params_mut(&mut self) -> $crate::params::ParamsMut<'_> {
+                $crate::params::ParamsMut::new(
+                    &mut self.params,
+                    $crate::params::ParamRule {
+                        reserved: $reserved,
+                        check: $check,
+                    },
+                    $crate::params::Owner::Plain,
+                )
             }
         }
+
+        header_params!(@read $Type);
+        header_params!(@builders $Type);
     };
     ($Type:ident, reserved: $reserved:expr, clear_spans) => {
         impl $Type {
-            /// Set a parameter, replacing the first of the same name in place
-            /// and dropping the rest, and clearing the spans, which no
-            /// longer read as the value's text.
-            ///
-            /// The key must be a `token` this type does not set through a
-            /// typed setter. The value is unescaped text, which
-            /// [`Display`](std::fmt::Display) quotes unless it is a `token`
-            /// or a host.
-            pub fn with_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: Option<&str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                $crate::params::any_value(key.as_ref(), value, false)?;
-                self.params
-                    .set_unreserved($reserved, key.as_ref(), value.map(str::to_owned), false)?;
-                self.span = None;
-                self.uri_span = None;
-                Ok(self)
+            /// The parameters, to edit through a guard that runs this
+            /// header's checks and clears the spans once it changes them.
+            pub fn params_mut(&mut self) -> $crate::params::ParamsMut<'_> {
+                $crate::params::ParamsMut::new(
+                    &mut self.params,
+                    $crate::params::ParamRule {
+                        reserved: $reserved,
+                        check: $crate::params::any_value,
+                    },
+                    $crate::params::Owner::Spans([&mut self.span, &mut self.uri_span]),
+                )
             }
+        }
 
-            /// [`with_param`](Self::with_param), the value written as a
-            /// `quoted-string` even where it could be bare.
-            pub fn with_quoted_param(
-                mut self,
-                key: impl AsRef<str>,
-                value: impl AsRef<str>,
-            ) -> Result<Self, $crate::error::ParseError> {
-                let value = value.as_ref();
-                $crate::params::any_value(key.as_ref(), Some(value), true)?;
-                self.params
-                    .set_unreserved($reserved, key.as_ref(), Some(value.to_owned()), true)?;
-                self.span = None;
-                self.uri_span = None;
-                Ok(self)
-            }
-
+        header_params!(@read $Type);
+        header_params!(@builders $Type);
+    };
+    (@read $Type:ident) => {
+        impl $Type {
             /// The parameters, in wire order.
             pub fn params(&self) -> &$crate::params::HeaderParams {
                 &self.params
@@ -129,6 +82,195 @@ macro_rules! header_params {
             }
         }
     };
+    (@builders $Type:ident) => {
+        impl $Type {
+            /// [`ParamsMut::set`](crate::ParamsMut::set) on
+            /// [`params_mut`](Self::params_mut), returning the value.
+            ///
+            /// The value is unescaped text, which
+            /// [`Display`](std::fmt::Display) quotes unless it is a `token`
+            /// or a host.
+            pub fn with_param(
+                mut self,
+                key: impl AsRef<str>,
+                value: Option<&str>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.params_mut()
+                    .set(key, value)?;
+                Ok(self)
+            }
+
+            /// [`ParamsMut::set_quoted`](crate::ParamsMut::set_quoted) on
+            /// [`params_mut`](Self::params_mut), returning the value.
+            pub fn with_quoted_param(
+                mut self,
+                key: impl AsRef<str>,
+                value: impl AsRef<str>,
+            ) -> Result<Self, $crate::error::ParseError> {
+                self.params_mut()
+                    .set_quoted(key, value)?;
+                Ok(self)
+            }
+        }
+    };
+}
+
+/// What an owner's guard refuses beyond what [`HeaderParams`] does.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ParamRule {
+    /// Keys the owner sets through typed setters.
+    pub(crate) reserved: &'static [&'static str],
+    /// Refuses what the owner's grammar gives a meaning it would not parse
+    /// back to, else returns whether the value is written quoted.
+    pub(crate) check: fn(&str, Option<&str>, bool) -> Result<bool, ParseError>,
+}
+
+/// What a guard updates on its owner beside the parameters.
+#[derive(Debug)]
+pub(crate) enum Owner<'a> {
+    Plain,
+    /// Cleared on drop once the parameters changed.
+    Spans([&'a mut Option<Span>; 2]),
+    /// Dropped by every parameter set, the two excluding each other.
+    Token68(&'a mut Option<String>),
+}
+
+/// A value's parameters, to edit in place, returned by its `params_mut`
+/// (such as [`SipHeaderAddr::params_mut`](crate::SipHeaderAddr::params_mut)).
+///
+/// Every operation runs the checks of the value's builders and refuses a
+/// key the value sets through a typed setter (a tag, `rport`, `index`),
+/// [`remove`](Self::remove) included; [`retain`](Self::retain) never offers
+/// such a key and keeps it. A failed operation leaves the parameters as
+/// they were. Once an operation changes them, the value's spans are
+/// cleared when the guard drops. Reading goes through [`HeaderParams`].
+#[derive(Debug)]
+pub struct ParamsMut<'a> {
+    params: &'a mut HeaderParams,
+    rule: ParamRule,
+    owner: Owner<'a>,
+    changed: bool,
+}
+
+impl<'a> ParamsMut<'a> {
+    pub(crate) fn new(params: &'a mut HeaderParams, rule: ParamRule, owner: Owner<'a>) -> Self {
+        ParamsMut {
+            params,
+            rule,
+            owner,
+            changed: false,
+        }
+    }
+
+    fn insert(
+        &mut self,
+        name: &str,
+        value: Option<&str>,
+        quoted: bool,
+        replace: bool,
+    ) -> Result<(), ParseError> {
+        refuse_reserved(
+            self.rule
+                .reserved,
+            name,
+        )?;
+        let quoted = (self
+            .rule
+            .check)(name, value, quoted)?;
+        self.params
+            .insert(name, value, quoted, replace)?;
+        if let Owner::Token68(token68) = &mut self.owner {
+            **token68 = None;
+        }
+        self.changed = true;
+        Ok(())
+    }
+
+    /// Append a parameter, `None` for a flag.
+    ///
+    /// Errors when the name is not a `token`, is already present (see
+    /// [`set`](Self::set)) or is reserved, when the value holds CR, LF or
+    /// NUL, or when the header's grammar refuses it.
+    pub fn push(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), value, false, false)
+    }
+
+    /// [`push`](Self::push), the value written as a `quoted-string` even
+    /// where it could be bare.
+    pub fn push_quoted(
+        &mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), Some(value.as_ref()), true, false)
+    }
+
+    /// Set a parameter, replacing the first of the same name in place and
+    /// dropping the rest, or appending it; errors as [`push`](Self::push)
+    /// does but for a name already present.
+    pub fn set(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), value, false, true)
+    }
+
+    /// [`set`](Self::set), the value written as a `quoted-string` even
+    /// where it could be bare.
+    pub fn set_quoted(
+        &mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), Some(value.as_ref()), true, true)
+    }
+
+    /// Remove every parameter named `name`, case-insensitively, returning
+    /// how many were removed; errors on a reserved name.
+    pub fn remove(&mut self, name: &str) -> Result<usize, ParseError> {
+        refuse_reserved(
+            self.rule
+                .reserved,
+            name,
+        )?;
+        let removed = self
+            .params
+            .remove(name);
+        self.changed |= removed > 0;
+        Ok(removed)
+    }
+
+    /// Keep only the parameters for which `keep` returns `true`, in order;
+    /// `keep` is not offered reserved keys, which are always kept.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str, Option<&str>) -> bool) {
+        let reserved = self
+            .rule
+            .reserved;
+        let before = self
+            .params
+            .len();
+        self.params
+            .retain(|name, value| is_reserved(reserved, name) || keep(name, value));
+        self.changed |= self
+            .params
+            .len()
+            != before;
+    }
+}
+
+impl std::ops::Deref for ParamsMut<'_> {
+    type Target = HeaderParams;
+
+    fn deref(&self) -> &HeaderParams {
+        self.params
+    }
+}
+
+impl Drop for ParamsMut<'_> {
+    fn drop(&mut self) {
+        if let (true, Owner::Spans(spans)) = (self.changed, &mut self.owner) {
+            for span in spans {
+                **span = None;
+            }
+        }
+    }
 }
 
 /// A header value's parameters, in wire order.
@@ -224,11 +366,120 @@ fn checked_name(name: &str) -> Result<String, ParseError> {
 
 /// The `check` of a header whose grammar gives no parameter a meaning of
 /// its own.
-pub(crate) fn any_value(_key: &str, _value: Option<&str>, _quoted: bool) -> Result<(), ParseError> {
-    Ok(())
+pub(crate) fn any_value(
+    _key: &str,
+    _value: Option<&str>,
+    quoted: bool,
+) -> Result<bool, ParseError> {
+    Ok(quoted)
 }
 
 impl HeaderParams {
+    /// No parameters.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// [`push`](Self::push), returning the parameters.
+    pub fn with(mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<Self, ParseError> {
+        self.push(name, value)?;
+        Ok(self)
+    }
+
+    /// [`push_quoted`](Self::push_quoted), returning the parameters.
+    pub fn with_quoted(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ParseError> {
+        self.push_quoted(name, value)?;
+        Ok(self)
+    }
+
+    /// Append a parameter, its name lowercased, `None` for a flag.
+    ///
+    /// Errors when the name is not a `token` or is already present (see
+    /// [`set`](Self::set)), or when the value holds CR, LF or NUL, which
+    /// no `quoted-string` carries back.
+    pub fn push(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), value, false, false)
+    }
+
+    /// [`push`](Self::push), the value written as a `quoted-string` even
+    /// where it could be bare.
+    pub fn push_quoted(
+        &mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), Some(value.as_ref()), true, false)
+    }
+
+    /// Set a parameter, replacing the first of the same name in place and
+    /// dropping the rest, or appending it; errors as [`push`](Self::push)
+    /// does but for a name already present.
+    pub fn set(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), value, false, true)
+    }
+
+    /// [`set`](Self::set), the value written as a `quoted-string` even
+    /// where it could be bare.
+    pub fn set_quoted(
+        &mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<(), ParseError> {
+        self.insert(name.as_ref(), Some(value.as_ref()), true, true)
+    }
+
+    /// Remove every parameter named `name`, case-insensitively, returning
+    /// how many were removed.
+    pub fn remove(&mut self, name: &str) -> usize {
+        let before = self.len();
+        self.0
+            .retain(|p| {
+                !p.name
+                    .eq_ignore_ascii_case(name)
+            });
+        before - self.len()
+    }
+
+    /// Keep only the parameters for which `keep` returns `true`, in order.
+    pub fn retain(&mut self, mut keep: impl FnMut(&str, Option<&str>) -> bool) {
+        self.0
+            .retain(|p| {
+                keep(
+                    &p.name,
+                    p.value
+                        .as_deref(),
+                )
+            });
+    }
+
+    /// The checked path under [`push`](Self::push) and [`set`](Self::set),
+    /// `replace` choosing between them.
+    pub(crate) fn insert(
+        &mut self,
+        name: &str,
+        value: Option<&str>,
+        quoted: bool,
+        replace: bool,
+    ) -> Result<(), ParseError> {
+        let name = checked_name(name)?;
+        if let Some(v) = value {
+            refuse_controls(Field::Param, v)?;
+        }
+        if !replace
+            && self
+                .find(&name)
+                .is_some()
+        {
+            return Err(param_fault(FaultCode::Duplicate));
+        }
+        self.replace(&name, value.map(str::to_owned), quoted);
+        Ok(())
+    }
+
     /// Parameters in wire order as `(name, value)`; `None` for a flag.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, Option<&str>)> + '_ {
         self.0
@@ -297,28 +548,9 @@ impl HeaderParams {
     }
 
     /// Append without checks.
-    fn push(&mut self, name: String, value: Option<String>, quoted: bool) {
+    fn push_unchecked(&mut self, name: String, value: Option<String>, quoted: bool) {
         self.0
             .push(Param::new(name, value, quoted));
-    }
-
-    /// Set `name`, replacing its first occurrence in place and dropping the
-    /// rest, or appending it.
-    ///
-    /// The name must be a `token`; a value must not hold CR, LF or NUL,
-    /// which no `quoted-string` carries back.
-    pub(crate) fn set(
-        &mut self,
-        name: &str,
-        value: Option<String>,
-        quoted: bool,
-    ) -> Result<(), ParseError> {
-        let name = checked_name(name)?;
-        if let Some(v) = &value {
-            refuse_controls(Field::Param, v)?;
-        }
-        self.replace(&name, value, quoted);
-        Ok(())
     }
 
     /// [`set`](Self::set) without its checks, for a lowercase `token` name
@@ -329,7 +561,7 @@ impl HeaderParams {
             .iter()
             .position(|p| p.name == name)
         else {
-            self.push(name.to_string(), value, quoted);
+            self.push_unchecked(name.to_string(), value, quoted);
             return;
         };
         let mut index = 0;
@@ -339,19 +571,6 @@ impl HeaderParams {
                 index - 1 == first || p.name != name
             });
         self.0[first] = Param::new(name.to_string(), value, quoted);
-    }
-
-    /// [`set`](Self::set) for a caller's generic setter, refusing the keys
-    /// its owner sets through typed setters.
-    pub(crate) fn set_unreserved(
-        &mut self,
-        reserved: &[&str],
-        name: &str,
-        value: Option<String>,
-        quoted: bool,
-    ) -> Result<(), ParseError> {
-        refuse_reserved(reserved, name)?;
-        self.set(name, value, quoted)
     }
 
     /// Remove the first `name` when it is unquoted and `setter_form`
@@ -442,7 +661,7 @@ impl HeaderParams {
         {
             warnings.push(ParseWarning::new(field, WarningCode::DuplicateParam).at(at));
         }
-        self.push(name.to_ascii_lowercase(), value, quoted);
+        self.push_unchecked(name.to_ascii_lowercase(), value, quoted);
     }
 
     /// Append one `generic-param` read from `input`, unquoting its value
@@ -536,11 +755,14 @@ impl HeaderParams {
     }
 }
 
-fn refuse_reserved(reserved: &[&str], name: &str) -> Result<(), ParseError> {
-    if reserved
+fn is_reserved(reserved: &[&str], name: &str) -> bool {
+    reserved
         .iter()
         .any(|r| r.eq_ignore_ascii_case(name))
-    {
+}
+
+fn refuse_reserved(reserved: &[&str], name: &str) -> Result<(), ParseError> {
+    if is_reserved(reserved, name) {
         return Err(param_fault(FaultCode::Misplaced));
     }
     Ok(())
@@ -640,7 +862,7 @@ pub(crate) fn deserialize_unchecked<'de, D: serde::Deserializer<'de>>(
         if let Some(v) = &value {
             refuse_controls(Field::Param, v).map_err(D::Error::custom)?;
         }
-        params.push(name.to_ascii_lowercase(), value, quoted);
+        params.push_unchecked(name.to_ascii_lowercase(), value, quoted);
     }
     Ok(params)
 }
@@ -689,26 +911,26 @@ mod tests {
     #[test]
     fn set_replaces_first_and_drops_later_duplicates() {
         let (mut p, _) = read(";a=1;b=2;a=3;c;a=4");
-        p.set("A", Some("x".into()), false)
+        p.set("A", Some("x"))
             .unwrap();
         assert_eq!(p.to_string(), ";a=x;b=2;c");
-        p.set("d", None, false)
+        p.set("d", None)
             .unwrap();
         assert_eq!(p.to_string(), ";a=x;b=2;c;d");
         assert!(p
-            .set("a b", None, false)
+            .set("a b", None)
             .is_err());
         assert!(p
-            .set("x", Some("a\nb".into()), true)
+            .set_quoted("x", "a\nb")
             .is_err());
     }
 
     #[test]
     fn quoted_flag_normalized_off_and_empty_on() {
         let mut p = HeaderParams::default();
-        p.set("f", None, true)
+        p.insert("f", None, true, false)
             .unwrap();
-        p.set("e", Some(String::new()), false)
+        p.set("e", Some(""))
             .unwrap();
         assert!(!p.is_quoted("f"));
         assert!(p.is_quoted("e"));
@@ -735,12 +957,14 @@ mod tests {
     #[test]
     fn reserved_refused() {
         let mut p = HeaderParams::default();
-        assert_eq!(
-            p.set_unreserved(&["tag"], "TAG", None, false),
-            Err(param_fault(FaultCode::Misplaced))
-        );
-        assert!(p
-            .set_unreserved(&["tag"], "tags", None, false)
+        let rule = ParamRule {
+            reserved: &["tag"],
+            check: any_value,
+        };
+        let mut g = ParamsMut::new(&mut p, rule, Owner::Plain);
+        assert_eq!(g.set("TAG", None), Err(param_fault(FaultCode::Misplaced)));
+        assert!(g
+            .set("tags", None)
             .is_ok());
     }
 

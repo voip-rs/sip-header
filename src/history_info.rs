@@ -7,7 +7,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
-use crate::params::HeaderParams;
+use crate::params::{HeaderParams, ParamsMut};
 use crate::span::{Located, Relocation, Span};
 
 /// A single entry from a History-Info header (RFC 7044).
@@ -96,11 +96,16 @@ impl HistoryInfoEntry {
             ));
         }
         self.addr
-            .params_mut()
-            .replace("index", Some(index.to_owned()), false);
-        self.addr
-            .clear_spans();
+            .replace_param("index", index.to_owned());
         Ok(self)
+    }
+
+    /// The header-level parameters, to edit through a guard that refuses
+    /// `index` and `tag`, which are set through typed setters, and clears
+    /// the spans once it changes them.
+    pub fn params_mut(&mut self) -> ParamsMut<'_> {
+        self.addr
+            .params_mut_reserving(&["index", "tag"])
     }
 
     /// Raw percent-encoded Reason value from the URI `?Reason=...` header.

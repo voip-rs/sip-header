@@ -9,7 +9,7 @@ use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
-use crate::params::HeaderParams;
+use crate::params::{any_value, HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::reason::SipReason;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::replaces::SipReplaces;
@@ -109,7 +109,8 @@ impl Located for Option<SipHeaderAddr> {
 /// Parameters [`SipHeaderAddr::with_param`] refuses, set through a typed setter.
 const RESERVED: &[&str] = &["tag"];
 
-header_params!(SipHeaderAddr, reserved: RESERVED, clear_spans);
+header_params!(@read SipHeaderAddr);
+header_params!(@builders SipHeaderAddr);
 
 /// The `tag` [`SipHeaderAddr::with_tag`] writes.
 #[cfg(feature = "serde")]
@@ -278,8 +279,33 @@ impl SipHeaderAddr {
             .as_urn()
     }
 
-    pub(crate) fn params_mut(&mut self) -> &mut HeaderParams {
-        &mut self.params
+    /// The parameters, to edit through a guard that refuses `tag` and
+    /// clears the spans once it changes them.
+    pub fn params_mut(&mut self) -> ParamsMut<'_> {
+        self.params_mut_reserving(RESERVED)
+    }
+
+    /// [`params_mut`](Self::params_mut) refusing `reserved` in place of
+    /// `tag` alone.
+    pub(crate) fn params_mut_reserving(
+        &mut self,
+        reserved: &'static [&'static str],
+    ) -> ParamsMut<'_> {
+        ParamsMut::new(
+            &mut self.params,
+            ParamRule {
+                reserved,
+                check: any_value,
+            },
+            Owner::Spans([&mut self.span, &mut self.uri_span]),
+        )
+    }
+
+    /// Set `name` without the guard's checks, as a typed setter does.
+    pub(crate) fn replace_param(&mut self, name: &str, value: String) {
+        self.params
+            .replace(name, Some(value), false);
+        self.clear_spans();
     }
 
     /// Clear both spans, as a builder that changes the value does.
