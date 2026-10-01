@@ -301,10 +301,10 @@ impl SipHeaderAddr {
 
 /// An address written as Display does, with `display_name`, `uri` and
 /// `params` in place of its own.
-struct Rendered<'a, U, P> {
-    display_name: Option<&'a str>,
-    uri: U,
-    params: P,
+pub(crate) struct Rendered<'a, U, P> {
+    pub(crate) display_name: Option<&'a str>,
+    pub(crate) uri: U,
+    pub(crate) params: P,
 }
 
 impl<U: fmt::Display, P: fmt::Display> fmt::Display for Rendered<'_, U, P> {

@@ -8,7 +8,9 @@ use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
 use crate::params::{HeaderParams, ParamsMut};
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{Located, Relocation, Span};
+use crate::traits::sealed;
 
 /// A single entry from a History-Info header (RFC 7044).
 ///
@@ -122,6 +124,24 @@ impl HistoryInfoEntry {
 impl fmt::Display for HistoryInfoEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.addr)
+    }
+}
+
+impl sealed::Sealed for HistoryInfoEntry {}
+
+impl Redact for HistoryInfoEntry {
+    /// Render for logs as [`SipHeaderAddr`]'s rendering writes the address.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        self.addr
+            .redacted(how)
+    }
+}
+
+impl Redact for HistoryInfo {
+    /// Render for logs: every entry as [`HistoryInfoEntry`]'s rendering
+    /// writes it.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedList(self.entries(), how)
     }
 }
 

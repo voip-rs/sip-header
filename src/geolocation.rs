@@ -15,8 +15,9 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
-use crate::redact::{HeaderRedaction, Redact};
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
+use crate::traits::sealed;
 use crate::uri_info::read_uri;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
@@ -116,11 +117,24 @@ impl fmt::Display for SipGeolocationEntry {
     }
 }
 
-impl SipGeolocationEntry {
-    fn write_redacted(&self, f: &mut fmt::Formatter<'_>, how: &HeaderRedaction) -> fmt::Result {
+impl sealed::Sealed for SipGeolocationEntry {}
+
+impl Redact for SipGeolocationEntry {
+    /// Render for logs: the reference as its scheme and `***` unless `how`
+    /// shows locations, and then through sip-uri's redaction.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedEntry(self, how)
+    }
+}
+
+struct RedactedEntry<'a>(&'a SipGeolocationEntry, &'a HeaderRedaction);
+
+impl fmt::Display for RedactedEntry<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let RedactedEntry(entry, how) = self;
         f.write_char('<')?;
         if how.masks_location() {
-            if let Some(scheme) = self
+            if let Some(scheme) = entry
                 .uri
                 .scheme()
             {
@@ -131,43 +145,26 @@ impl SipGeolocationEntry {
             write!(
                 f,
                 "{}",
-                self.uri
+                entry
+                    .uri
                     .redacted(how.uri())
             )?;
         }
         write!(
             f,
             ">{}",
-            self.params
+            entry
+                .params
                 .masked(how.masked_params())
         )
     }
 }
 
 impl Redact for SipGeolocation {
-    /// Render for logs: each reference as its scheme and `***` unless `how`
-    /// shows locations, and then through sip-uri's redaction.
+    /// Render for logs: every entry as [`SipGeolocationEntry`]'s rendering
+    /// writes it.
     fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
-        RedactedGeolocation(self, how)
-    }
-}
-
-struct RedactedGeolocation<'a>(&'a SipGeolocation, &'a HeaderRedaction);
-
-impl fmt::Display for RedactedGeolocation<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, entry) in self
-            .0
-            .entries()
-            .iter()
-            .enumerate()
-        {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            entry.write_redacted(f, self.1)?;
-        }
-        Ok(())
+        RedactedList(self.entries(), how)
     }
 }
 

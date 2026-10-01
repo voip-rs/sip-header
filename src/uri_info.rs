@@ -14,13 +14,16 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use sip_uri::{Uri, UriParse};
+use sip_uri::{Uri, UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::ParseError;
+use crate::header_addr::Rendered;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
+use crate::traits::sealed;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 ///
@@ -109,6 +112,31 @@ impl UriInfoEntry {
 impl fmt::Display for UriInfoEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<{}>{}", self.uri, self.params)
+    }
+}
+
+impl sealed::Sealed for UriInfoEntry {}
+
+impl Redact for UriInfoEntry {
+    /// Render for logs: the URI through sip-uri's redaction, the parameters
+    /// [`HeaderRedaction`] masks as `***`.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        Rendered {
+            display_name: None,
+            uri: self
+                .uri
+                .redacted(how.uri()),
+            params: self
+                .params
+                .masked(how.masked_params()),
+        }
+    }
+}
+
+impl Redact for UriInfo {
+    /// Render for logs: every entry as [`UriInfoEntry`]'s rendering writes it.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedList(self.entries(), how)
     }
 }
 
