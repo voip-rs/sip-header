@@ -2,7 +2,7 @@
 
 ## Comma lists split through one quote- and bracket-aware splitter
 
-Every list header splits through `split_comma_entries`, which skips commas inside `<...>` and inside quoted strings (honouring `quoted-pair`). No header gets a private splitter, because a list entry's quoted string (Warning's warn-text, an auth param, a display name) is as likely to hold a comma as its URI is.
+Every list header splits through `split_comma_entries`, which skips commas inside `<...>` and inside quoted strings (honouring `quoted-pair`). No header gets a private splitter, because a list entry's quoted string (Warning's warn-text, an auth param, a display name) is as likely to hold a comma as its URI is. The splitter frames the row with its control characters dropped, as the entry parsers read it, while each entry stays a slice of the row as handed in, so a dropped character never moves a boundary.
 
 A `"` opens a quoted string only at bracket depth zero, only where the list's grammar lets one start (a display name, a parameter value, warn-text), and only when it closes; any other quote is ordinary text. The public splitter, which does not know the grammar, accepts the union of those positions. A stray quote therefore never holds commas, and printing a leniently parsed list cannot pair it with a later quote and reframe the entries. Text after a final comma is not an entry, but the comma is reported; the public splitter has a reporting sibling so a caller that splits and then builds from entries does not lose that breach.
 
