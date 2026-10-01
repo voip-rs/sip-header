@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use sip_header::sip_uri::{Host, Uri, UriParse, WarningKind};
 use sip_header::{
     AddrParts, ContactList, Fault, FaultCode, Field, HeaderParse, HistoryInfo, HistoryInfoEntry,
-    ListParse, ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipGeolocation,
-    SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipJoin, SipReason,
-    SipReasonCause, SipReasonList, SipSecurity, SipVia, SipViaEntry, SipWarning, UriInfo,
-    UriInfoEntry, WarningCode,
+    ListParse, ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipCallId,
+    SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup,
+    SipJoin, SipReason, SipReasonCause, SipReasonList, SipSecurity, SipVia, SipViaEntry,
+    SipWarning, UriInfo, UriInfoEntry, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -308,6 +308,19 @@ fn reason_builds_and_refuses() -> R {
         assert!(SipReasonCause::new(digits).is_err(), "{digits:?}");
     }
     assert_eq!(SipReasonCause::from(16).as_str(), "16");
+    Ok(())
+}
+
+fn as_ref_is_as_str<T: AsRef<str>>(value: &T, as_str: &str) {
+    assert_eq!(value.as_ref(), as_str);
+}
+
+#[test]
+fn string_newtypes_are_as_ref_str() -> R {
+    let cause = SipReasonCause::new("0302")?;
+    as_ref_is_as_str(&cause, cause.as_str());
+    let id = SipCallId::parse("a84b4c76e66710@example.com")?;
+    as_ref_is_as_str(&id, id.as_str());
     Ok(())
 }
 
