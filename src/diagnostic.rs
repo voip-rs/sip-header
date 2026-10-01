@@ -443,42 +443,6 @@ mod tests {
         all
     }
 
-    fn uri_codes() -> Vec<sip_uri::WarningCode> {
-        use sip_uri::WarningCode as U;
-        vec![
-            U::InvalidChar,
-            U::MalformedEscape,
-            U::EmptyName,
-            U::EmptySegment,
-            U::PasswordWithoutUser,
-            U::SignedPort,
-            U::EmptyPort,
-            U::InvalidHostLabel,
-            U::NumericToplabel,
-            U::EscapedHost,
-            U::UnexpectedFragment,
-            U::EmptyFragment,
-            U::HeaderShapedUser,
-            U::MissingPhoneContext,
-            U::EmptyComponent,
-            U::InvalidScheme,
-            U::MissingScheme,
-            U::Wildcard,
-            U::MissingHost,
-            U::InvalidIpv6,
-            U::InvalidPort,
-            U::TrailingContent,
-            U::MissingValue,
-            U::EmptyUser,
-            U::EmptyUserinfo,
-            U::MissingNumber,
-            U::NoDigits,
-            U::MissingNid,
-            U::MissingNss,
-            U::InvalidNid,
-        ]
-    }
-
     #[test]
     fn printed_code_names_are_injective() {
         let mut seen = std::collections::HashSet::new();
@@ -491,7 +455,7 @@ mod tests {
             );
             assert!(seen.insert(code.to_string()), "{code:?}");
         }
-        for code in uri_codes() {
+        for &code in sip_uri::WarningCode::ALL {
             let ours = WarningCode::Uri(code);
             assert_eq!(ours.as_str(), code.as_str(), "{code:?}");
             assert_eq!(

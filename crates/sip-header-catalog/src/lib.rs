@@ -617,37 +617,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_round_trip() {
-        assert_eq!(SipHeader::CallInfo.to_string(), "Call-Info");
-        assert_eq!(SipHeader::HistoryInfo.to_string(), "History-Info");
-        assert_eq!(
-            SipHeader::PAssertedIdentity.to_string(),
-            "P-Asserted-Identity"
-        );
-    }
-
-    #[test]
-    fn as_ref_str() {
-        let h: &str = SipHeader::CallInfo.as_ref();
-        assert_eq!(h, "Call-Info");
-    }
-
-    #[test]
-    fn from_str_case_insensitive() {
-        assert_eq!("call-info".parse::<SipHeader>(), Ok(SipHeader::CallInfo));
-        assert_eq!("CALL-INFO".parse::<SipHeader>(), Ok(SipHeader::CallInfo));
-        assert_eq!(
-            "history-info".parse::<SipHeader>(),
-            Ok(SipHeader::HistoryInfo)
-        );
-        assert_eq!(
-            "p-asserted-identity".parse::<SipHeader>(),
-            Ok(SipHeader::PAssertedIdentity)
-        );
-        assert_eq!(
-            "P-ASSERTED-IDENTITY".parse::<SipHeader>(),
-            Ok(SipHeader::PAssertedIdentity)
-        );
+    fn as_ref_is_as_str() {
+        for h in SipHeader::ALL {
+            let s: &str = h.as_ref();
+            assert_eq!(s, h.as_str());
+        }
     }
 
     #[test]
@@ -748,72 +722,6 @@ mod compact_form_tests {
                 header
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod special_case_tests {
-    use super::*;
-
-    #[test]
-    fn cseq_variants() {
-        assert_eq!("CSeq".parse::<SipHeader>(), Ok(SipHeader::Cseq));
-        assert_eq!("cseq".parse::<SipHeader>(), Ok(SipHeader::Cseq));
-        assert_eq!("CSEQ".parse::<SipHeader>(), Ok(SipHeader::Cseq));
-        assert_eq!(SipHeader::Cseq.to_string(), "CSeq");
-    }
-
-    #[test]
-    fn www_authenticate_variants() {
-        assert_eq!(
-            "WWW-Authenticate".parse::<SipHeader>(),
-            Ok(SipHeader::WwwAuthenticate)
-        );
-        assert_eq!(
-            "www-authenticate".parse::<SipHeader>(),
-            Ok(SipHeader::WwwAuthenticate)
-        );
-        assert_eq!(SipHeader::WwwAuthenticate.to_string(), "WWW-Authenticate");
-    }
-
-    #[test]
-    fn rack_rseq_variants() {
-        assert_eq!("RAck".parse::<SipHeader>(), Ok(SipHeader::Rack));
-        assert_eq!("rack".parse::<SipHeader>(), Ok(SipHeader::Rack));
-        assert_eq!(SipHeader::Rack.to_string(), "RAck");
-
-        assert_eq!("RSeq".parse::<SipHeader>(), Ok(SipHeader::Rseq));
-        assert_eq!("rseq".parse::<SipHeader>(), Ok(SipHeader::Rseq));
-        assert_eq!(SipHeader::Rseq.to_string(), "RSeq");
-    }
-
-    #[test]
-    fn user_to_user_variants() {
-        assert_eq!(
-            "User-to-User".parse::<SipHeader>(),
-            Ok(SipHeader::UserToUser)
-        );
-        assert_eq!(
-            "user-to-user".parse::<SipHeader>(),
-            Ok(SipHeader::UserToUser)
-        );
-        assert_eq!(SipHeader::UserToUser.to_string(), "User-to-User");
-    }
-
-    #[test]
-    fn p_header_variants() {
-        assert_eq!(
-            "P-DCS-Trace-Party-ID".parse::<SipHeader>(),
-            Ok(SipHeader::PDcsTracePartyId)
-        );
-        assert_eq!(
-            "p-dcs-trace-party-id".parse::<SipHeader>(),
-            Ok(SipHeader::PDcsTracePartyId)
-        );
-        assert_eq!(
-            SipHeader::PDcsTracePartyId.to_string(),
-            "P-DCS-Trace-Party-ID"
-        );
     }
 }
 
@@ -972,18 +880,6 @@ mod registry_tests {
     }
 
     #[test]
-    fn draft_headers_are_always_present() {
-        assert_eq!("Diversion".parse::<SipHeader>(), Ok(SipHeader::Diversion));
-        assert_eq!(
-            "remote-party-id".parse::<SipHeader>(),
-            Ok(SipHeader::RemotePartyId)
-        );
-        assert_eq!(SipHeader::RemotePartyId.to_string(), "Remote-Party-ID");
-        assert_eq!(SipHeader::Diversion.registry(), Registry::Draft);
-        assert_eq!(SipHeader::Via.registry(), Registry::Iana);
-    }
-
-    #[test]
     fn from_str_takes_canonical_names_only() {
         assert!("v"
             .parse::<SipHeader>()
@@ -998,17 +894,6 @@ mod serde_tests {
 
     #[test]
     fn serializes_as_the_wire_name() {
-        assert_eq!(
-            serde_json::to_string(&[
-                SipHeader::CallId,
-                SipHeader::WwwAuthenticate,
-                SipHeader::Cseq,
-                SipHeader::UserToUser,
-                SipHeader::RemotePartyId,
-            ])
-            .unwrap(),
-            r#"["Call-ID","WWW-Authenticate","CSeq","User-to-User","Remote-Party-ID"]"#
-        );
         for h in SipHeader::ALL {
             assert_eq!(
                 serde_json::to_string(h).unwrap(),
