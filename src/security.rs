@@ -75,6 +75,8 @@ impl fmt::Display for SipSecurityMechanism {
 
 /// Security-Client, Security-Server or Security-Verify header value.
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// # Equality
 ///
 /// Entry by entry, in order, each as [`SipSecurityMechanism`] compares. [`Hash`] follows

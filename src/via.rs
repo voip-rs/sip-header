@@ -191,6 +191,8 @@ impl fmt::Display for SipViaEntry {
 
 /// SIP Via header value: one `via-parm` or more.
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// ```
 /// use sip_header::sip_uri::Host;
 /// use sip_header::{SipVia, SipViaEntry};

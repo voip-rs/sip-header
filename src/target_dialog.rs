@@ -4,6 +4,8 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 
 /// A `Target-Dialog` header value (RFC 4538 §7).
 ///
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and [`UriHeaderParse`](crate::UriHeaderParse).
+///
 /// Identifies an existing dialog: Call-ID plus the mandatory `local-tag`
 /// and `remote-tag`, both from the perspective of the request recipient.
 ///

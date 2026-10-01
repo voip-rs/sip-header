@@ -95,6 +95,8 @@ impl fmt::Display for SipWarningEntry {
 
 /// SIP Warning header.
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// RFC 3261 §20.43:
 /// ```text
 /// Warning = "Warning" HCOLON warning-value *(COMMA warning-value)

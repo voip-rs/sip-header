@@ -147,6 +147,8 @@ impl Redact for HistoryInfo {
 
 /// History-Info header value (RFC 7044).
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// Contains one or more routing-chain entries, each with a SIP URI,
 /// optional index, and optional embedded Reason header.
 ///

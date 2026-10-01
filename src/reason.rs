@@ -83,6 +83,8 @@ impl fmt::Display for SipReasonCause {
 
 /// One RFC 3326 `reason-value = protocol *(SEMI reason-params)`.
 ///
+/// Parsed through [`HeaderParse`] and [`UriHeaderParse`].
+///
 /// ```
 /// use sip_header::{HeaderParse, SipReason};
 ///
@@ -201,6 +203,8 @@ impl UriHeaderParse for SipReason {
 
 /// The Reason header: `reason-value *(COMMA reason-value)` (RFC 3326 §2),
 /// one reason or more.
+///
+/// Parsed through [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipReasonList};

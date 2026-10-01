@@ -27,16 +27,22 @@ A crate whose public API names header names or a header store depends on sip-hea
 
 ## Imports
 
-Glob the prelude, which holds only traits, and name the types. sip-uri defines `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at its root too, so globbing both roots makes those names ambiguous; beside `sip_uri::*`, the names imported explicitly are the ones used.
+Parsing, lookup, equivalence and redaction are extension traits, imported by name as sip-uri's `UriParse` is. Most code needs these three:
 
 ```rust
-use sip_header::prelude::*;
-use sip_header::{ParseError, SipHeaderAddr};
+use sip_header::{HeaderParse, ListParse, SipHeaderLookup};
+use sip_header::{ParseError, SipHeaderAddr, SipVia};
+use std::collections::HashMap;
 
 let addr = SipHeaderAddr::parse("<sip:alice@example.com>;tag=a")?;
 assert_eq!(addr.tag(), Some("a"));
+let via = SipVia::from_entries(["SIP/2.0/UDP 198.51.100.1"])?;
+let headers = HashMap::from([("Via".to_string(), via.to_string())]);
+assert_eq!(headers.via()?, Some(via));
 # Ok::<(), ParseError>(())
 ```
+
+The others are named where needed: `UriHeaderParse`, `AddrParts`, `SipHeaderRowsExt`, `Redact`, `HeaderEquivalence` and `SipHeaderExtract`. sip-uri defines `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at its root too, so sip-uri's are spelled through `sip_uri::` beside these.
 
 ## Lenient parsing, reported breaches
 
@@ -61,8 +67,7 @@ assert!(matches!(
 Constructors, builders and deserializers return `Result`, and refuse what would print as a different value: a built value parses back strictly as itself.
 
 ```rust
-use sip_header::prelude::*;
-use sip_header::sip_uri::Uri;
+use sip_header::sip_uri::{Uri, UriParse};
 use sip_header::SipHeaderAddr;
 
 let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
@@ -121,8 +126,7 @@ Typed accessors for any `SipHeaderRows` store. Each returns `Ok(None)` for an ab
 
 ```rust
 use std::collections::HashMap;
-use sip_header::prelude::*;
-use sip_header::{SipHeader, UriInfo};
+use sip_header::{SipHeader, SipHeaderLookup, UriInfo};
 
 let mut headers = HashMap::new();
 headers.insert(
@@ -197,8 +201,7 @@ assert_eq!(fields.via()?.unwrap().len(), 1);
 `Redact::redacted` renders a value for logs through a `HeaderRedaction`, which wraps sip-uri's `Redaction`. An address masks its display name along with the user part, and the identity parameters (`+sip.instance`, `pub-gruu`, `temp-gruu`) unless shown; a Geolocation masks each reference after its scheme unless shown; `SipAuthValue` masks its credentials, and the username with the user part.
 
 ```rust
-use sip_header::prelude::*;
-use sip_header::{HeaderRedaction, SipHeaderAddr};
+use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
 
 let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
 assert_eq!(
@@ -210,11 +213,12 @@ assert_eq!(
 
 ## Migrating from 0.3
 
-**Import `sip_header::prelude::*` first.** Every `parse` is a trait method (`HeaderParse`, `UriHeaderParse`, sip-uri's `UriParse`), so naming the type is not enough on its own: `UriInfo::parse(s)` without the prelude fails with E0599 ("no associated function `parse`"), and `s.parse::<sip_uri::Uri>()` fails with E0277 ("the trait bound ... `FromStr` is not satisfied"); neither error names the missing import. The prelude covers both; without it, `sip_uri::Uri` needs its own `use sip_header::sip_uri::UriParse;`.
+**Import the parse traits by name.** Every `parse` is a trait method (`HeaderParse`, `ListParse`, `UriHeaderParse`, sip-uri's `UriParse`), so naming the type is not enough on its own: `UriInfo::parse(s)` without `HeaderParse` fails with E0599 ("no associated function `parse`"), and `s.parse::<sip_uri::Uri>()` fails with E0277 ("the trait bound ... `FromStr` is not satisfied"); neither error names the missing import. `sip_uri::Uri` needs `use sip_header::sip_uri::UriParse;`.
 
 | Area | 0.3 | 0.4 |
 |---|---|---|
-| parsing | `"…".parse::<T>()`, inherent `T::parse` | `HeaderParse::parse`, `parse_with_warnings`, `parse_strict`; `use sip_header::prelude::*` |
+| imports | — | no prelude: import the traits by name, `use sip_header::{HeaderParse, ListParse, SipHeaderLookup};` and the others where needed |
+| parsing | `"…".parse::<T>()`, inherent `T::parse` | `HeaderParse::parse`, `parse_with_warnings`, `parse_strict` |
 | parsing | inherent `from_entries` on list types | `ListParse::from_entries`, `from_entries_with_warnings`, `from_entries_strict` for entries a transport split; `from_rows` and its siblings for header occurrences, each split at its commas as the accessors split them |
 | parsing | inherent `parse_uri_header` on `SipReplaces`, `SipTargetDialog` | `UriHeaderParse`, also on `SipJoin` and `SipReason` |
 | parsing | inherent `SipHeaderAddr::replaces()`, `HistoryInfoEntry::reason()` | `AddrParts`: `addr.replaces()`, `addr.reason()`, `entry.addr().reason()` |
@@ -291,7 +295,6 @@ Every type is at the crate root. The public modules carry what the root does not
 
 | Module | Description |
 |---|---|
-| `prelude` | The extension traits, ours and sip-uri's `UriParse` and `UriRedact` |
 | `serde_str` | Serde adapters through the wire text (feature: `serde`) |
 | `conference_info` | RFC 4575 conference event XML (feature: `conference-info`) |
 

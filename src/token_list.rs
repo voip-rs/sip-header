@@ -12,6 +12,8 @@ use crate::RowEntry;
 
 /// The token-list headers, borrowed from the store that holds them.
 ///
+/// Read through [`SipHeaderLookup`](crate::SipHeaderLookup).
+///
 /// A list of `Method` (Allow), `option-tag` (Supported, Require,
 /// Proxy-Require, Unsupported), `event-type` (Allow-Events),
 /// `content-coding` (Content-Encoding), `language-tag` (Content-Language)

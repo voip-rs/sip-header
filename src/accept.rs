@@ -97,6 +97,8 @@ impl fmt::Display for SipAcceptEntry {
 
 /// SIP Accept header value; its grammar admits the empty list (RFC 3261 §25.1).
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// # Equality
 ///
 /// Entry by entry, in order, each as [`SipAcceptEntry`] compares. [`Hash`] follows

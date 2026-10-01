@@ -5,6 +5,8 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 /// A `Join` header value (RFC 3911 §7.1): `callid *(SEMI join-param)`
 /// with the mandatory `to-tag` and `from-tag`.
 ///
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and [`UriHeaderParse`](crate::UriHeaderParse).
+///
 /// Join defines no `early-only`; one on the wire is an ordinary parameter.
 ///
 /// ```

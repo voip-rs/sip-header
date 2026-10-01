@@ -5,25 +5,30 @@
 //! stacks, handling the header-level grammar: display names, header parameters,
 //! and structured header values.
 //!
-//! Every type is at the crate root. Parsing, lookup and redaction are
-//! extension traits, gathered in [`prelude`] together with sip-uri's
-//! [`UriParse`](sip_uri::UriParse) and [`UriRedact`](sip_uri::UriRedact).
+//! Every type is at the crate root. Parsing, lookup, equivalence and
+//! redaction are extension traits, imported by name as sip-uri's
+//! [`UriParse`](sip_uri::UriParse) and [`UriRedact`](sip_uri::UriRedact) are.
 //!
 //! # Imports
 //!
-//! Glob the prelude and name the types. Both crates define `ParseError`,
-//! `Parsed`, `ParseWarning` and `WarningCode` at their roots, so globbing
-//! both roots makes those names ambiguous; a named import wins over a glob,
-//! so beside `sip_uri::*` the named ones are this crate's.
-//!
 //! ```
-//! use sip_header::prelude::*;
-//! use sip_header::{ParseError, SipHeaderAddr, WarningCode};
+//! use sip_header::{HeaderParse, ListParse, SipHeaderLookup};
+//! use sip_header::{ParseError, SipHeaderAddr, SipVia, WarningCode};
+//! use std::collections::HashMap;
 //!
 //! let parsed = SipHeaderAddr::parse_with_warnings("<sip:alice@example.com>junk")?;
 //! assert_eq!(parsed.warnings[0].code, WarningCode::TrailingContent);
+//! let via = SipVia::from_entries(["SIP/2.0/UDP 198.51.100.1"])?;
+//! let headers = HashMap::from([("v".to_string(), via.to_string())]);
+//! assert_eq!(headers.via()?, Some(via));
 //! # Ok::<(), ParseError>(())
 //! ```
+//!
+//! The other traits are named where needed: [`UriHeaderParse`],
+//! [`AddrParts`], [`SipHeaderRowsExt`], [`Redact`], [`HeaderEquivalence`]
+//! and `SipHeaderExtract` (feature: `message`). Both crates define
+//! `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at their roots,
+//! so sip-uri's are spelled through `sip_uri::` beside these.
 //!
 //! # Headers
 //!
@@ -105,18 +110,6 @@ mod traits;
 mod uri_info;
 mod via;
 mod warning;
-
-/// The extension traits: parsing, lookup, extraction, equivalence and
-/// redaction, ours and sip-uri's.
-pub mod prelude {
-    #[cfg(feature = "message")]
-    pub use crate::message::SipHeaderExtract;
-    pub use crate::{
-        AddrParts, HeaderEquivalence, HeaderParse, ListParse, Redact, SipHeaderLookup,
-        SipHeaderRows, SipHeaderRowsExt, UriHeaderParse,
-    };
-    pub use sip_uri::{UriParse, UriRedact};
-}
 
 pub use accept::{QValue, SipAccept, SipAcceptEntry};
 pub use accept_encoding::{SipAcceptEncoding, SipAcceptEncodingEntry};

@@ -18,6 +18,8 @@ use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
 ///
+/// Parsed through [`HeaderParse`].
+///
 /// The `name-addr` production from RFC 3261 §25.1 combines an optional
 /// display name with a URI in angle brackets:
 ///
@@ -597,6 +599,8 @@ pub(crate) fn parse_list_addr(
 /// A comma list of `(name-addr / addr-spec) *(SEMI param)` entries, as
 /// Route, Record-Route, Path, Service-Route, P-Asserted-Identity,
 /// P-Preferred-Identity and Diversion carry; each grammar needs one entry.
+///
+/// Parsed through [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::{HeaderParse, ListParse, SipHeaderAddrList};

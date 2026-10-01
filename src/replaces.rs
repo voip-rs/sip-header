@@ -4,6 +4,8 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 
 /// A `Replaces` header value (RFC 3891 §6.1).
 ///
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and [`UriHeaderParse`](crate::UriHeaderParse).
+///
 /// Identifies the dialog to be replaced: Call-ID plus the mandatory
 /// `to-tag` and `from-tag`. [`Display`](std::fmt::Display) emits the
 /// [`framing`](Self::framing) the value holds.

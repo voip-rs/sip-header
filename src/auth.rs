@@ -14,6 +14,8 @@ use crate::traits::{sealed, HeaderParse};
 
 /// SIP authentication value.
 ///
+/// Parsed through [`HeaderParse`].
+///
 /// Covers Authorization, Proxy-Authorization, WWW-Authenticate, and
 /// Proxy-Authenticate header field values.
 ///

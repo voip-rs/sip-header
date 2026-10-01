@@ -38,6 +38,8 @@ fn is_word_char(c: char) -> bool {
 
 /// A `Call-ID` value, split on the one `@` its grammar admits.
 ///
+/// Parsed through [`HeaderParse`].
+///
 /// `callid = word [ "@" word ]` (RFC 3261 section 25.1). `@` is not a `word`
 /// character, so the split at the first `@` is unambiguous; a second one is
 /// a character outside `word`.

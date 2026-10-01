@@ -171,6 +171,8 @@ impl Redact for SipGeolocation {
 /// SIP Geolocation header value (RFC 6442): one `locationValue` or more,
 /// each a `cid:` body-part reference or a URI to dereference.
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// ```
 /// use sip_header::sip_uri::{Uri, UriParse};
 /// use sip_header::{SipGeolocation, SipGeolocationEntry};

@@ -142,6 +142,8 @@ impl Redact for UriInfo {
 
 /// `<absoluteURI> *(SEMI generic-param)` header value, one entry or more.
 ///
+/// Parsed through [`ListParse`](crate::ListParse).
+///
 /// Used by Call-Info, Alert-Info, and Error-Info.
 ///
 /// ```
