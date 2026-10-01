@@ -340,8 +340,7 @@ mod serde_round_trip {
                 "transport": "UDP",
                 "host": {"ipv4": "198.51.100.1"},
                 "port": 5060,
-                "rport": null,
-                "params": [["branch", "z9hG4bK1", false]],
+                "params": [["rport", null, false], ["branch", "z9hG4bK1", false]],
             }),
         );
         pinned(
@@ -370,7 +369,6 @@ mod serde_round_trip {
                     "headers": [],
                     "fragment": null,
                 }},
-                "tag": null,
                 "params": [["index", "1", false]],
             }}),
         );
@@ -401,8 +399,7 @@ mod serde_round_trip {
                     "headers": [],
                     "fragment": null,
                 }},
-                "tag": "abc",
-                "params": [["lr", null, false]],
+                "params": [["tag", "abc", false], ["lr", null, false]],
             }),
         );
         pinned(
@@ -444,8 +441,7 @@ mod serde_round_trip {
             "version": "2.0",
             "transport": "UDP",
             "host": {"ipv4": "198.51.100.1"},
-            "rport": 5060,
-            "params": [],
+            "params": [["rport", "5060", false]],
         }))
         .unwrap();
         assert_eq!(via.rport(), Some(Some(5060)));
