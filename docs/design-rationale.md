@@ -116,7 +116,7 @@ A header name serializes as its canonical wire spelling and deserializes from an
 
 ## Error Display never carries the rejected bytes
 
-An error renders a label, the field or position at fault, and the length of the rejected input, never the input itself. A type that keeps the bytes keeps them on a public field, for a caller that decides to print them. Display reaches every consumer's `{e}` log line outside whatever redaction the consumer applies, and header values carry credentials, retrieval tokens and caller numbers.
+An error renders a label, the field or position at fault, and the length of the rejected input, never the input itself. A type that keeps the bytes keeps them on a public field, for a caller that decides to print them. A deserializer's error may name a field or key it read, never a value. Display reaches every consumer's `{e}` log line outside whatever redaction the consumer applies, and header values carry credentials, retrieval tokens and caller numbers.
 
 ## List-valued types take pre-split entries
 
