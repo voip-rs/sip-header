@@ -31,11 +31,6 @@ const WARN_CODE_MAX: u16 = 999;
 /// Two entries are equal when their wire forms are: the code, the agent
 /// byte for byte, the text unescaped. [`Hash`] follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipWarningEntryParts", into = "SipWarningEntryParts")
-)]
 #[non_exhaustive]
 pub struct SipWarningEntry {
     code: u16,
@@ -116,6 +111,9 @@ pub struct SipWarning(Vec<SipWarningEntry>);
 list_type!(SipWarning, SipWarningEntry, non_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipWarningEntry, SipWarningEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipWarningEntryParts {
     code: u16,
@@ -124,10 +122,8 @@ struct SipWarningEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipWarningEntryParts> for SipWarningEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipWarningEntryParts) -> Result<Self, Self::Error> {
+impl SipWarningEntryParts {
+    fn into_value(p: Self) -> Result<SipWarningEntry, ParseError> {
         let entry = SipWarningEntry {
             code: p.code,
             agent: p.agent,
@@ -135,11 +131,8 @@ impl TryFrom<SipWarningEntryParts> for SipWarningEntry {
         };
         crate::list::entry_reads_back::<SipWarning>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipWarningEntry> for SipWarningEntryParts {
-    fn from(e: SipWarningEntry) -> Self {
+    fn from_value(e: SipWarningEntry) -> Self {
         SipWarningEntryParts {
             code: e.code,
             agent: e.agent,

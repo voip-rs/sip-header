@@ -14,15 +14,13 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 /// [`HeaderParams`](crate::HeaderParams) compares them. [`Hash`] follows
 /// the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipTargetDialogParts", into = "SipTargetDialogParts")
-)]
 #[non_exhaustive]
 pub struct SipTargetDialog(DialogId);
 
 dialog_id_type!(SipTargetDialog, local_tag, with_local_tag => "local-tag", remote_tag, with_remote_tag => "remote-tag", early_only: false);
+
+#[cfg(feature = "serde")]
+serde_parts!(SipTargetDialog, SipTargetDialogParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -37,10 +35,8 @@ struct SipTargetDialogParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipTargetDialogParts> for SipTargetDialog {
-    type Error = crate::ParseError;
-
-    fn try_from(p: SipTargetDialogParts) -> Result<Self, Self::Error> {
+impl SipTargetDialogParts {
+    fn into_value(p: Self) -> Result<SipTargetDialog, crate::ParseError> {
         let fields = DialogFields {
             call_id: p.call_id,
             first_tag: p.local_tag,
@@ -48,13 +44,10 @@ impl TryFrom<SipTargetDialogParts> for SipTargetDialog {
             early_only: false,
             params: p.params,
         };
-        crate::dialog_id::reads_back(Self::build(fields, p.framing))
+        crate::dialog_id::reads_back(SipTargetDialog::build(fields, p.framing))
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipTargetDialog> for SipTargetDialogParts {
-    fn from(t: SipTargetDialog) -> Self {
+    fn from_value(t: SipTargetDialog) -> Self {
         SipTargetDialogParts {
             call_id: t
                 .call_id()

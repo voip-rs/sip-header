@@ -57,6 +57,9 @@ mod params;
 mod list;
 #[macro_use]
 mod dialog_id;
+#[cfg(feature = "serde")]
+#[macro_use]
+mod serde_parts;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]

@@ -23,15 +23,13 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 /// [`HeaderParams`](crate::HeaderParams) compares them. [`Hash`] follows
 /// the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipJoinParts", into = "SipJoinParts")
-)]
 #[non_exhaustive]
 pub struct SipJoin(DialogId);
 
 dialog_id_type!(SipJoin, to_tag, with_to_tag => "to-tag", from_tag, with_from_tag => "from-tag", early_only: false);
+
+#[cfg(feature = "serde")]
+serde_parts!(SipJoin, SipJoinParts);
 
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -46,10 +44,8 @@ struct SipJoinParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipJoinParts> for SipJoin {
-    type Error = crate::ParseError;
-
-    fn try_from(p: SipJoinParts) -> Result<Self, Self::Error> {
+impl SipJoinParts {
+    fn into_value(p: Self) -> Result<SipJoin, crate::ParseError> {
         let fields = DialogFields {
             call_id: p.call_id,
             first_tag: p.to_tag,
@@ -57,13 +53,10 @@ impl TryFrom<SipJoinParts> for SipJoin {
             early_only: false,
             params: p.params,
         };
-        crate::dialog_id::reads_back(Self::build(fields, p.framing))
+        crate::dialog_id::reads_back(SipJoin::build(fields, p.framing))
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipJoin> for SipJoinParts {
-    fn from(j: SipJoin) -> Self {
+    fn from_value(j: SipJoin) -> Self {
         SipJoinParts {
             call_id: j
                 .call_id()

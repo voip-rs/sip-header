@@ -28,11 +28,6 @@ use crate::dialog_id::{DialogBuild, DialogFields, DialogFraming, DialogId};
 /// [`HeaderParams`](crate::HeaderParams) compares them. [`Hash`] follows
 /// the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipReplacesParts", into = "SipReplacesParts")
-)]
 #[non_exhaustive]
 pub struct SipReplaces(DialogId);
 
@@ -54,6 +49,9 @@ impl SipReplaces {
 }
 
 #[cfg(feature = "serde")]
+serde_parts!(SipReplaces, SipReplacesParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipReplacesParts {
     call_id: String,
@@ -68,10 +66,8 @@ struct SipReplacesParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipReplacesParts> for SipReplaces {
-    type Error = crate::ParseError;
-
-    fn try_from(p: SipReplacesParts) -> Result<Self, Self::Error> {
+impl SipReplacesParts {
+    fn into_value(p: Self) -> Result<SipReplaces, crate::ParseError> {
         let fields = DialogFields {
             call_id: p.call_id,
             first_tag: p.to_tag,
@@ -79,13 +75,10 @@ impl TryFrom<SipReplacesParts> for SipReplaces {
             early_only: p.early_only,
             params: p.params,
         };
-        crate::dialog_id::reads_back(Self::build(fields, p.framing))
+        crate::dialog_id::reads_back(SipReplaces::build(fields, p.framing))
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipReplaces> for SipReplacesParts {
-    fn from(r: SipReplaces) -> Self {
+    fn from_value(r: SipReplaces) -> Self {
         SipReplacesParts {
             call_id: r
                 .call_id()

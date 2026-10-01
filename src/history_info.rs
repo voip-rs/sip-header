@@ -20,11 +20,6 @@ use crate::span::{Located, Relocation, Span};
 ///
 /// As its [`SipHeaderAddr`] compares, spans aside.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "HistoryInfoEntryParts", into = "HistoryInfoEntryParts")
-)]
 #[non_exhaustive]
 pub struct HistoryInfoEntry {
     addr: SipHeaderAddr,
@@ -152,23 +147,21 @@ pub struct HistoryInfo(Vec<HistoryInfoEntry>);
 list_type!(HistoryInfo, HistoryInfoEntry, non_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(HistoryInfoEntry, HistoryInfoEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HistoryInfoEntryParts {
     addr: SipHeaderAddr,
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<HistoryInfoEntryParts> for HistoryInfoEntry {
-    type Error = ParseError;
-
-    fn try_from(p: HistoryInfoEntryParts) -> Result<Self, Self::Error> {
+impl HistoryInfoEntryParts {
+    fn into_value(p: Self) -> Result<HistoryInfoEntry, ParseError> {
         crate::list::entry_reads_back::<HistoryInfo>(HistoryInfoEntry { addr: p.addr })
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<HistoryInfoEntry> for HistoryInfoEntryParts {
-    fn from(e: HistoryInfoEntry) -> Self {
+    fn from_value(e: HistoryInfoEntry) -> Self {
         HistoryInfoEntryParts { addr: e.addr }
     }
 }

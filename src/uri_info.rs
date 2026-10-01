@@ -30,11 +30,6 @@ use crate::span::{relocated, Located, Relocation, Span};
 /// [`Uri`] compares it, the parameters as [`HeaderParams`] does. [`Hash`]
 /// follows the same rule. Spans take no part in equality, hashing or serde.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "UriInfoEntryParts", into = "UriInfoEntryParts")
-)]
 #[non_exhaustive]
 pub struct UriInfoEntry {
     uri: Uri,
@@ -147,6 +142,9 @@ pub struct UriInfo(Vec<UriInfoEntry>);
 list_type!(UriInfo, UriInfoEntry, non_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(UriInfoEntry, UriInfoEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UriInfoEntryParts {
     uri: Uri,
@@ -155,21 +153,16 @@ struct UriInfoEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<UriInfoEntryParts> for UriInfoEntry {
-    type Error = ParseError;
-
-    fn try_from(p: UriInfoEntryParts) -> Result<Self, Self::Error> {
+impl UriInfoEntryParts {
+    fn into_value(p: Self) -> Result<UriInfoEntry, ParseError> {
         let entry = UriInfoEntry {
             params: p.params,
             ..UriInfoEntry::unchecked(p.uri)
         };
         crate::list::entry_reads_back::<UriInfo>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<UriInfoEntry> for UriInfoEntryParts {
-    fn from(e: UriInfoEntry) -> Self {
+    fn from_value(e: UriInfoEntry) -> Self {
         UriInfoEntryParts {
             uri: e.uri,
             params: e.params,

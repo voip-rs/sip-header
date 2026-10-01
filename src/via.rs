@@ -37,11 +37,6 @@ use crate::{is_token, RawParam};
 /// does, then the port, and the parameters as [`HeaderParams`] does.
 /// [`Hash`] follows the same rule.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipViaEntryParts", into = "SipViaEntryParts")
-)]
 #[non_exhaustive]
 pub struct SipViaEntry {
     protocol_name: String,
@@ -253,6 +248,9 @@ pub struct SipVia(Vec<SipViaEntry>);
 
 list_type!(SipVia, SipViaEntry, non_empty);
 
+#[cfg(feature = "serde")]
+serde_parts!(SipViaEntry, SipViaEntryParts);
+
 /// `rport` holds the first `rport` parameter when it is the flag or a port
 /// as [`SipViaEntry::with_rport`] writes it; any other stays in `params`.
 #[cfg(feature = "serde")]
@@ -290,10 +288,8 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u16>>
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipViaEntryParts> for SipViaEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipViaEntryParts) -> Result<Self, Self::Error> {
+impl SipViaEntryParts {
+    fn into_value(p: Self) -> Result<SipViaEntry, ParseError> {
         let mut params = p.params;
         let rport = p
             .rport
@@ -315,11 +311,8 @@ impl TryFrom<SipViaEntryParts> for SipViaEntry {
         };
         crate::list::entry_reads_back::<SipVia>(via)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipViaEntry> for SipViaEntryParts {
-    fn from(e: SipViaEntry) -> Self {
+    fn from_value(e: SipViaEntry) -> Self {
         let mut params = e.params;
         let rport = params
             .take_first("rport", rport_form)

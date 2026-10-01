@@ -102,11 +102,6 @@ impl fmt::Display for SipReasonCause {
 /// unescaped, and the extension parameters as [`HeaderParams`] does.
 /// [`Hash`] follows the same rule.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipReasonParts", into = "SipReasonParts")
-)]
 #[non_exhaustive]
 pub struct SipReason {
     protocol: String,
@@ -269,6 +264,9 @@ impl CommaList for SipReasonList {
 list_parse!(SipReasonList);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipReason, SipReasonParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipReasonParts {
     protocol: String,
@@ -281,10 +279,8 @@ struct SipReasonParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipReasonParts> for SipReason {
-    type Error = ParseError;
-
-    fn try_from(p: SipReasonParts) -> Result<Self, Self::Error> {
+impl SipReasonParts {
+    fn into_value(p: Self) -> Result<SipReason, ParseError> {
         let reason = SipReason {
             protocol: p.protocol,
             cause: p.cause,
@@ -293,11 +289,8 @@ impl TryFrom<SipReasonParts> for SipReason {
         };
         crate::check::reads_back(reason, SipReason::parse)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipReason> for SipReasonParts {
-    fn from(r: SipReason) -> Self {
+    fn from_value(r: SipReason) -> Self {
         SipReasonParts {
             protocol: r.protocol,
             cause: r.cause,

@@ -21,14 +21,6 @@ use crate::params::HeaderParams;
 /// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
 /// follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(
-        try_from = "SipAcceptEncodingEntryParts",
-        into = "SipAcceptEncodingEntryParts"
-    )
-)]
 #[non_exhaustive]
 pub struct SipAcceptEncodingEntry {
     encoding: String,
@@ -84,6 +76,9 @@ pub struct SipAcceptEncoding(Vec<SipAcceptEncodingEntry>);
 list_type!(SipAcceptEncoding, SipAcceptEncodingEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipAcceptEncodingEntry, SipAcceptEncodingEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAcceptEncodingEntryParts {
     encoding: String,
@@ -92,21 +87,16 @@ struct SipAcceptEncodingEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipAcceptEncodingEntryParts> for SipAcceptEncodingEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipAcceptEncodingEntryParts) -> Result<Self, Self::Error> {
+impl SipAcceptEncodingEntryParts {
+    fn into_value(p: Self) -> Result<SipAcceptEncodingEntry, ParseError> {
         let entry = SipAcceptEncodingEntry {
             params: p.params,
             ..SipAcceptEncodingEntry::unchecked(p.encoding)
         };
         crate::list::entry_reads_back::<SipAcceptEncoding>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipAcceptEncodingEntry> for SipAcceptEncodingEntryParts {
-    fn from(e: SipAcceptEncodingEntry) -> Self {
+    fn from_value(e: SipAcceptEncodingEntry) -> Self {
         SipAcceptEncodingEntryParts {
             encoding: e.encoding,
             params: e.params,

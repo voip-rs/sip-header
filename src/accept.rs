@@ -20,11 +20,6 @@ use crate::{is_token, is_token_char};
 /// lowercased, the parameters as [`HeaderParams`] compares them, so
 /// `q=0.5` and `q=0.500` differ. [`Hash`] follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipAcceptEntryParts", into = "SipAcceptEntryParts")
-)]
 #[non_exhaustive]
 pub struct SipAcceptEntry {
     media_range: String,
@@ -113,6 +108,9 @@ pub struct SipAccept(Vec<SipAcceptEntry>);
 list_type!(SipAccept, SipAcceptEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipAcceptEntry, SipAcceptEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAcceptEntryParts {
     media_type: String,
@@ -122,21 +120,16 @@ struct SipAcceptEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipAcceptEntryParts> for SipAcceptEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipAcceptEntryParts) -> Result<Self, Self::Error> {
+impl SipAcceptEntryParts {
+    fn into_value(p: Self) -> Result<SipAcceptEntry, ParseError> {
         let entry = SipAcceptEntry {
             params: p.params,
             ..SipAcceptEntry::unchecked(&p.media_type, &p.subtype)
         };
         crate::list::entry_reads_back::<SipAccept>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipAcceptEntry> for SipAcceptEntryParts {
-    fn from(e: SipAcceptEntry) -> Self {
+    fn from_value(e: SipAcceptEntry) -> Self {
         SipAcceptEntryParts {
             media_type: e
                 .media_type()

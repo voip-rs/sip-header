@@ -19,14 +19,6 @@ use crate::params::HeaderParams;
 /// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
 /// follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(
-        try_from = "SipAcceptLanguageEntryParts",
-        into = "SipAcceptLanguageEntryParts"
-    )
-)]
 #[non_exhaustive]
 pub struct SipAcceptLanguageEntry {
     language: String,
@@ -93,6 +85,9 @@ pub struct SipAcceptLanguage(Vec<SipAcceptLanguageEntry>);
 list_type!(SipAcceptLanguage, SipAcceptLanguageEntry, may_be_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipAcceptLanguageEntry, SipAcceptLanguageEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAcceptLanguageEntryParts {
     language: String,
@@ -101,21 +96,16 @@ struct SipAcceptLanguageEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipAcceptLanguageEntryParts> for SipAcceptLanguageEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipAcceptLanguageEntryParts) -> Result<Self, Self::Error> {
+impl SipAcceptLanguageEntryParts {
+    fn into_value(p: Self) -> Result<SipAcceptLanguageEntry, ParseError> {
         let entry = SipAcceptLanguageEntry {
             params: p.params,
             ..SipAcceptLanguageEntry::unchecked(p.language)
         };
         crate::list::entry_reads_back::<SipAcceptLanguage>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipAcceptLanguageEntry> for SipAcceptLanguageEntryParts {
-    fn from(e: SipAcceptLanguageEntry) -> Self {
+    fn from_value(e: SipAcceptLanguageEntry) -> Self {
         SipAcceptLanguageEntryParts {
             language: e.language,
             params: e.params,

@@ -61,11 +61,6 @@ use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 /// as [`HeaderParams`] does. [`Hash`] follows the same rule. Spans take no
 /// part in equality, hashing or serde.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipHeaderAddrParts", into = "SipHeaderAddrParts")
-)]
 #[non_exhaustive]
 pub struct SipHeaderAddr {
     display_name: Option<String>,
@@ -122,6 +117,9 @@ fn tag_form(value: Option<&str>) -> bool {
     value.is_some_and(crate::is_token)
 }
 
+#[cfg(feature = "serde")]
+serde_parts!(SipHeaderAddr, SipHeaderAddrParts);
+
 /// `tag` holds the first `tag` parameter when it is a bare `token`; any
 /// other `tag` stays in `params`.
 #[cfg(feature = "serde")]
@@ -137,10 +135,8 @@ struct SipHeaderAddrParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipHeaderAddrParts> for SipHeaderAddr {
-    type Error = ParseError;
-
-    fn try_from(parts: SipHeaderAddrParts) -> Result<Self, Self::Error> {
+impl SipHeaderAddrParts {
+    fn into_value(parts: Self) -> Result<SipHeaderAddr, ParseError> {
         let mut params = parts.params;
         params.restore_first(
             "tag",
@@ -156,11 +152,8 @@ impl TryFrom<SipHeaderAddrParts> for SipHeaderAddr {
         };
         crate::check::reads_back(addr, SipHeaderAddr::parse)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipHeaderAddr> for SipHeaderAddrParts {
-    fn from(addr: SipHeaderAddr) -> Self {
+    fn from_value(addr: SipHeaderAddr) -> Self {
         let mut params = addr.params;
         let tag = params
             .take_first("tag", tag_form)

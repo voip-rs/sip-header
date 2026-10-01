@@ -41,11 +41,6 @@ use crate::traits::{sealed, HeaderParse};
 /// [`Debug`](fmt::Debug) masks the `token68` and the values of `response`,
 /// `nonce`, `cnonce`, `nextnonce`, `rspauth` and `auts`.
 #[derive(Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(try_from = "SipAuthValueParts", into = "SipAuthValueParts")
-)]
 #[non_exhaustive]
 pub struct SipAuthValue {
     scheme: String,
@@ -378,6 +373,9 @@ impl fmt::Display for RedactedAuth<'_> {
 }
 
 #[cfg(feature = "serde")]
+serde_parts!(SipAuthValue, SipAuthValueParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipAuthValueParts {
     scheme: String,
@@ -387,10 +385,8 @@ struct SipAuthValueParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipAuthValueParts> for SipAuthValue {
-    type Error = ParseError;
-
-    fn try_from(p: SipAuthValueParts) -> Result<Self, Self::Error> {
+impl SipAuthValueParts {
+    fn into_value(p: Self) -> Result<SipAuthValue, ParseError> {
         let auth = SipAuthValue {
             scheme: p.scheme,
             params: p.params,
@@ -398,11 +394,8 @@ impl TryFrom<SipAuthValueParts> for SipAuthValue {
         };
         crate::check::reads_back(auth, SipAuthValue::parse)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipAuthValue> for SipAuthValueParts {
-    fn from(a: SipAuthValue) -> Self {
+    fn from_value(a: SipAuthValue) -> Self {
         SipAuthValueParts {
             scheme: a.scheme,
             params: a.params,

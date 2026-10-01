@@ -164,3 +164,59 @@ fn call_id_serde_is_its_text() {
     assert_eq!(serde_json::from_str::<SipCallId>(&json).unwrap(), id);
     assert!(serde_json::from_str::<SipCallId>(r#""a;b""#).is_err());
 }
+
+fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry
+            .unwrap()
+            .path();
+        if path.is_dir() {
+            rust_sources(&path, out);
+        } else if path.extension() == Some("rs".as_ref()) {
+            out.push(path);
+        }
+    }
+}
+
+fn ends_in_parts(ty: &str) -> bool {
+    ty.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_')
+        .ends_with("Parts")
+}
+
+#[test]
+fn no_public_conversion_names_a_serde_mirror() {
+    let mut files = Vec::new();
+    rust_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    assert!(!files.is_empty());
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        for (n, line) in text
+            .lines()
+            .enumerate()
+        {
+            let Some((_, from)) = line
+                .trim_start()
+                .strip_prefix("impl")
+                .and_then(|rest| rest.split_once("From<"))
+            else {
+                continue;
+            };
+            let (arg, target) = from
+                .split_once(" for ")
+                .unwrap_or((from, ""));
+            let target = target
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+            assert!(
+                !ends_in_parts(arg) && !ends_in_parts(target),
+                "{}:{}: {line}",
+                file.display(),
+                n + 1
+            );
+        }
+    }
+}

@@ -19,14 +19,6 @@ use crate::params::HeaderParams;
 /// lowercased, the parameters as [`HeaderParams`] compares them. [`Hash`]
 /// follows the same rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(
-        try_from = "SipSecurityMechanismParts",
-        into = "SipSecurityMechanismParts"
-    )
-)]
 #[non_exhaustive]
 pub struct SipSecurityMechanism {
     mechanism: String,
@@ -94,6 +86,9 @@ pub struct SipSecurity(Vec<SipSecurityMechanism>);
 list_type!(SipSecurity, SipSecurityMechanism, non_empty);
 
 #[cfg(feature = "serde")]
+serde_parts!(SipSecurityMechanism, SipSecurityMechanismParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipSecurityMechanismParts {
     mechanism: String,
@@ -102,21 +97,16 @@ struct SipSecurityMechanismParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipSecurityMechanismParts> for SipSecurityMechanism {
-    type Error = ParseError;
-
-    fn try_from(p: SipSecurityMechanismParts) -> Result<Self, Self::Error> {
+impl SipSecurityMechanismParts {
+    fn into_value(p: Self) -> Result<SipSecurityMechanism, ParseError> {
         let mechanism = SipSecurityMechanism {
             params: p.params,
             ..SipSecurityMechanism::unchecked(p.mechanism)
         };
         crate::list::entry_reads_back::<SipSecurity>(mechanism)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipSecurityMechanism> for SipSecurityMechanismParts {
-    fn from(m: SipSecurityMechanism) -> Self {
+    fn from_value(m: SipSecurityMechanism) -> Self {
         SipSecurityMechanismParts {
             mechanism: m.mechanism,
             params: m.params,

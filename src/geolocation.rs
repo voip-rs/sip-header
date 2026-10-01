@@ -32,14 +32,6 @@ use crate::uri_info::read_uri;
 /// compares it, the parameters as [`HeaderParams`] does. [`Hash`] follows
 /// the same rule. Spans take no part in equality, hashing or serde.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(
-        try_from = "SipGeolocationEntryParts",
-        into = "SipGeolocationEntryParts"
-    )
-)]
 #[non_exhaustive]
 pub struct SipGeolocationEntry {
     uri: Uri,
@@ -247,6 +239,9 @@ impl SipGeolocation {
 }
 
 #[cfg(feature = "serde")]
+serde_parts!(SipGeolocationEntry, SipGeolocationEntryParts);
+
+#[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipGeolocationEntryParts {
     uri: Uri,
@@ -255,21 +250,16 @@ struct SipGeolocationEntryParts {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SipGeolocationEntryParts> for SipGeolocationEntry {
-    type Error = ParseError;
-
-    fn try_from(p: SipGeolocationEntryParts) -> Result<Self, Self::Error> {
+impl SipGeolocationEntryParts {
+    fn into_value(p: Self) -> Result<SipGeolocationEntry, ParseError> {
         let entry = SipGeolocationEntry {
             params: p.params,
             ..SipGeolocationEntry::unchecked(p.uri)
         };
         crate::list::entry_reads_back::<SipGeolocation>(entry)
     }
-}
 
-#[cfg(feature = "serde")]
-impl From<SipGeolocationEntry> for SipGeolocationEntryParts {
-    fn from(e: SipGeolocationEntry) -> Self {
+    fn from_value(e: SipGeolocationEntry) -> Self {
         SipGeolocationEntryParts {
             uri: e.uri,
             params: e.params,
