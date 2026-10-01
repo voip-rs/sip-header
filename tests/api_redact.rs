@@ -2,8 +2,8 @@
 
 use sip_header::sip_uri::{Redaction, UserMask};
 use sip_header::{
-    ContactList, HeaderParse, HeaderRedaction, ParseError, Redact, SipGeolocation, SipHeaderAddr,
-    SipHeaderAddrList, WarningCode,
+    ContactList, HeaderParse, HeaderRedaction, HistoryInfo, ParseError, Redact, SipGeolocation,
+    SipHeaderAddr, SipHeaderAddrList, UriInfo, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -75,6 +75,41 @@ fn geolocation_refs_are_masked_by_default() -> R {
             .to_string(),
         geo.to_string()
     );
+    Ok(())
+}
+
+const USER: &str = "15551234567";
+
+fn masks_user_unless_shown<T: Redact + std::fmt::Display>(value: &T) -> String {
+    let masked = value
+        .redacted(&HeaderRedaction::default())
+        .to_string();
+    assert!(!masked.contains(USER), "{masked}");
+    let shown = HeaderRedaction::new(Redaction::default().user(UserMask::Visible))
+        .show_instance()
+        .show_location();
+    assert_eq!(
+        value
+            .redacted(&shown)
+            .to_string(),
+        value.to_string()
+    );
+    masked
+}
+
+#[test]
+fn every_uri_holding_type_redacts() -> R {
+    let entry = format!("<sip:+{USER}@example.com>;purpose=icon");
+    let info = UriInfo::parse(&format!("{entry}, {entry}"))?;
+    masks_user_unless_shown(&info);
+    masks_user_unless_shown(&info.entries()[0]);
+    let geo = SipGeolocation::parse(&format!(
+        "<sip:+{USER}@example.com>;inserted-by=example.org"
+    ))?;
+    masks_user_unless_shown(&geo.entries()[0]);
+    let history = HistoryInfo::parse(&format!("<sip:+{USER}@example.com>;index=1.1"))?;
+    assert!(masks_user_unless_shown(&history).ends_with(";index=1.1"));
+    assert!(masks_user_unless_shown(&history.entries()[0]).ends_with(";index=1.1"));
     Ok(())
 }
 
