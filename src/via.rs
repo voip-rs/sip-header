@@ -45,8 +45,8 @@ pub struct SipViaEntry {
     host: Host,
     port: Option<u16>,
     params: HeaderParams,
-    /// The first `rport` in `params`, read as a port; only the parser and
-    /// [`with_rport`](Self::with_rport) write either.
+    /// The first `rport` in `params`, read as a port; only the parser, the
+    /// deserializer and [`with_rport`](Self::with_rport) write either.
     rport: Option<Option<u16>>,
 }
 
@@ -214,8 +214,6 @@ list_type!(SipVia, SipViaEntry, non_empty);
 #[cfg(feature = "serde")]
 serde_parts!(SipViaEntry, SipViaEntryParts);
 
-/// `rport` holds the first parameter when it is an `rport` written as
-/// [`SipViaEntry::with_rport`] writes it; any other stays in `params`.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipViaEntryParts {
@@ -224,40 +222,14 @@ struct SipViaEntryParts {
     transport: String,
     host: Host,
     port: Option<u16>,
-    /// Absent without `rport`, null for the flag.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    rport: Option<Option<u16>>,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
-}
-
-/// The `rport` [`SipViaEntry::with_rport`] writes.
-#[cfg(feature = "serde")]
-fn rport_form(value: Option<&str>) -> bool {
-    value.map_or(true, |v| {
-        v.parse::<u16>()
-            .is_ok_and(|p| p.to_string() == v)
-    })
-}
-
-/// A field that is present, null or not, as `Some`.
-#[cfg(feature = "serde")]
-fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u16>>, D::Error> {
-    <Option<u16> as serde::Deserialize>::deserialize(d).map(Some)
 }
 
 #[cfg(feature = "serde")]
 impl SipViaEntryParts {
     fn into_value(p: Self) -> Result<SipViaEntry, ParseError> {
-        let mut params = p.params;
-        let rport = p
-            .rport
-            .map(|r| r.map(|port| port.to_string()));
-        params.restore_first("rport", rport, rport_form)?;
+        let params = p.params;
         let rport = params
             .get("rport")
             .map(|v| {
@@ -276,24 +248,13 @@ impl SipViaEntryParts {
     }
 
     fn from_value(e: SipViaEntry) -> Self {
-        let mut params = e.params;
-        let rport = params
-            .take_first("rport", rport_form)
-            // rport_form admits only the flag and a u16.
-            .map(|r| {
-                r.and_then(|v| {
-                    v.parse()
-                        .ok()
-                })
-            });
         SipViaEntryParts {
             protocol: e.protocol_name,
             version: e.protocol_version,
             transport: e.transport,
             host: e.host,
             port: e.port,
-            rport,
-            params,
+            params: e.params,
         }
     }
 }

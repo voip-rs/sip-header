@@ -112,25 +112,15 @@ const RESERVED: &[&str] = &["tag"];
 header_params!(@read SipHeaderAddr);
 header_params!(@builders SipHeaderAddr);
 
-/// The `tag` [`SipHeaderAddr::with_tag`] writes.
-#[cfg(feature = "serde")]
-fn tag_form(value: Option<&str>) -> bool {
-    value.is_some_and(crate::is_token)
-}
-
 #[cfg(feature = "serde")]
 serde_parts!(SipHeaderAddr, SipHeaderAddrParts);
 
-/// `tag` holds the first parameter when it is a `tag` and a bare `token`;
-/// any other `tag` stays in `params`.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SipHeaderAddrParts {
     #[serde(default)]
     display_name: Option<String>,
     uri: sip_uri::Uri,
-    #[serde(default)]
-    tag: Option<String>,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
@@ -138,32 +128,19 @@ struct SipHeaderAddrParts {
 #[cfg(feature = "serde")]
 impl SipHeaderAddrParts {
     fn into_value(parts: Self) -> Result<SipHeaderAddr, ParseError> {
-        let mut params = parts.params;
-        params.restore_first(
-            "tag",
-            parts
-                .tag
-                .map(Some),
-            tag_form,
-        )?;
         let addr = SipHeaderAddr {
             display_name: parts.display_name,
-            params,
+            params: parts.params,
             ..SipHeaderAddr::unchecked(parts.uri)
         };
         crate::check::reads_back(addr, SipHeaderAddr::parse)
     }
 
     fn from_value(addr: SipHeaderAddr) -> Self {
-        let mut params = addr.params;
-        let tag = params
-            .take_first("tag", tag_form)
-            .flatten();
         SipHeaderAddrParts {
             display_name: addr.display_name,
             uri: addr.uri,
-            tag,
-            params,
+            params: addr.params,
         }
     }
 }

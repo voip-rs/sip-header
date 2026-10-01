@@ -571,62 +571,6 @@ impl HeaderParams {
         self.0[first] = Param::new(name.to_string(), value, quoted);
     }
 
-    /// Whether the first parameter is `name`, unquoted, with a value
-    /// `setter_form` accepts.
-    #[cfg(feature = "serde")]
-    fn leads_with(&self, name: &str, setter_form: impl Fn(Option<&str>) -> bool) -> bool {
-        self.0
-            .first()
-            .is_some_and(|p| {
-                p.name == name
-                    && !p.quoted
-                    && setter_form(
-                        p.value
-                            .as_deref(),
-                    )
-            })
-    }
-
-    /// Remove the first parameter when it [`leads_with`](Self::leads_with)
-    /// `name`, returning its value, for a serde mirror that carries it in a
-    /// field of its own.
-    #[cfg(feature = "serde")]
-    pub(crate) fn take_first(
-        &mut self,
-        name: &str,
-        setter_form: impl Fn(Option<&str>) -> bool,
-    ) -> Option<Option<String>> {
-        self.leads_with(name, setter_form)
-            .then(|| {
-                self.0
-                    .remove(0)
-                    .value
-            })
-    }
-
-    /// Undo [`take_first`](Self::take_first): put `value` back first, or
-    /// refuse parameters it would have taken from.
-    #[cfg(feature = "serde")]
-    pub(crate) fn restore_first(
-        &mut self,
-        name: &str,
-        value: Option<Option<String>>,
-        setter_form: impl Fn(Option<&str>) -> bool,
-    ) -> Result<(), ParseError> {
-        match value {
-            Some(value) => {
-                self.0
-                    .insert(0, Param::new(name.to_string(), value, false));
-            }
-            None => {
-                if self.leads_with(name, setter_form) {
-                    return Err(param_fault(FaultCode::Misplaced));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Append a parameter read off the wire, raising
     /// [`WarningCode::DuplicateParam`] on `field` at `at` when its name
     /// is already present.
@@ -922,27 +866,6 @@ mod tests {
         assert!(g
             .set("tags", None)
             .is_ok());
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn take_first_only_the_setter_form() {
-        let token = |v: Option<&str>| v.is_some_and(is_token);
-        for kept in [r#";tag="a";tag=b"#, ";x;tag=a"] {
-            let (mut p, _) = read(kept);
-            assert_eq!(p.take_first("tag", token), None, "{kept}");
-            assert_eq!(p.restore_first("tag", None, token), Ok(()), "{kept}");
-        }
-        let (mut p, _) = read(";tag=a;x;tag=b");
-        assert_eq!(p.take_first("tag", token), Some(Some("a".into())));
-        assert_eq!(p.to_string(), ";x;tag=b");
-        p.restore_first("tag", Some(Some("a".into())), token)
-            .unwrap();
-        assert_eq!(p.to_string(), ";tag=a;x;tag=b");
-        assert_eq!(
-            p.restore_first("tag", None, token),
-            Err(param_fault(FaultCode::Misplaced))
-        );
     }
 
     #[test]
