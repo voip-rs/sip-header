@@ -154,7 +154,7 @@ fn the_request_line_is_borrowed_as_received() -> Result<(), ParseError> {
         (line.version_span(), line.version()),
     ] {
         assert_eq!(span.row(), None);
-        assert_eq!(span.get(MSG), Some(text));
+        assert_eq!(span.get(MSG), Ok(text));
     }
     assert!(line
         .warnings()
@@ -166,7 +166,7 @@ fn the_request_line_is_borrowed_as_received() -> Result<(), ParseError> {
     assert_eq!(
         line.uri_span()
             .get(msg),
-        Some("sip:a%2fb@example.com")
+        Ok("sip:a%2fb@example.com")
     );
     let spacing: Vec<_> = line
         .warnings()
@@ -207,7 +207,7 @@ fn a_request_line_without_three_parts_spans_the_first_line() {
         let span = e
             .span()
             .unwrap();
-        assert_eq!((span.row(), span.get(msg)), (None, Some(first)));
+        assert_eq!((span.row(), span.get(msg)), (None, Ok(first)));
         assert!(!e
             .to_string()
             .contains("sip:"));
@@ -238,15 +238,15 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
         .iter()
         .map(|e| {
             e.uri_span()
-                .and_then(|s| s.slice(&rows))
+                .map(|s| s.slice(&rows))
         })
         .collect();
     assert_eq!(
         received,
         [
-            Some("urn:emergency:uid:callid:a%2fb:bcf.example.com"),
-            Some("https://adr.example.com/serviceInfo?t=x%2fy"),
-            Some("urn:emergency:uid:incidentid:c%3ad:bcf.example.com"),
+            Some(Ok("urn:emergency:uid:callid:a%2fb:bcf.example.com")),
+            Some(Ok("https://adr.example.com/serviceInfo?t=x%2fy")),
+            Some(Ok("urn:emergency:uid:incidentid:c%3ad:bcf.example.com")),
         ]
     );
     assert!(info.entries()[0]
@@ -267,8 +267,10 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
     assert_eq!(
         info.entries()[1]
             .span()
-            .and_then(|s| s.slice(&rows)),
-        Some("<https://adr.example.com/serviceInfo?t=x%2fy>;purpose=EmergencyCallData.ServiceInfo")
+            .map(|s| s.slice(&rows)),
+        Some(Ok(
+            "<https://adr.example.com/serviceInfo?t=x%2fy>;purpose=EmergencyCallData.ServiceInfo"
+        ))
     );
 
     let line = extract_request_line(msg)?.unwrap();
@@ -281,8 +283,8 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
         .unwrap();
     assert_eq!(
         e.span()
-            .and_then(|s| s.get(&spaced)),
-        Some(first)
+            .map(|s| s.get(&spaced)),
+        Some(Ok(first))
     );
     Ok(())
 }

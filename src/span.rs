@@ -1,5 +1,6 @@
 //! Where parsed text sits in the row it was cut from.
 
+use std::fmt;
 use std::ops::Range;
 
 /// Where received text sits: a byte range into a row, and the row's index.
@@ -11,6 +12,11 @@ use std::ops::Range;
 /// what the row holds, folds and dropped control characters included; both
 /// ends fall on char boundaries.
 ///
+/// A span from a value parsed from one string has no row index: read it
+/// with [`get`](Self::get) on that string. A span with a row index reads
+/// with [`slice`](Self::slice) on the rows the value was built from, or
+/// with `get` on the row it names.
+///
 /// ```
 /// use sip_header::{ListParse, UriInfo};
 ///
@@ -18,9 +24,9 @@ use std::ops::Range;
 /// let info = UriInfo::from_rows(rows)?;
 /// let span = info.entries()[1].uri_span().unwrap();
 /// assert_eq!(span.row(), Some(1));
-/// assert_eq!(span.slice(&rows), Some("urn:example:a%2fb"));
+/// assert_eq!(span.slice(&rows), Ok("urn:example:a%2fb"));
 /// assert_eq!(info.entries()[1].uri().to_string(), "urn:example:a%2Fb");
-/// # Ok::<(), sip_header::ParseError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -56,16 +62,31 @@ impl Span {
         self.start..self.end
     }
 
-    /// The text in `row`; `None` when the range falls outside `row` or
-    /// inside a character.
-    pub fn get<'r>(&self, row: &'r str) -> Option<&'r str> {
+    /// The text in `row`, which the caller picks: the string parsed, or
+    /// the row this span names.
+    ///
+    /// Errors with [`SpanError::OutOfRange`] when the range falls outside
+    /// `row` or inside a character.
+    pub fn get<'r>(&self, row: &'r str) -> Result<&'r str, SpanError> {
         row.get(self.range())
+            .ok_or(SpanError::OutOfRange)
     }
 
-    /// The text in the row this span names among `rows`; `None` for a span
-    /// without a row index, or rows other than the ones it indexes.
-    pub fn slice<'r>(&self, rows: &[&'r str]) -> Option<&'r str> {
-        self.get(rows.get(self.row?)?)
+    /// The text in the row this span names among `rows`, the rows or
+    /// entries the value was built from.
+    ///
+    /// Errors with [`SpanError::NoRow`] for a span without a row index,
+    /// read with [`get`](Self::get) on the string parsed instead;
+    /// [`SpanError::MissingRow`] when `rows` stops before its row; and as
+    /// `get` does on that row.
+    pub fn slice<'r>(&self, rows: &[&'r str]) -> Result<&'r str, SpanError> {
+        let row = self
+            .row
+            .ok_or(SpanError::NoRow)?;
+        self.get(
+            rows.get(row)
+                .ok_or(SpanError::MissingRow)?,
+        )
     }
 
     /// Move the span to where `to` places the text it covers; `None` when
@@ -84,6 +105,31 @@ impl Span {
         })
     }
 }
+
+/// Why [`Span::get`] or [`Span::slice`] found no text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpanError {
+    /// [`slice`](Span::slice) on a span without a row index; it reads with
+    /// [`get`](Span::get) on the string parsed.
+    NoRow,
+    /// The rows given stop before the span's row.
+    MissingRow,
+    /// The range falls outside the row or inside a character.
+    OutOfRange,
+}
+
+impl fmt::Display for SpanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            SpanError::NoRow => "span has no row index; read it from the string parsed",
+            SpanError::MissingRow => "rows stop before the span's row",
+            SpanError::OutOfRange => "span range falls outside the row or inside a character",
+        })
+    }
+}
+
+impl std::error::Error for SpanError {}
 
 /// A value holding spans, moved with the text it was read from.
 pub(crate) trait Located {
@@ -253,7 +299,7 @@ mod tests {
         );
         prop_assert!(row.is_char_boundary(range.start) && row.is_char_boundary(range.end));
         let text = span.get(row);
-        prop_assert!(text.is_some());
+        prop_assert!(text.is_ok());
         Ok(scrub(text.unwrap_or_default())
             .text
             .into_owned())
@@ -330,7 +376,7 @@ mod tests {
         let span = entry
             .uri_span()
             .unwrap();
-        assert_eq!(span.get(row), Some("urn:example:1\r\n "));
+        assert_eq!(span.get(row), Ok("urn:example:1\r\n "));
         assert_eq!(
             Uri::parse(&scrub("urn:example:1\r\n ").text).as_ref(),
             Ok(entry.uri())
@@ -620,21 +666,21 @@ mod tests {
         ) {
             let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
             let span = Span::in_row(index, start..end);
-            let read = |row: &str| {
-                let fits = start <= end
-                    && end <= row.len()
-                    && row.is_char_boundary(start)
-                    && row.is_char_boundary(end);
-                if fits { Ok(&row[start..end]) } else { Err(SpanError::OutOfRange) }
-            };
+            fn read(row: &str, range: std::ops::Range<usize>) -> Result<&str, SpanError> {
+                let fits = range.start <= range.end
+                    && range.end <= row.len()
+                    && row.is_char_boundary(range.start)
+                    && row.is_char_boundary(range.end);
+                if fits { Ok(&row[range]) } else { Err(SpanError::OutOfRange) }
+            }
             for row in &rows {
-                prop_assert_eq!(span.get(row), read(row));
+                prop_assert_eq!(span.get(row), read(row, start..end));
             }
             let sliced = span.slice(&rows);
             match index {
                 None => prop_assert_eq!(sliced, Err(SpanError::NoRow)),
                 Some(i) if i >= rows.len() => prop_assert_eq!(sliced, Err(SpanError::MissingRow)),
-                Some(i) => prop_assert_eq!(sliced, read(rows[i])),
+                Some(i) => prop_assert_eq!(sliced, read(rows[i], start..end)),
             }
         }
     }

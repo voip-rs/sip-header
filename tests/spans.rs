@@ -8,11 +8,12 @@ use sip_header::sip_uri::{Uri, UriParse};
 use sip_header::{
     ContactList, HeaderParse, HistoryInfo, HistoryInfoEntry, ListParse, SipGeolocation,
     SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderFields,
-    SipHeaderLookup, SipHeaderRowsExt, Span, UriInfo, UriInfoEntry,
+    SipHeaderLookup, SipHeaderRowsExt, Span, SpanError, UriInfo, UriInfoEntry,
 };
 
-fn text(span: Option<Span>, row: &str) -> Option<&str> {
-    span?.get(row)
+fn text(span: Option<Span>, row: &str) -> Result<&str, SpanError> {
+    span.expect("a span")
+        .get(row)
 }
 
 #[test]
@@ -25,8 +26,8 @@ fn two_uris_in_one_row_keep_to_their_entry() {
     let comma = row
         .find(',')
         .unwrap();
-    assert_eq!(text(a.span(), row), Some(&row[..comma]));
-    assert_eq!(text(a.uri_span(), row), Some("urn:example:a%2fb"));
+    assert_eq!(text(a.span(), row), Ok(&row[..comma]));
+    assert_eq!(text(a.uri_span(), row), Ok("urn:example:a%2fb"));
     assert_eq!(
         a.uri()
             .to_string(),
@@ -41,9 +42,9 @@ fn two_uris_in_one_row_keep_to_their_entry() {
     );
     assert_eq!(
         text(b.span(), row),
-        Some("<https://example.com/x>;purpose=info")
+        Ok("<https://example.com/x>;purpose=info")
     );
-    assert_eq!(text(b.uri_span(), row), Some("https://example.com/x"));
+    assert_eq!(text(b.uri_span(), row), Ok("https://example.com/x"));
     assert!(
         b.span()
             .unwrap()
@@ -70,14 +71,14 @@ fn spans_name_the_row_they_index() {
         .uri_span()
         .unwrap();
     assert_eq!(span.row(), Some(1));
-    assert_eq!(span.slice(&rows), Some("urn:example:2"));
-    assert_eq!(span.get(rows[1]), Some("urn:example:2"));
+    assert_eq!(span.slice(&rows), Ok("urn:example:2"));
+    assert_eq!(span.get(rows[1]), Ok("urn:example:2"));
     assert_eq!(
         info.entries()[1]
             .span()
             .unwrap()
             .slice(&rows),
-        Some("<urn:example:1>;purpose=icon")
+        Ok("<urn:example:1>;purpose=icon")
     );
 
     let entries = UriInfo::from_entries(["<urn:example:0>", "  <urn:example:1>"]).unwrap();
@@ -90,9 +91,9 @@ fn spans_name_the_row_they_index() {
     let span = alone.entries()[0]
         .uri_span()
         .unwrap();
-    assert_eq!(span.slice(&["<urn:example:0>"]), None);
-    assert_eq!(span.get("<urn:example:0>"), Some("urn:example:0"));
-    assert_eq!(span.get("<urn"), None);
+    assert_eq!(span.slice(&["<urn:example:0>"]), Err(SpanError::NoRow));
+    assert_eq!(span.get("<urn:example:0>"), Ok("urn:example:0"));
+    assert_eq!(span.get("<urn"), Err(SpanError::OutOfRange));
 }
 
 #[test]
@@ -116,10 +117,13 @@ fn a_store_span_indexes_the_rows_it_returns() {
         .iter()
         .map(|e| {
             e.uri_span()
-                .and_then(|s| s.slice(&rows))
+                .map(|s| s.slice(&rows))
         })
         .collect();
-    assert_eq!(texts, [Some("urn:example:0"), Some("urn:example:1")]);
+    assert_eq!(
+        texts,
+        [Some(Ok("urn:example:0")), Some(Ok("urn:example:1"))]
+    );
 
     let fields = SipHeaderFields::from(vec![("From", "Alice <sip:alice@example.com>;tag=a")]);
     let from = fields
@@ -133,7 +137,7 @@ fn a_store_span_indexes_the_rows_it_returns() {
         .uri_span()
         .unwrap();
     assert_eq!(span.row(), Some(0));
-    assert_eq!(span.slice(&rows), Some("sip:alice@example.com"));
+    assert_eq!(span.slice(&rows), Ok("sip:alice@example.com"));
 }
 
 #[test]
@@ -146,13 +150,13 @@ fn span_text_is_what_the_row_holds() {
             .to_string(),
         "sip:alice@example.com"
     );
-    assert_eq!(text(addr.span(), row), Some(row));
-    assert_eq!(text(addr.uri_span(), row), Some("sip:al\0ice@example.com"));
+    assert_eq!(text(addr.span(), row), Ok(row));
+    assert_eq!(text(addr.uri_span(), row), Ok("sip:al\0ice@example.com"));
 
     let row = " sip:bob@example.com;tag=b ";
     let addr = SipHeaderAddr::parse(row).unwrap();
-    assert_eq!(text(addr.span(), row), Some(row.trim()));
-    assert_eq!(text(addr.uri_span(), row), Some("sip:bob@example.com"));
+    assert_eq!(text(addr.span(), row), Ok(row.trim()));
+    assert_eq!(text(addr.uri_span(), row), Ok("sip:bob@example.com"));
 }
 
 #[test]
@@ -161,11 +165,11 @@ fn every_uri_carrying_value_has_spans() {
     let geo = SipGeolocation::parse(row).unwrap();
     assert_eq!(
         text(geo.entries()[0].span(), row),
-        Some("<cid:loc@example.com>;inserted-by=example.org")
+        Ok("<cid:loc@example.com>;inserted-by=example.org")
     );
     assert_eq!(
         text(geo.entries()[1].uri_span(), row),
-        Some("https://lis.example.com/a")
+        Ok("https://lis.example.com/a")
     );
 
     let row = "<sip:a@example.com>;index=1, <sip:b@example.com?Reason=SIP%3bcause%3d302>;index=2";
@@ -173,11 +177,11 @@ fn every_uri_carrying_value_has_spans() {
     let second = &hi.entries()[1];
     assert_eq!(
         text(second.uri_span(), row),
-        Some("sip:b@example.com?Reason=SIP%3bcause%3d302")
+        Ok("sip:b@example.com?Reason=SIP%3bcause%3d302")
     );
     assert_eq!(
         text(second.span(), row),
-        Some("<sip:b@example.com?Reason=SIP%3bcause%3d302>;index=2")
+        Ok("<sip:b@example.com?Reason=SIP%3bcause%3d302>;index=2")
     );
     assert_eq!(
         second.span(),
@@ -196,12 +200,12 @@ fn every_uri_carrying_value_has_spans() {
     let route = SipHeaderAddrList::parse(row).unwrap();
     assert_eq!(
         text(route.entries()[1].span(), row),
-        Some("\"B\" <sip:p2.example.com;lr>")
+        Ok("\"B\" <sip:p2.example.com;lr>")
     );
     let contact = ContactList::parse(row).unwrap();
     assert_eq!(
         text(contact.addrs()[1].uri_span(), row),
-        Some("sip:p2.example.com;lr")
+        Ok("sip:p2.example.com;lr")
     );
 }
 
@@ -341,9 +345,9 @@ fn a_folded_message_row_is_indexed_as_the_store_holds_it() {
     assert_eq!(
         texts,
         [
-            Some("urn:example:1"),
-            Some("https://example.com/é"),
-            Some("urn:example:3")
+            Ok("urn:example:1"),
+            Ok("https://example.com/é"),
+            Ok("urn:example:3")
         ]
     );
 }
@@ -374,7 +378,7 @@ fn a_list_built_from_rows_spans_like_the_accessor() {
     assert_eq!(
         route.entries()[2]
             .span()
-            .and_then(|s| s.slice(&rows)),
-        Some(rows[1])
+            .map(|s| s.slice(&rows)),
+        Some(Ok(rows[1]))
     );
 }

@@ -1042,14 +1042,14 @@ mod tests {
         assert_eq!(
             parsed
                 .host_span()
-                .and_then(|s| s.get(raw)),
-            Some("Example.COM")
+                .map(|s| s.get(raw)),
+            Some(Ok("Example.COM"))
         );
         assert_eq!(
             parsed
                 .span()
-                .and_then(|s| s.get(raw)),
-            Some(raw)
+                .map(|s| s.get(raw)),
+            Some(Ok(raw))
         );
         let built = [
             parsed

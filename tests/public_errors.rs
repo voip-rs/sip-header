@@ -221,7 +221,8 @@ fn span_of(
     Some((
         span.row(),
         span.range(),
-        span.get(row)?
+        span.get(row)
+            .expect("an error span reads its row")
             .to_string(),
     ))
 }

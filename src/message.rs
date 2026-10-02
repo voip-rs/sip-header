@@ -410,7 +410,7 @@ impl<'a> RequestLine<'a> {
 /// let msg = "INVITE  sip:bob@example.com SIP/2.0\r\n\r\n";
 /// let line = sip_header::extract_request_line(msg)?.unwrap();
 /// assert_eq!(line.uri_text(), "sip:bob@example.com");
-/// assert_eq!(line.uri_span().get(msg), Some("sip:bob@example.com"));
+/// assert_eq!(line.uri_span().get(msg), Ok("sip:bob@example.com"));
 /// assert_eq!(line.warnings()[0].position, Some(6));
 ///
 /// let e = sip_header::extract_request_line("INVITE sip:a b@example.com SIP/2.0\r\n").unwrap_err();
