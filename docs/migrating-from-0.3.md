@@ -4,7 +4,7 @@ sip-header 0.4 changes four things about the crate:
 
 - Parsing rarely fails. Non-conformant input parses, and each breach of the grammar comes back as a typed warning, as in sip-uri 0.3.
 - A value you build is checked. Every constructor, builder and parameter setter refuses what would print as a different value, so a built header cannot carry injected structure.
-- Header names and the raw row lookup moved to their own crate, sip-header-catalog, which aims at 1.x.
+- Header names and the raw row lookup moved to their own crate, sip-header-catalog, which is 1.x.
 - The API reads like sip-uri's: traits imported by name, opaque collections with checked mutation, identity equality with RFC equivalence beside it, and a redaction policy you build once.
 
 Most of the changes on this page follow from one of those four.
@@ -194,7 +194,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 
 ## Received text is reached by span
 
-`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, a row index and byte range into what you parsed; slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde.
+`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, and `SipViaEntry` carries `span()` and `host_span()`: a row index and byte range into what you parsed; slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde.
 
 ## Redaction is a policy you build once
 

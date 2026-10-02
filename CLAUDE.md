@@ -6,7 +6,7 @@ Cargo workspace of two library crates for SIP header field values, between
 - `crates/sip-header-catalog` — `SipHeader`, `define_header_enum!`, the
   IANA/draft lists, the raw `SipHeaderRows` lookup trait, `RowError`, and
   the unchecked received-text holders `SipHeaderField`/`SipHeaderFields`. No
-  sip-uri dependency; aims for 1.0, so every public item is a forever
+  sip-uri dependency; 1.x, so every public item is a forever
   commitment.
 - `sip-header` (repo root) — value types, parsing, warnings, `ParseError`,
   validated constructors, redaction, `SipHeaderLookup` (blanket over

@@ -13,14 +13,14 @@ Sits between URI parsing ([sip-uri](https://crates.io/crates/sip-uri)) and full 
 
 ```toml
 [dependencies]
-sip-header = "0.4"
+sip-header = "0.4.0-rc.1"
 ```
 
 ## Crates
 
 | Crate | Holds | Stability |
 |---|---|---|
-| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) | aims for 1.0 |
+| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) | 1.x |
 | **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` | 0.x |
 
 A crate whose public API names header names or a header store depends on sip-header-catalog alone. sip-header re-exports it; a store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.

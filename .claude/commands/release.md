@@ -18,7 +18,7 @@ For each package with changes since its last tag:
 1. Find the last release tag (`scripts/release-packages.sh` defines `package_last_tag`; by hand, `git -c versionsort.suffix=- tag --list 'v[0-9]*' --sort=-v:refname | head -1` for sip-header, `'sip-header-catalog-v[0-9]*'` for the catalog).
 2. Examine the commits touching the package since that tag (`git log --oneline <tag>..HEAD -- <paths>`; the catalog is `crates/sip-header-catalog`) and classify the release:
    - **sip-header** (0.x, the minor is the breaking axis): **patch** (0.Y.z+1) for bug fixes, additive API, dependency bumps, build changes, docs; **breaking** (0.Y+1.0) for changed or removed public items and incompatible behavior. Stop and confirm a breaking release.
-   - **sip-header-catalog** (1.x once released): **patch** for fixes and docs, **minor** for additive API (a new `SipHeader` variant is additive: the enum is `#[non_exhaustive]`), **major** for anything breaking. Stop and confirm any major.
+   - **sip-header-catalog** (1.x): **patch** for fixes and docs, **minor** for additive API (a new `SipHeader` variant is additive: the enum is `#[non_exhaustive]`), **major** for anything breaking. Stop and confirm any major.
 
 ## Steps
 

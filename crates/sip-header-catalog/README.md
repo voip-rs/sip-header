@@ -1,6 +1,11 @@
 # sip-header-catalog
 
-SIP header names and the raw lookup a header store implements. Depend on it when your public API names SIP headers or exposes a header store; the parsing accessors over a store come from [sip-header](https://crates.io/crates/sip-header), which a caller picks its own version of.
+SIP header names and the raw lookup a header store implements. Depend on it when your public API names SIP headers or exposes a header store; the parsing accessors over a store come from [sip-header](https://crates.io/crates/sip-header), which a caller picks its own version of. The catalog is 1.x: a breaking change to any public item waits for 2.0.
+
+```toml
+[dependencies]
+sip-header-catalog = "1.0.0-rc.1"
+```
 
 ## What it holds
 
