@@ -138,7 +138,8 @@ Before committing run `cargo clippy --workspace --fix --allow-dirty --message-fo
 the pre-commit hook is the verification: formatting, clippy and tests (plain and
 `serde`), `-D missing_docs`, broken intra-doc links, all tests (including
 doctests and the IANA sync test), and gitleaks. It does not enable `conference-info`;
-run `cargo test --release --features conference-info` after touching it.
+after touching it run `cargo test --release --features conference-info` and
+`RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --workspace --all-features --no-deps`.
 A heavy property run is `PROPTEST_CASES=20000` over both
 `cargo test --release --test security` and `cargo test --release
 --all-features --lib span::`, with and without `--features serde`.
