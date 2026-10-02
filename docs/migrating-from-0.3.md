@@ -129,15 +129,15 @@ Every guard operation runs the builders' check, refuses the owner's reserved key
 Comparison under the RFC's rules is a separate trait:
 
 ```rust
-use sip_header::{HeaderEquivalence, HeaderParse, SipViaEntry};
+use sip_header::{HeaderEquivalence, HeaderParse, SipVia};
 
-let a = SipViaEntry::parse("SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1;rport")?;
-let b = SipViaEntry::parse("sip/2.0/udp 198.51.100.1;rport;branch=z9hG4bK1")?;
+let a = SipVia::parse("SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1;rport")?;
+let b = SipVia::parse("sip/2.0/udp 198.51.100.1;rport;branch=z9hG4bK1")?;
 assert_ne!(a, b);
 assert!(a.equivalent(&b));
 ```
 
-`HeaderEquivalence` exists only where an RFC states the rule: name-addr headers (the URI through sip-uri's `UriEquivalence`, parameters per RFC 3261 §7.3.1 and the From/To rules), Via, authentication values, Reason, the dialog identifiers and token lists. Each rule is quoted in its rustdoc. Identity never folds by RFC rule, so a later refinement of equivalence cannot change which stored values are equal.
+`HeaderEquivalence` exists only where an RFC states the rule: `SipHeaderAddr` (the URI through sip-uri's `UriEquivalence`, parameters per RFC 3261 §7.3.1 and the From/To rules), Via, authentication values, Reason, the dialog identifiers and token lists. Each rule is quoted in its rustdoc. Identity never folds by RFC rule, so a later refinement of equivalence cannot change which stored values are equal.
 
 ## Value shapes
 

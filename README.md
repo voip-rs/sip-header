@@ -244,17 +244,21 @@ This crate is part of a Rust SIP/NG9-1-1 ecosystem:
 
 ## RFC coverage
 
-- **RFC 3261** — name-addr, Contact, Via, Warning, Call-ID, Accept, Accept-Encoding, Accept-Language, Call-Info, the token lists, core header catalog
-- **RFC 2617** — Digest authentication (Authorization, WWW-Authenticate)
+- **RFC 3261** — name-addr, Contact, Route, Record-Route, Via, Warning, Call-ID, Accept, Accept-Encoding, Accept-Language, Call-Info, Alert-Info, Error-Info, the token lists, core header catalog
+- **RFC 3261, RFC 7235** — authentication values (Authorization, Proxy-Authorization, WWW-Authenticate, Proxy-Authenticate), parameters or token68
 - **RFC 3325** — P-Asserted-Identity, P-Preferred-Identity
 - **RFC 3326** — Reason, top-level and embedded in History-Info
+- **RFC 3327, RFC 3608** — Path, Service-Route
 - **RFC 3329** — Security mechanism (Security-Client/Server/Verify)
+- **RFC 3515, RFC 3892** — Refer-To, Referred-By
+- **RFC 3581** — Via rport
 - **RFC 3891** — Replaces header (top-level and URI-header framings)
 - **RFC 3911** — Join header
 - **RFC 4538** — Target-Dialog header
 - **RFC 4575** — Conference event package XML (feature-gated)
 - **RFC 6442** — Geolocation header
 - **RFC 7044** — History-Info header
+- **draft-levy-sip-diversion, draft-ietf-sip-privacy** — Diversion, Remote-Party-ID
 
 ## Development
 
