@@ -24,6 +24,8 @@ use crate::uri_info::read_uri;
 /// (RFC 6442 §4.1): a `cid:` reference to a MIME body part (typically
 /// PIDF-LO) or a URI to dereference.
 ///
+/// Parsed as an entry of [`SipGeolocation`].
+///
 /// Resolving `cid:` references against the message body or dereferencing
 /// the URI is the caller's responsibility.
 ///
@@ -173,7 +175,8 @@ impl Redact for SipGeolocation {
 /// SIP Geolocation header value (RFC 6442): one `locationValue` or more,
 /// each a `cid:` body-part reference or a URI to dereference.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::sip_uri::{Uri, UriParse};

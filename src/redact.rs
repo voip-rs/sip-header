@@ -16,7 +16,7 @@ pub trait Redact: sealed::Sealed {
     ///
     /// ```
     /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
-    /// use sip_uri::{Redaction, UserMask};
+    /// use sip_header::sip_uri::{Redaction, UserMask};
     ///
     /// let addr = SipHeaderAddr::parse(r#""Alice" <sip:+15551234567@example.com>;tag=abc"#)?;
     /// assert_eq!(
@@ -48,7 +48,7 @@ const IDENTITY_PARAMS: &[&str] = &["+sip.instance", "pub-gruu", "temp-gruu"];
 ///
 /// ```
 /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
-/// use sip_uri::{Redaction, UserMask};
+/// use sip_header::sip_uri::{Redaction, UserMask};
 ///
 /// let addr = SipHeaderAddr::parse(r#"<sip:+15551234567@example.com>;+sip.instance="<urn:uuid:1>""#)?;
 /// assert_eq!(

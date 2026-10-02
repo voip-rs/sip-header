@@ -18,6 +18,8 @@ const WARN_CODE_MAX: u16 = 999;
 
 /// A single Warning header entry.
 ///
+/// Parsed as an entry of [`SipWarning`].
+///
 /// RFC 3261 §20.43:
 /// ```text
 /// warning-value = warn-code SP warn-agent SP warn-text
@@ -95,7 +97,8 @@ impl fmt::Display for SipWarningEntry {
 
 /// SIP Warning header.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// RFC 3261 §20.43:
 /// ```text

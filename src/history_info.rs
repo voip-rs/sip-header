@@ -14,6 +14,8 @@ use crate::traits::sealed;
 
 /// A single entry from a History-Info header (RFC 7044).
 ///
+/// Parsed as an entry of [`HistoryInfo`].
+///
 /// Each entry is a SIP name-addr (`<URI>;params`) where the URI may contain
 /// an embedded `?Reason=...` header and the params include `index`, which
 /// a parsed entry may lack.
@@ -147,7 +149,8 @@ impl Redact for HistoryInfo {
 
 /// History-Info header value (RFC 7044).
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// Contains one or more routing-chain entries, each with a SIP URI,
 /// optional index, and optional embedded Reason header.

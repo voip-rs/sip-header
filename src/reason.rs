@@ -224,7 +224,8 @@ impl UriHeaderParse for SipReason {
 /// The Reason header: `reason-value *(COMMA reason-value)` (RFC 3326 §2),
 /// one reason or more.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipReasonList};

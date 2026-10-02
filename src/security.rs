@@ -13,6 +13,8 @@ use crate::params::HeaderParams;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 ///
+/// Parsed as an entry of [`SipSecurity`].
+///
 /// # Equality
 ///
 /// Two entries are equal when their wire forms are: the mechanism
@@ -76,7 +78,8 @@ impl fmt::Display for SipSecurityMechanism {
 
 /// Security-Client, Security-Server or Security-Verify header value.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// # Equality
 ///

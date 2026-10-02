@@ -17,6 +17,8 @@ use crate::{is_token, RawParam};
 
 /// A single Via entry.
 ///
+/// Parsed as an entry of [`SipVia`].
+///
 /// ```
 /// use sip_header::sip_uri::Host;
 /// use sip_header::SipViaEntry;
@@ -260,7 +262,8 @@ impl fmt::Display for SipViaEntry {
 
 /// SIP Via header value: one `via-parm` or more.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::sip_uri::Host;

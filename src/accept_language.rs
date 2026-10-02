@@ -13,6 +13,8 @@ use crate::params::HeaderParams;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 ///
+/// Parsed as an entry of [`SipAcceptLanguage`].
+///
 /// # Equality
 ///
 /// Two entries are equal when their wire forms are: the language range
@@ -75,7 +77,8 @@ impl fmt::Display for SipAcceptLanguageEntry {
 
 /// SIP Accept-Language header value; its grammar admits the empty list (RFC 3261 §25.1).
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// # Equality
 ///

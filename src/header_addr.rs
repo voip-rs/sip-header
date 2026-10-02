@@ -178,7 +178,7 @@ impl SipHeaderAddr {
     ///
     /// ```
     /// use sip_header::SipHeaderAddr;
-    /// use sip_uri::{Uri, UriParse};
+    /// use sip_header::sip_uri::{Uri, UriParse};
     ///
     /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
     ///     .with_display_name("Alice Smith")?;
@@ -202,7 +202,7 @@ impl SipHeaderAddr {
     ///
     /// ```
     /// use sip_header::SipHeaderAddr;
-    /// use sip_uri::{Uri, UriParse};
+    /// use sip_header::sip_uri::{Uri, UriParse};
     ///
     /// let addr = SipHeaderAddr::new(Uri::parse("sip:alice@example.com")?)?
     ///     .with_param("lr", None)?
@@ -604,7 +604,8 @@ pub(crate) fn parse_list_addr(
 /// Route, Record-Route, Path, Service-Route, P-Asserted-Identity,
 /// P-Preferred-Identity and Diversion carry; each grammar needs one entry.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// ```
 /// use sip_header::{HeaderParse, ListParse, SipHeaderAddrList};

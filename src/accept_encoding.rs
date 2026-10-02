@@ -15,6 +15,8 @@ use crate::params::HeaderParams;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
 ///
+/// Parsed as an entry of [`SipAcceptEncoding`].
+///
 /// # Equality
 ///
 /// Two entries are equal when their wire forms are: the coding
@@ -66,7 +68,8 @@ impl fmt::Display for SipAcceptEncodingEntry {
 
 /// SIP Accept-Encoding header value; its grammar admits the empty list (RFC 3261 §25.1).
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// # Equality
 ///

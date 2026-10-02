@@ -27,6 +27,8 @@ use crate::traits::sealed;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 ///
+/// Parsed as an entry of [`UriInfo`].
+///
 /// # Equality
 ///
 /// Two entries are equal when their wire forms are: the URI as
@@ -144,7 +146,8 @@ impl Redact for UriInfo {
 
 /// `<absoluteURI> *(SEMI generic-param)` header value, one entry or more.
 ///
-/// Parsed through [`ListParse`](crate::ListParse).
+/// Parsed through [`HeaderParse`](crate::HeaderParse) and
+/// [`ListParse`](crate::ListParse).
 ///
 /// Used by Call-Info, Alert-Info, and Error-Info.
 ///
