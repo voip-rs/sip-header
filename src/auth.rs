@@ -295,9 +295,10 @@ impl fmt::Debug for SipAuthValue {
 }
 
 impl Redact for SipAuthValue {
-    /// Render for logs: the `token68` and credential values as `***`,
-    /// `username` as `***` unless `how` shows the user part, and `uri`
-    /// through sip-uri's redaction (`***` when it is no URI).
+    /// Render for logs: the `token68`, credential values and parameters
+    /// `how` masks as `***`, `username` as `***` unless `how` shows the
+    /// user part, and `uri` through sip-uri's redaction (`***` when it is
+    /// no URI).
     ///
     /// ```
     /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipAuthValue};
@@ -312,16 +313,13 @@ impl Redact for SipAuthValue {
     /// # Ok::<(), sip_header::ParseError>(())
     /// ```
     fn redacted<'a>(&'a self, how: &'a crate::redact::HeaderRedaction) -> impl fmt::Display + 'a {
-        RedactedAuth {
-            auth: self,
-            how: how.uri(),
-        }
+        RedactedAuth { auth: self, how }
     }
 }
 
 struct RedactedAuth<'a> {
     auth: &'a SipAuthValue,
-    how: &'a sip_uri::Redaction,
+    how: &'a crate::redact::HeaderRedaction,
 }
 
 impl fmt::Display for RedactedAuth<'_> {
@@ -338,10 +336,10 @@ impl fmt::Display for RedactedAuth<'_> {
         {
             return write!(f, " {MASK}");
         }
-        let shows_user = self
+        let uri_how = self
             .how
-            .user_mask()
-            == sip_uri::UserMask::Visible;
+            .uri();
+        let shows_user = uri_how.user_mask() == sip_uri::UserMask::Visible;
         for (i, (name, value, quoted)) in self
             .auth
             .params
@@ -354,13 +352,18 @@ impl fmt::Display for RedactedAuth<'_> {
                 continue;
             };
             f.write_char('=')?;
-            let masked = if is_credential(name) || (name == "username" && !shows_user) {
+            let masked = if is_credential(name)
+                || (name == "username" && !shows_user)
+                || self
+                    .how
+                    .masks_param(name)
+            {
                 MASK.to_string()
             } else if name == "uri" {
                 sip_uri::Uri::parse(value).map_or_else(
                     |_| MASK.to_string(),
                     |uri| {
-                        uri.redacted(self.how)
+                        uri.redacted(uri_how)
                             .to_string()
                     },
                 )
