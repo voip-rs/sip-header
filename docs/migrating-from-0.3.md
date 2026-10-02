@@ -220,4 +220,4 @@ Value types serialize as their parts and deserialize through the same checks a p
 
 ## sip-uri 0.3
 
-sip-header 0.4 depends on sip-uri 0.3 and re-exports it as `sip_header::sip_uri`. Its own changes are in [sip-uri's migration guide](https://github.com/voip-rs/sip-uri/blob/v0.3.0-rc.1/docs/migrating-from-0.2.md).
+sip-header 0.4 depends on sip-uri 0.3 and re-exports it as `sip_header::sip_uri`. Its own changes are in [sip-uri's migration guide](https://github.com/voip-rs/sip-uri/blob/b0f038421200416fbad56bf4960278f4f585c238/docs/migrating-from-0.2.md).
