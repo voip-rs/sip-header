@@ -132,9 +132,6 @@ typed_header! { single:
 }
 
 impl Located for SipCallId {}
-impl Located for SipReplaces {}
-impl Located for SipJoin {}
-impl Located for SipTargetDialog {}
 
 /// One value per row, as the authentication headers carry them (RFC 3261
 /// §7.3.1); a warning's or error's entry index is the row, and a blank row
@@ -158,10 +155,13 @@ impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
                 );
                 continue;
             }
-            let parsed = SipAuthValue::parse_with_warnings(row).map_err(|e| {
+            let mut parsed = SipAuthValue::parse_with_warnings(row).map_err(|e| {
                 e.in_row(i)
                     .in_entry(i)
             })?;
+            parsed
+                .value
+                .relocate_spans(&Relocation::shift(Some(0), Some(i)));
             values.push(parsed.value);
             warnings.extend(
                 parsed

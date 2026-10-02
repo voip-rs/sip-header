@@ -131,6 +131,7 @@ pub struct SipReason {
 const RESERVED: &[&str] = &["cause", "text"];
 
 header_params!(SipReason, reserved: RESERVED);
+params_located!(SipReason);
 
 impl SipReason {
     fn unchecked(protocol: String) -> Self {
@@ -152,6 +153,8 @@ impl SipReason {
     /// Set the cause.
     pub fn with_cause(mut self, cause: impl Into<SipReasonCause>) -> Self {
         self.cause = Some(cause.into());
+        self.params
+            .clear_spans();
         self
     }
 
@@ -162,6 +165,8 @@ impl SipReason {
         let text = text.as_ref();
         crate::check::refuse_controls(Field::Text, text)?;
         self.text = Some(text.to_owned());
+        self.params
+            .clear_spans();
         Ok(self)
     }
 
@@ -206,7 +211,7 @@ fn parse_reason_value(s: &str) -> Result<Parsed<SipReason>, ParseError> {
 
 impl HeaderParse for SipReason {
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed(input, parse_reason_value)
+        crate::scrub::parse_scrubbed_located(input, parse_reason_value)
     }
 }
 

@@ -10,6 +10,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::is_token;
 use crate::params::{HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::redact::Redact;
+use crate::span::Span;
 use crate::traits::{sealed, HeaderParse};
 
 /// SIP authentication value.
@@ -411,11 +412,13 @@ impl SipAuthValueParts {
     }
 }
 
+params_located!(SipAuthValue);
+
 impl sealed::Sealed for SipAuthValue {}
 
 impl HeaderParse for SipAuthValue {
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed(input, |input| {
+        crate::scrub::parse_scrubbed_located(input, |input| {
             let mut warnings = Vec::new();
             parse_auth(input, &mut warnings).map(|v| Parsed::new(v, warnings))
         })
@@ -479,13 +482,14 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             }
             warn(warnings, WarningCode::AuthParamFlag, key_at);
             auth.params
-                .push_read(&key, None, false, Field::Credentials, key_at, warnings);
+                .push_read(&key, None, Field::Credentials, key_at, warnings);
             continue;
         };
 
         let key = crate::token_field(input, param_str[..eq].trim(), Field::Credentials, warnings);
         let value = param_str[eq + 1..].trim();
         let at = crate::offset_in(input, value);
+        let span = Span::within(input, value);
         if !is_token(&key) {
             warn(warnings, WarningCode::InvalidToken, key_at);
         }
@@ -502,8 +506,7 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         auth.params
             .push_read(
                 &key,
-                Some(value.clone()),
-                quoted.is_some(),
+                Some((value.clone(), quoted.is_some(), span)),
                 Field::Credentials,
                 key_at,
                 warnings,

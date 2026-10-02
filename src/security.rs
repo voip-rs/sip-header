@@ -26,6 +26,7 @@ pub struct SipSecurityMechanism {
 }
 
 header_params!(SipSecurityMechanism, check: check_accept_param);
+params_located!(SipSecurityMechanism);
 
 impl SipSecurityMechanism {
     /// A mechanism by name, lowercased, with no parameters.

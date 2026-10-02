@@ -28,6 +28,7 @@ pub struct SipAcceptEncodingEntry {
 }
 
 header_params!(SipAcceptEncodingEntry, check: check_accept_param);
+params_located!(SipAcceptEncodingEntry);
 
 impl SipAcceptEncodingEntry {
     /// An entry for the given content-coding, lowercased, with no parameters.

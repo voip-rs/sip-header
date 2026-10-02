@@ -194,6 +194,13 @@ impl HistoryInfoEntryParts {
     }
 }
 
+impl Located for HistoryInfoEntry {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        self.addr
+            .relocate_spans(to);
+    }
+}
+
 impl CommaList for HistoryInfo {
     type Entry = HistoryInfoEntry;
     const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
@@ -218,12 +225,6 @@ impl CommaList for HistoryInfo {
             warnings.push(ParseWarning::new(Field::Index, WarningCode::MissingIndex));
         }
         Ok(Some(HistoryInfoEntry { addr }))
-    }
-
-    fn relocate_entry(entry: &mut HistoryInfoEntry, to: &Relocation<'_>) {
-        entry
-            .addr
-            .relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {

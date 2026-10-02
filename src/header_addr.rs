@@ -97,6 +97,8 @@ impl Located for SipHeaderAddr {
     fn relocate_spans(&mut self, to: &Relocation<'_>) {
         relocated(&mut self.span, to);
         relocated(&mut self.uri_span, to);
+        self.params
+            .relocate_spans(to);
     }
 }
 
@@ -288,10 +290,12 @@ impl SipHeaderAddr {
         self.clear_spans();
     }
 
-    /// Clear both spans, as a builder that changes the value does.
+    /// Clear every span, as a builder that changes the value does.
     pub(crate) fn clear_spans(&mut self) {
         self.span = None;
         self.uri_span = None;
+        self.params
+            .clear_spans();
     }
 
     /// The first `tag` parameter value, if present, case as sent.
@@ -631,10 +635,6 @@ impl CommaList for SipHeaderAddrList {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipHeaderAddr>, ParseError> {
         parse_list_addr(entry, warnings).map(Some)
-    }
-
-    fn relocate_entry(entry: &mut SipHeaderAddr, to: &Relocation<'_>) {
-        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {

@@ -253,6 +253,29 @@ fn a_parameter_value_span_covers_the_value_as_received() {
     same_value(p, built.params());
 }
 
+#[test]
+fn a_value_decoded_from_a_uri_header_has_no_value_span() {
+    use sip_header::{SipReason, SipReplaces, UriHeaderParse};
+
+    let reason = SipReason::parse_uri_header("SIP%3Bcause%3D200%3Bx%3D%22a%20b%22").unwrap();
+    assert_eq!(reason.param("x"), Some(Some("a b")));
+    assert_eq!(
+        reason
+            .params()
+            .value_span("x"),
+        None
+    );
+    let replaces =
+        SipReplaces::parse_uri_header("a%40example.com%3Bto-tag%3D1%3Bfrom-tag%3D2%3Bx%3Dy")
+            .unwrap();
+    assert_eq!(
+        replaces
+            .params()
+            .value_span("x"),
+        None
+    );
+}
+
 fn same_value<T: PartialEq + Hash + std::fmt::Debug>(parsed: &T, built: &T) {
     assert_eq!(parsed, built);
     let state = RandomState::new();

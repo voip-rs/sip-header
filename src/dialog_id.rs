@@ -73,6 +73,8 @@ pub trait DialogKind: sealed::Sealed {
     const RESERVED: &'static [&'static str];
 }
 
+params_located!(DialogId);
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DialogId {
     call_id: String,
@@ -118,6 +120,8 @@ impl DialogId {
     /// Errors unless `call_id` is an RFC 3261 §25.1 `callid = word [ "@" word ]`.
     pub(crate) fn set_call_id(&mut self, call_id: &str) -> Result<(), ParseError> {
         self.call_id = SipCallId::new(call_id)?.into();
+        self.params
+            .clear_spans();
         Ok(())
     }
 
@@ -141,6 +145,8 @@ impl DialogId {
 
     pub(crate) fn set_early_only(&mut self, early_only: bool) {
         self.early_only = early_only;
+        self.params
+            .clear_spans();
     }
 
     pub(crate) fn params(&self) -> &HeaderParams {
@@ -153,11 +159,15 @@ impl DialogId {
 
     pub(crate) fn set_first_tag(&mut self, tag: &str) -> Result<(), ParseError> {
         self.first_tag = checked_token(Field::Tag, tag)?;
+        self.params
+            .clear_spans();
         Ok(())
     }
 
     pub(crate) fn set_second_tag(&mut self, tag: &str) -> Result<(), ParseError> {
         self.second_tag = checked_token(Field::Tag, tag)?;
+        self.params
+            .clear_spans();
         Ok(())
     }
 
@@ -167,6 +177,8 @@ impl DialogId {
 
     pub(crate) fn set_framing(&mut self, framing: DialogFraming) {
         self.framing = framing;
+        self.params
+            .clear_spans();
     }
 
     fn wire_form<K: DialogKind>(&self) -> Result<String, fmt::Error> {
@@ -353,6 +365,8 @@ macro_rules! dialog_id_type {
     };
 }
 
+params_located!(DialogFields);
+
 /// A dialog identifier's parts, as parsing reads them.
 pub(crate) struct DialogFields {
     pub(crate) call_id: String,
@@ -371,7 +385,7 @@ pub(crate) trait DialogBuild: DialogKind + Sized {
 }
 
 pub(crate) fn parse<T: DialogBuild>(raw: &str) -> Result<Parsed<T>, ParseError> {
-    crate::scrub::parse_scrubbed(raw, parse_framed::<T>)
+    crate::scrub::parse_scrubbed_located(raw, parse_framed::<T>)
         .map(|p| p.map(|f| T::build(f, DialogFraming::Header)))
 }
 
@@ -497,6 +511,12 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
 macro_rules! dialog_id_parse {
     ($Type:ident) => {
         impl $crate::traits::sealed::Sealed for $Type {}
+
+        impl $crate::span::Located for $Type {
+            fn relocate_spans(&mut self, to: &$crate::span::Relocation<'_>) {
+                $crate::span::Located::relocate_spans(&mut self.0, to);
+            }
+        }
 
         impl $crate::traits::HeaderParse for $Type {
             fn parse_with_warnings(

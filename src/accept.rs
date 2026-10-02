@@ -28,6 +28,7 @@ pub struct SipAcceptEntry {
 }
 
 header_params!(SipAcceptEntry, check: check_accept_param);
+params_located!(SipAcceptEntry);
 
 /// Refuses a `q` that is not an unquoted RFC 3261 §25.1 `qvalue`.
 pub(crate) fn check_accept_param(

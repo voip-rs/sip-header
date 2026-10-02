@@ -64,6 +64,8 @@ impl Located for UriInfoEntry {
     fn relocate_spans(&mut self, to: &Relocation<'_>) {
         relocated(&mut self.span, to);
         relocated(&mut self.uri_span, to);
+        self.params
+            .relocate_spans(to);
     }
 }
 
@@ -278,10 +280,6 @@ impl CommaList for UriInfo {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<UriInfoEntry>, ParseError> {
         Ok(read_entry(entry, warnings))
-    }
-
-    fn relocate_entry(entry: &mut UriInfoEntry, to: &Relocation<'_>) {
-        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {

@@ -64,6 +64,8 @@ impl Located for SipGeolocationEntry {
     fn relocate_spans(&mut self, to: &Relocation<'_>) {
         relocated(&mut self.span, to);
         relocated(&mut self.uri_span, to);
+        self.params
+            .relocate_spans(to);
     }
 }
 
@@ -320,10 +322,6 @@ impl CommaList for SipGeolocation {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipGeolocationEntry>, ParseError> {
         Ok(read_entry(entry, warnings))
-    }
-
-    fn relocate_entry(entry: &mut SipGeolocationEntry, to: &Relocation<'_>) {
-        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {

@@ -26,6 +26,7 @@ pub struct SipAcceptLanguageEntry {
 }
 
 header_params!(SipAcceptLanguageEntry, check: check_accept_param);
+params_located!(SipAcceptLanguageEntry);
 
 impl SipAcceptLanguageEntry {
     /// An entry for the given language range, lowercased, with no parameters.

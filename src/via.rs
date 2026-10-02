@@ -96,6 +96,8 @@ impl Located for SipViaEntry {
     fn relocate_spans(&mut self, to: &Relocation<'_>) {
         relocated(&mut self.span, to);
         relocated(&mut self.host_span, to);
+        self.params
+            .relocate_spans(to);
     }
 }
 
@@ -176,6 +178,8 @@ impl SipViaEntry {
     fn clear_spans(&mut self) {
         self.span = None;
         self.host_span = None;
+        self.params
+            .clear_spans();
     }
 
     /// Returns the protocol name (e.g., "SIP"), case as sent.
@@ -456,10 +460,6 @@ impl CommaList for SipVia {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipViaEntry>, ParseError> {
         parse_via_entry(entry, warnings)
-    }
-
-    fn relocate_entry(entry: &mut SipViaEntry, to: &Relocation<'_>) {
-        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {

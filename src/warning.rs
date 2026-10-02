@@ -304,6 +304,8 @@ fn parse_quoted_string(
     ))
 }
 
+impl crate::span::Located for SipWarningEntry {}
+
 impl CommaList for SipWarning {
     type Entry = SipWarningEntry;
     const QUOTE_START: crate::QuoteStart = crate::QuoteStart::Word;

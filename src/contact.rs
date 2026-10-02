@@ -12,7 +12,6 @@ use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
-use crate::span::{Located, Relocation};
 
 /// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
 /// (RFC 3261 §20.10), either the `*` wildcard or one address or more.
@@ -185,10 +184,6 @@ impl CommaList for ContactList {
             return Ok(Some(None));
         }
         parse_list_addr(entry, warnings).map(|addr| Some(Some(addr)))
-    }
-
-    fn relocate_entry(entry: &mut Option<SipHeaderAddr>, to: &Relocation<'_>) {
-        entry.relocate_spans(to);
     }
 
     fn from_parsed(entries: Vec<Option<SipHeaderAddr>>) -> Result<Self, ParseError> {

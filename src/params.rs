@@ -2,6 +2,7 @@
 //! shares (RFC 3261 §25.1), and the comma-separated `auth-param` list.
 
 use std::fmt::{self, Write as _};
+use std::hash::{Hash, Hasher};
 use std::net::Ipv6Addr;
 
 pub(crate) use crate::check::checked_token;
@@ -9,7 +10,7 @@ use crate::check::refuse_controls;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::redact::HeaderRedaction;
-use crate::span::Span;
+use crate::span::{relocated, Located, Relocation, Span};
 use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 
 /// `params_mut`, `with_param`, `with_quoted_param`, `params` and `param`
@@ -113,6 +114,18 @@ macro_rules! header_params {
                 self.params_mut()
                     .set_quoted(key, value)?;
                 Ok(self)
+            }
+        }
+    };
+}
+
+/// `Located` for a type whose only spans are the value spans of its
+/// `params: HeaderParams` field.
+macro_rules! params_located {
+    ($Type:ty) => {
+        impl $crate::span::Located for $Type {
+            fn relocate_spans(&mut self, to: &$crate::span::Relocation<'_>) {
+                $crate::span::Located::relocate_spans(&mut self.params, to);
             }
         }
     };
@@ -287,30 +300,56 @@ impl Drop for ParamsMut<'_> {
 /// [`Display`](fmt::Display) writes `;name` or `;name=value`, the value
 /// bare when it is a `token` or a host and quoted otherwise.
 ///
+/// A parsed value's [`value_span`](Self::value_span) covers the value as
+/// received; any change to the parameters clears every value span.
+///
 /// # Equality
 ///
 /// Two parameter sets are equal when they hold the same parameters with the
-/// same quoting in the same order. [`Hash`] follows the same rule.
+/// same quoting in the same order. [`Hash`] follows the same rule. Value
+/// spans take no part in equality, hashing or serde.
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipHeaderAddr};
 ///
-/// let a = SipHeaderAddr::parse(r#"<sip:a@example.com>;lr;note="a b";tag=x"#)?;
+/// let row = r#"<sip:a@example.com>;lr;note="a b";tag=x"#;
+/// let a = SipHeaderAddr::parse(row)?;
 /// let p = a.params();
 /// assert_eq!(p.get("NOTE"), Some(Some("a b")));
 /// assert!(p.is_quoted("note"));
 /// assert_eq!(p.get("lr"), Some(None));
 /// assert_eq!(p.to_string(), r#";lr;note="a b";tag=x"#);
-/// # Ok::<(), sip_header::ParseError>(())
+/// assert_eq!(p.value_span("note").unwrap().get(row), Ok(r#""a b""#));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct HeaderParams(Vec<Param>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 struct Param {
     name: String,
     value: Option<String>,
     quoted: bool,
+    span: Option<Span>,
+}
+
+impl PartialEq for Param {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.value == other.value && self.quoted == other.quoted
+    }
+}
+
+impl Eq for Param {}
+
+impl Hash for Param {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name
+            .hash(state);
+        self.value
+            .hash(state);
+        self.quoted
+            .hash(state);
+    }
 }
 
 impl Param {
@@ -325,6 +364,7 @@ impl Param {
             name,
             value,
             quoted,
+            span: None,
         }
     }
 
@@ -438,16 +478,13 @@ impl HeaderParams {
     /// how many were removed.
     pub fn remove(&mut self, name: &str) -> usize {
         let before = self.len();
-        self.0
-            .retain(|p| {
-                !p.name
-                    .eq_ignore_ascii_case(name)
-            });
+        self.retain(|n, _| !n.eq_ignore_ascii_case(name));
         before - self.len()
     }
 
     /// Keep only the parameters for which `keep` returns `true`, in order.
     pub fn retain(&mut self, mut keep: impl FnMut(&str, Option<&str>) -> bool) {
+        let before = self.len();
         self.0
             .retain(|p| {
                 keep(
@@ -456,6 +493,24 @@ impl HeaderParams {
                         .as_deref(),
                 )
             });
+        if self.len() != before {
+            self.clear_spans();
+        }
+    }
+
+    /// Where the value of the first parameter named `name` was read from,
+    /// quotes included; `None` for a flag, an absent name, or a value
+    /// built, deserialized or changed since.
+    pub fn value_span(&self, name: &str) -> Option<Span> {
+        self.find(name)
+            .and_then(|p| p.span)
+    }
+
+    /// Drop every value span, as any change to the value does.
+    pub(crate) fn clear_spans(&mut self) {
+        for p in &mut self.0 {
+            p.span = None;
+        }
     }
 
     /// The checked path under [`push`](Self::push) and [`set`](Self::set),
@@ -558,6 +613,7 @@ impl HeaderParams {
     /// [`set`](Self::set) without its checks, for a lowercase `token` name
     /// and a value free of CR, LF and NUL.
     pub(crate) fn replace(&mut self, name: &str, value: Option<String>, quoted: bool) {
+        self.clear_spans();
         let Some(first) = self
             .0
             .iter()
@@ -575,14 +631,14 @@ impl HeaderParams {
         self.0[first] = Param::new(name.to_string(), value, quoted);
     }
 
-    /// Append a parameter read off the wire, raising
-    /// [`WarningCode::DuplicateParam`] on `field` at `at` when its name
-    /// is already present.
+    /// Append a parameter read off the wire, `value` with whether it was
+    /// quoted and where it was read, raising
+    /// [`WarningCode::DuplicateParam`] on `field` at `at` when its name is
+    /// already present.
     pub(crate) fn push_read(
         &mut self,
         name: &str,
-        value: Option<String>,
-        quoted: bool,
+        value: Option<(String, bool, Span)>,
         field: Field,
         at: usize,
         warnings: &mut Vec<ParseWarning>,
@@ -593,7 +649,16 @@ impl HeaderParams {
         {
             warnings.push(ParseWarning::new(field, WarningCode::DuplicateParam).at(at));
         }
-        self.push_unchecked(name.to_ascii_lowercase(), value, quoted);
+        let name = name.to_ascii_lowercase();
+        let param = match value {
+            None => Param::new(name, None, false),
+            Some((value, quoted, span)) => Param {
+                span: Some(span),
+                ..Param::new(name, Some(value), quoted)
+            },
+        };
+        self.0
+            .push(param);
     }
 
     /// Append one `generic-param` read from `input`, unquoting its value
@@ -625,16 +690,15 @@ impl HeaderParams {
         if !is_token(&name) {
             warnings.push(ParseWarning::new(Field::Param, WarningCode::InvalidToken).at(at));
         }
-        let (value, quoted) = match p.unquoted() {
-            None => (None, false),
-            Some(u) => (Some(u.value), u.quoted),
-        };
-        let bare_breach = !quoted
-            && !p.unterminated
+        let value = p
+            .unquoted()
+            .zip(p.value)
+            .map(|(u, raw)| (u.value, u.quoted, Span::within(input, raw)));
+        let bare_breach = !p.unterminated
             && value
-                .as_deref()
-                .is_some_and(|v| !is_bare_value(v));
-        self.push_read(&name, value, quoted, Field::Param, at, warnings);
+                .as_ref()
+                .is_some_and(|(v, quoted, _)| !quoted && !is_bare_value(v));
+        self.push_read(&name, value, Field::Param, at, warnings);
         if let Some(raw) = p
             .value
             .filter(|_| bare_breach)
@@ -671,6 +735,14 @@ impl HeaderParams {
             p.write(w)?;
         }
         Ok(())
+    }
+}
+
+impl Located for HeaderParams {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        for p in &mut self.0 {
+            relocated(&mut p.span, to);
+        }
     }
 }
 
@@ -760,6 +832,7 @@ impl<'de> serde::Deserialize<'de> for Param {
             name,
             value,
             quoted,
+            span: None,
         })
     }
 }
@@ -782,6 +855,7 @@ pub(crate) fn deserialize_unchecked<'de, D: serde::Deserializer<'de>>(
         name,
         value,
         quoted,
+        ..
     } in entries
     {
         if value.is_none() && quoted {

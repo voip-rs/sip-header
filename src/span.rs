@@ -44,6 +44,12 @@ impl Span {
         }
     }
 
+    /// Over `inner`, a slice of `outer`.
+    pub(crate) fn within(outer: &str, inner: &str) -> Self {
+        let start = crate::offset_in(outer, inner);
+        Span::new(start..start + inner.len())
+    }
+
     pub(crate) fn in_row(row: Option<usize>, range: Range<usize>) -> Self {
         Span {
             row,
@@ -672,12 +678,14 @@ mod tests {
         ]
     }
 
+    type WireParams = Vec<(&'static str, Option<String>)>;
+
     /// `(name, value)` pairs, a value as written on the wire.
-    fn wire_params() -> impl Strategy<Value = Vec<(&'static str, Option<String>)>> {
+    fn wire_params() -> impl Strategy<Value = WireParams> {
         prop::collection::vec((prop::sample::select(PARAM_NAMES), param_value()), 0..4)
     }
 
-    fn semi_tail(params: &[(&str, Option<String>)], spaced: bool) -> String {
+    fn semi_tail(params: &[(&'static str, Option<String>)], spaced: bool) -> String {
         let (semi, eq) = if spaced { (" ; ", " = ") } else { (";", "=") };
         params
             .iter()
@@ -713,14 +721,14 @@ mod tests {
             prop::collection::vec((0.0..=1.0f64, prop::sample::select(INJECTED)), 0..3),
         )
             .prop_map(|(head, a, b, snippets)| {
-                let row = |entries: &[(Vec<(&str, Option<String>)>, bool)]| {
+                let row = |entries: &[(WireParams, bool)]| {
                     let joined: Vec<String> = entries
                         .iter()
                         .map(|(p, spaced)| format!("{head}{}", semi_tail(p, *spaced)))
                         .collect();
                     inject(&joined.join(", "), &snippets)
                 };
-                let auth = |entries: &[(Vec<(&str, Option<String>)>, bool)]| {
+                let auth = |entries: &[(WireParams, bool)]| {
                     let params: Vec<String> = entries[0]
                         .0
                         .iter()
