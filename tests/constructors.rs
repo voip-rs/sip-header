@@ -118,6 +118,7 @@ fn addr_parts_read_uri_headers() -> R {
             reason.protocol(),
             reason
                 .cause()
+                .as_ref()
                 .map(|c| c.as_str())
         ),
         ("SIP", Some("302"))

@@ -435,7 +435,7 @@ mod tests {
 
     fn cause(r: &SipReason) -> Option<u16> {
         r.cause()
-            .and_then(SipReasonCause::as_u16)
+            .and_then(|c| c.as_u16())
     }
 
     #[test]
@@ -549,7 +549,8 @@ mod tests {
         assert_eq!(
             wide.value
                 .cause()
-                .map(SipReasonCause::as_str),
+                .as_ref()
+                .map(|c| c.as_str()),
             Some("70000")
         );
     }
@@ -571,6 +572,60 @@ mod tests {
                 .to_string(),
             input
         );
+    }
+
+    #[test]
+    fn cause_and_text_are_parameters_in_received_order() {
+        let input = r#"SIP;text="a;b";x=1;cause=200"#;
+        let r = value(input);
+        assert_eq!(r.to_string(), input);
+        assert_eq!(r.param("cause"), Some(Some("200")));
+        assert_eq!(
+            r.param("text"),
+            r.text()
+                .map(Some)
+        );
+        assert_eq!(
+            r.params()
+                .value_span("cause")
+                .map(|s| s.get(input)),
+            Some(Ok("200"))
+        );
+        assert_eq!(
+            r.params()
+                .value_span("text")
+                .map(|s| s.get(input)),
+            Some(Ok(r#""a;b""#))
+        );
+        let reset = r
+            .with_cause(SipReasonCause::new("3").unwrap())
+            .with_text("c")
+            .unwrap();
+        assert_eq!(reset.to_string(), r#"SIP;text="c";x=1;cause=3"#);
+        assert_eq!(
+            reset
+                .params()
+                .value_span("x"),
+            None
+        );
+    }
+
+    #[test]
+    fn built_reason_prints_in_setter_order_and_reads_back() {
+        let reason = || SipReason::new("SIP").unwrap();
+        let canonical = reason()
+            .with_cause(200)
+            .with_text("x")
+            .unwrap();
+        let swapped = reason()
+            .with_text("x")
+            .unwrap()
+            .with_cause(200);
+        assert_eq!(canonical.to_string(), r#"SIP;cause=200;text="x""#);
+        assert_eq!(swapped.to_string(), r#"SIP;text="x";cause=200"#);
+        for r in [canonical, swapped] {
+            assert_eq!(SipReason::parse_strict(&r.to_string()), Ok(r));
+        }
     }
 
     #[test]

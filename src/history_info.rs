@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(
             reason
                 .cause()
-                .and_then(SipReasonCause::as_u16),
+                .and_then(|c| c.as_u16()),
             Some(200)
         );
         assert_eq!(reason.text(), Some("Normal+Next+Hop"));
@@ -418,7 +418,7 @@ mod tests {
         assert_eq!(
             reason
                 .cause()
-                .and_then(SipReasonCause::as_u16),
+                .and_then(|c| c.as_u16()),
             Some(200)
         );
         assert_eq!(reason.text(), Some("Legacy+routing"));

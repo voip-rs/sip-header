@@ -145,6 +145,7 @@ fn list_and_entry_display() -> R {
             reason.protocol(),
             reason
                 .cause()
+                .as_ref()
                 .map(|c| c.as_str()),
             reason.text()
         ),
@@ -274,9 +275,18 @@ mod serde_round_trip {
             &SipReason::parse(r#"SIP;cause=200;text="Call completed elsewhere";foo=bar"#).unwrap(),
             json!({
                 "protocol": "SIP",
-                "cause": "200",
-                "text": "Call completed elsewhere",
-                "params": [["foo", "bar", false]],
+                "params": [
+                    ["cause", "200", false],
+                    ["text", "Call completed elsewhere", true],
+                    ["foo", "bar", false],
+                ],
+            }),
+        );
+        pinned(
+            &SipReason::parse(r#"SIP;text="x";cause=200"#).unwrap(),
+            json!({
+                "protocol": "SIP",
+                "params": [["text", "x", true], ["cause", "200", false]],
             }),
         );
         pinned(
@@ -477,7 +487,9 @@ mod serde_round_trip {
         }));
         rejects::<SipWarningEntry>(json!({"code": 1000, "agent": "example.com", "text": "secret"}));
         rejects::<SipAcceptEntry>(json!({"media_type": "a/b", "subtype": "secret"}));
-        rejects::<SipReason>(json!({"protocol": "S;IP", "cause": null, "text": "secret"}));
+        rejects::<SipReason>(json!({"protocol": "S;IP", "params": [["text", "secret", true]]}));
+        rejects::<SipReason>(json!({"protocol": "SIP", "params": [["cause", "secret", false]]}));
+        rejects::<SipReason>(json!({"protocol": "SIP", "params": [["text", "secret", false]]}));
     }
 
     const MARKER: &str = "zz-marker-77";
@@ -659,6 +671,9 @@ mod serde_round_trip {
     fn tag_and_rport_fields_are_refused() {
         refuses_field(&addr(), "tag");
         refuses_field(&first("SIP/2.0/UDP 198.51.100.1", SipVia::entries), "rport");
+        for key in ["cause", "text"] {
+            refuses_field(&SipReason::parse(r#"SIP;cause=200;text="x""#).unwrap(), key);
+        }
     }
 
     #[test]

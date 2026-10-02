@@ -260,7 +260,8 @@ fn reason_keeps_cause_digits_and_extension_params() -> R {
     assert_eq!(
         big.value
             .cause()
-            .map(SipReasonCause::as_u16),
+            .as_ref()
+            .map(|c| c.as_u16()),
         Some(None)
     );
 
@@ -336,7 +337,7 @@ fn addr_reason_is_a_sip_reason() -> R {
     assert_eq!(
         reason
             .cause()
-            .and_then(SipReasonCause::as_u16),
+            .and_then(|c| c.as_u16()),
         Some(16)
     );
     Ok(())
@@ -562,6 +563,7 @@ mod equality_and_case {
             r#"Q.850;cause=16;text="x";a=B;c"#,
             r#"q.850;C;text="x";A=b;cause=16"#,
         );
+        equivalent_only::<SipReason>(r#"SIP;text="a";cause=1"#, r#"SIP;cause=1;text="a""#);
         not_equivalent::<SipReason>(r#"SIP;text="x""#, r#"SIP;text="X""#);
         not_equivalent::<SipReason>("SIP;cause=16", "SIP;cause=016");
         not_equivalent::<SipReason>("SIP;cause=16", "SIP;cause=16;a");
@@ -649,7 +651,7 @@ mod equality_and_case {
             "<sip:a@example.com>;x=1;TAG=t",
         );
         same::<ContactList>("*", " * ");
-        same::<SipReason>("SIP;text=\"a\";cause=1", "SIP;cause=1;text=\"a\"");
+        same::<SipReason>("SIP;TEXT=\"a\";Cause=1", "SIP;text=\"a\";cause=1");
         same::<SipReplaces>(
             "a@example.com;from-tag=f;to-tag=t",
             "a@example.com;to-tag=t;from-tag=f",

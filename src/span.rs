@@ -872,6 +872,68 @@ mod tests {
         Ok(())
     }
 
+    /// A Reason row holding `cause` and `text` in either order among other
+    /// parameters, with `snippets` injected.
+    fn reason_row() -> impl Strategy<Value = String> {
+        (
+            "[0-9]{1,6}",
+            prop_oneof![
+                "[a-zA-Z0-9.!%*_+`'~-]{1,8}",
+                "([ a-zA-Z;,=<>é]|\\\\[\"\\\\a-z]){0,8}".prop_map(|s| format!("\"{s}\"")),
+            ],
+            any::<bool>(),
+            wire_params(),
+            any::<bool>(),
+            prop::collection::vec((0.0..=1.0f64, prop::sample::select(INJECTED)), 0..3),
+        )
+            .prop_map(|(cause, text, text_first, extra, spaced, snippets)| {
+                let mut params = vec![("cause", Some(cause)), ("text", Some(text))];
+                if text_first {
+                    params.swap(0, 1);
+                }
+                params.extend(extra);
+                inject(&format!("SIP{}", semi_tail(&params, spaced)), &snippets)
+            })
+    }
+
+    /// `value_span("cause")` and `value_span("text")` slice the row to the
+    /// value `cause` and `text` return.
+    fn reason_spans_read_back(row: &str) -> Result<(), TestCaseError> {
+        let Ok(r) = crate::SipReason::parse(row) else {
+            return Ok(());
+        };
+        let rows = [row];
+        let params = r.params();
+        let cause = r
+            .cause()
+            .as_ref()
+            .map(|c| {
+                c.as_str()
+                    .to_owned()
+            });
+        prop_assert_eq!(
+            params.get("cause"),
+            cause
+                .as_deref()
+                .map(Some),
+            "{:?}",
+            row
+        );
+        if let Some(cause) = &cause {
+            let span = params.value_span("cause");
+            prop_assert!(span.is_some(), "{:?}", row);
+            prop_assert_eq!(&scrubbed(&rows, span.unwrap_or(Span::new(0..0)))?, cause);
+        }
+        if let Some(Some(text)) = params.get("text") {
+            prop_assert_eq!(r.text(), Some(text), "{:?}", row);
+            let span = params.value_span("text");
+            prop_assert!(span.is_some(), "{:?}", row);
+            let read = scrubbed(&rows, span.unwrap_or(Span::new(0..0)))?;
+            prop_assert_eq!(unquoted(&read), text, "{:?}", read);
+        }
+        Ok(())
+    }
+
     #[test]
     fn a_control_before_a_display_name_keeps_its_spans() {
         let base = BASES[0];
@@ -892,6 +954,11 @@ mod tests {
         #[test]
         fn param_value_spans_read_back_as_their_value(rows in owner_rows()) {
             param_spans_read_back(rows)?;
+        }
+
+        #[test]
+        fn reason_cause_and_text_spans_read_back_as_their_value(row in reason_row()) {
+            reason_spans_read_back(&row)?;
         }
 
         #[test]
