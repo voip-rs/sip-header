@@ -15,7 +15,7 @@ use crate::{is_token, offset_in, write_quoted_pair, RawParam};
 /// `params_mut`, `with_param`, `with_quoted_param`, `params` and `param`
 /// for a type holding its parameters in a `params: HeaderParams` field;
 /// `reserved` and `check` make its [`ParamRule`], and `clear_spans` has
-/// the guard clear `span` and `uri_span`.
+/// the guard clear `span` and the inner span field it names, `uri_span` by default.
 macro_rules! header_params {
     ($Type:ident) => {
         header_params!($Type, reserved: &[], check: $crate::params::any_value);
@@ -49,6 +49,9 @@ macro_rules! header_params {
         header_params!(@builders $Type);
     };
     ($Type:ident, reserved: $reserved:expr, clear_spans) => {
+        header_params!($Type, reserved: $reserved, clear_spans: uri_span);
+    };
+    ($Type:ident, reserved: $reserved:expr, clear_spans: $inner:ident) => {
         impl $Type {
             /// The parameters, to edit through a guard that runs this
             /// header's checks and clears the spans once it changes them.
@@ -59,7 +62,7 @@ macro_rules! header_params {
                         reserved: $reserved,
                         check: $crate::params::any_value,
                     },
-                    $crate::params::Owner::Spans([&mut self.span, &mut self.uri_span]),
+                    $crate::params::Owner::Spans([&mut self.span, &mut self.$inner]),
                 )
             }
         }

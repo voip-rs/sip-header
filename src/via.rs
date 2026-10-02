@@ -4,6 +4,7 @@
 //! [`SkippedEntry`](crate::WarningCode::SkippedEntry).
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use sip_uri::{Host, UriParse};
 
@@ -11,6 +12,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::{checked_token, HeaderParams};
+use crate::span::{relocated, Located, Relocation, Span};
 use crate::{is_token, RawParam};
 
 /// A single Via entry.
@@ -35,8 +37,8 @@ use crate::{is_token, RawParam};
 /// host as [`Host`] does, then the port, and the parameters as
 /// [`HeaderParams`] does. [`Hash`] follows the same rule;
 /// [`HeaderEquivalence`](crate::HeaderEquivalence) compares as RFC 3261
-/// §20.42 does.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// §20.42 does. Spans take no part in equality, hashing or serde.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SipViaEntry {
     protocol_name: String,
@@ -48,12 +50,54 @@ pub struct SipViaEntry {
     /// The first `rport` in `params`, read as a port; only the parser, the
     /// deserializer and [`with_rport`](Self::with_rport) write either.
     rport: Option<Option<u16>>,
+    span: Option<Span>,
+    host_span: Option<Span>,
 }
 
 /// Parameters [`SipViaEntry::with_param`] refuses, set through a typed setter.
 const RESERVED: &[&str] = &["rport"];
 
-header_params!(SipViaEntry, reserved: RESERVED);
+header_params!(SipViaEntry, reserved: RESERVED, clear_spans: host_span);
+
+impl PartialEq for SipViaEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.protocol_name == other.protocol_name
+            && self.protocol_version == other.protocol_version
+            && self.transport == other.transport
+            && self.host == other.host
+            && self.port == other.port
+            && self.params == other.params
+            && self.rport == other.rport
+    }
+}
+
+impl Eq for SipViaEntry {}
+
+impl Hash for SipViaEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.protocol_name
+            .hash(state);
+        self.protocol_version
+            .hash(state);
+        self.transport
+            .hash(state);
+        self.host
+            .hash(state);
+        self.port
+            .hash(state);
+        self.params
+            .hash(state);
+        self.rport
+            .hash(state);
+    }
+}
+
+impl Located for SipViaEntry {
+    fn relocate_spans(&mut self, to: &Relocation<'_>) {
+        relocated(&mut self.span, to);
+        relocated(&mut self.host_span, to);
+    }
+}
 
 impl SipViaEntry {
     /// An entry with the given `sent-protocol` and `sent-by` host, and no
@@ -107,12 +151,15 @@ impl SipViaEntry {
             port: None,
             params: HeaderParams::default(),
             rport: None,
+            span: None,
+            host_span: None,
         }
     }
 
     /// Set the `sent-by` port.
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = Some(port);
+        self.clear_spans();
         self
     }
 
@@ -122,7 +169,13 @@ impl SipViaEntry {
         self.params
             .replace("rport", rport.map(|p| p.to_string()), false);
         self.rport = Some(rport);
+        self.clear_spans();
         self
+    }
+
+    fn clear_spans(&mut self) {
+        self.span = None;
+        self.host_span = None;
     }
 
     /// Returns the protocol name (e.g., "SIP"), case as sent.
@@ -144,6 +197,18 @@ impl SipViaEntry {
     /// Returns the `sent-by` host, a hostname lowercased as sip-uri holds it.
     pub fn host(&self) -> &Host {
         &self.host
+    }
+
+    /// Where the entry was read from, its parameters included; `None` for
+    /// a value built or deserialized.
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Where the `sent-by` host was read from, an IPv6 reference with its
+    /// brackets; `None` for a value built or deserialized.
+    pub fn host_span(&self) -> Option<Span> {
+        self.host_span
     }
 
     /// Returns the port, if present.
@@ -286,7 +351,7 @@ fn parse_via_entry(
     let (protocol_name, protocol_version, transport, sent_by) =
         parse_sent_protocol(entry, main_part, warnings)?;
     let (host, port) = parse_host_port(entry, sent_by, warnings)?;
-    let Some(host) = host else {
+    let Some((host, host_span)) = host else {
         warnings.push(
             ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
                 .at(crate::offset_in(entry, trimmed)),
@@ -294,8 +359,11 @@ fn parse_via_entry(
         return Ok(None);
     };
 
+    let at = crate::offset_in(entry, trimmed);
     let mut via = SipViaEntry {
         port,
+        span: Some(Span::new(at..at + trimmed.len())),
+        host_span: Some(host_span),
         ..SipViaEntry::unchecked(protocol_name, protocol_version, transport, host)
     };
     for p in crate::parse_params(params_part) {
@@ -390,6 +458,10 @@ impl CommaList for SipVia {
         parse_via_entry(entry, warnings)
     }
 
+    fn relocate_entry(entry: &mut SipViaEntry, to: &Relocation<'_>) {
+        entry.relocate_spans(to);
+    }
+
     fn from_parsed(entries: Vec<SipViaEntry>) -> Result<Self, ParseError> {
         Self::new(entries)
     }
@@ -397,13 +469,17 @@ impl CommaList for SipVia {
 
 list_parse!(SipVia);
 
+/// A `sent-by` host with its span, and its port.
+type SentBy = (Option<(Host, Span)>, Option<u16>);
+
 /// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon; the
-/// host is read by sip-uri's host grammar, with its warnings forwarded.
+/// host is read by sip-uri's host grammar, with its warnings forwarded, and
+/// returned with its span in `entry`.
 fn parse_host_port(
     entry: &str,
     sent_by: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<(Option<Host>, Option<u16>), ParseError> {
+) -> Result<SentBy, ParseError> {
     let at = |code, part: &str| {
         ParseError::malformed(Field::SentBy, code, Some(crate::offset_in(entry, part)))
     };
@@ -443,8 +519,9 @@ fn parse_host_port(
     if host.is_empty() {
         return Ok((None, port));
     }
-    let host = read_host(host, crate::offset_in(entry, host), warnings)?;
-    Ok((Some(host), port))
+    let at = crate::offset_in(entry, host);
+    let span = Span::new(at..at + host.len());
+    Ok((Some((read_host(host, at, warnings)?, span)), port))
 }
 
 /// Read `host`, `offset` bytes into the caller's input, by sip-uri's host
