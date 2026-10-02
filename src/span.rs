@@ -194,7 +194,7 @@ mod tests {
     use crate::sip_uri::{Host, Uri, UriParse};
     use proptest::prelude::*;
 
-    use super::Span;
+    use super::{Span, SpanError};
     use crate::scrub::scrub;
     use crate::token_list::TokenList;
     use crate::{
@@ -610,5 +610,46 @@ mod tests {
         fn via_span_text_reads_back_as_its_value(a in via_row(), b in via_row()) {
             via_spans_read_back(&a, &b)?;
         }
+
+        #[test]
+        fn reading_a_span_says_why_it_found_no_text(
+            rows in prop::collection::vec("\\PC{0,6}", 0..4),
+            index in prop::option::of(0..5usize),
+            start in 0..16usize,
+            end in 0..16usize,
+        ) {
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            let span = Span::in_row(index, start..end);
+            let read = |row: &str| {
+                let fits = start <= end
+                    && end <= row.len()
+                    && row.is_char_boundary(start)
+                    && row.is_char_boundary(end);
+                if fits { Ok(&row[start..end]) } else { Err(SpanError::OutOfRange) }
+            };
+            for row in &rows {
+                prop_assert_eq!(span.get(row), read(row));
+            }
+            let sliced = span.slice(&rows);
+            match index {
+                None => prop_assert_eq!(sliced, Err(SpanError::NoRow)),
+                Some(i) if i >= rows.len() => prop_assert_eq!(sliced, Err(SpanError::MissingRow)),
+                Some(i) => prop_assert_eq!(sliced, read(rows[i])),
+            }
+        }
+    }
+
+    #[test]
+    fn span_errors_read_apart() {
+        let shown: std::collections::HashSet<String> = [
+            SpanError::NoRow,
+            SpanError::MissingRow,
+            SpanError::OutOfRange,
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .filter(|s| !s.is_empty())
+        .collect();
+        assert_eq!(shown.len(), 3);
     }
 }
