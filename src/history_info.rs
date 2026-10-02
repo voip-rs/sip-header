@@ -239,7 +239,7 @@ list_parse!(HistoryInfo);
 
 #[cfg(test)]
 mod tests {
-    use crate::{AddrParts, HeaderParse, ListParse, SipReason, SipReasonCause};
+    use crate::{AddrParts, HeaderParse, ListParse, SipReason};
     use sip_uri::WarningKind;
 
     use super::*;

@@ -8,6 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::HeaderParams;
+use crate::span::Span;
 use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 use crate::RawParam;
 
@@ -113,17 +114,14 @@ impl fmt::Display for SipReasonCause {
 ///
 /// # Equality
 ///
-/// The protocol compares in the case it was written in, the cause digit for
-/// digit, the text unescaped, and the extension parameters as
-/// [`HeaderParams`] does. [`Hash`] follows the same rule;
-/// [`HeaderEquivalence`](crate::HeaderEquivalence) compares as RFC 3326 and
-/// RFC 3261 §7.3.1 do.
+/// The protocol compares in the case it was written in, and the parameters,
+/// `cause` and `text` among them, as [`HeaderParams`] does. [`Hash`]
+/// follows the same rule; [`HeaderEquivalence`](crate::HeaderEquivalence)
+/// compares as RFC 3326 and RFC 3261 §7.3.1 do.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipReason {
     protocol: String,
-    cause: Option<SipReasonCause>,
-    text: Option<String>,
     params: HeaderParams,
 }
 
@@ -137,8 +135,6 @@ impl SipReason {
     fn unchecked(protocol: String) -> Self {
         SipReason {
             protocol,
-            cause: None,
-            text: None,
             params: HeaderParams::default(),
         }
     }
@@ -150,23 +146,24 @@ impl SipReason {
         checked_token(Field::Protocol, protocol.as_ref()).map(Self::unchecked)
     }
 
-    /// Set the cause.
+    /// Set the `cause` parameter, replacing every `cause` the reason held;
+    /// a reason without one gets it last.
     pub fn with_cause(mut self, cause: impl Into<SipReasonCause>) -> Self {
-        self.cause = Some(cause.into());
+        let SipReasonCause(digits) = cause.into();
         self.params
-            .clear_spans();
+            .replace("cause", Some(digits), false);
         self
     }
 
-    /// Set the text, unquoted; [`Display`](fmt::Display) always quotes it.
+    /// Set the `text` parameter, unquoted, as [`with_cause`](Self::with_cause)
+    /// sets `cause`; [`Display`](fmt::Display) always quotes it.
     ///
     /// Errors when `text` holds CR, LF or NUL.
     pub fn with_text(mut self, text: impl AsRef<str>) -> Result<Self, ParseError> {
         let text = text.as_ref();
         crate::check::refuse_controls(Field::Text, text)?;
-        self.text = Some(text.to_owned());
         self.params
-            .clear_spans();
+            .replace("text", Some(text.to_owned()), true);
         Ok(self)
     }
 
@@ -175,30 +172,26 @@ impl SipReason {
         &self.protocol
     }
 
-    /// The first `cause`, when it is `1*DIGIT`.
-    pub fn cause(&self) -> Option<&SipReasonCause> {
-        self.cause
-            .as_ref()
+    /// The first `cause`; the parser drops one that is not `1*DIGIT`.
+    pub fn cause(&self) -> Option<SipReasonCause> {
+        self.params
+            .get("cause")
+            .flatten()
+            .map(|digits| SipReasonCause(digits.to_owned()))
     }
 
-    /// The first `text`, without its quotes and with `quoted-pair` unescaped.
+    /// The first `text` with a value, without its quotes and with
+    /// `quoted-pair` unescaped.
     pub fn text(&self) -> Option<&str> {
-        self.text
-            .as_deref()
+        self.params
+            .iter()
+            .find_map(|(name, value)| value.filter(|_| name == "text"))
     }
 }
 
 impl fmt::Display for SipReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.protocol)?;
-        if let Some(cause) = &self.cause {
-            write!(f, ";cause={cause}")?;
-        }
-        if let Some(text) = &self.text {
-            f.write_str(";text=")?;
-            crate::write_quoted_pair(f, text)?;
-        }
-        write!(f, "{}", self.params)
+        write!(f, "{}{}", self.protocol, self.params)
     }
 }
 
@@ -272,10 +265,6 @@ serde_parts!(SipReason, SipReasonParts);
 struct SipReasonParts {
     #[serde(deserialize_with = "crate::serde_parts::field::protocol")]
     protocol: String,
-    #[serde(default)]
-    cause: Option<SipReasonCause>,
-    #[serde(default, deserialize_with = "crate::serde_parts::field::text")]
-    text: Option<String>,
     #[serde(default, deserialize_with = "crate::params::deserialize_unchecked")]
     params: HeaderParams,
 }
@@ -285,8 +274,6 @@ impl SipReasonParts {
     fn into_value(p: Self) -> Result<SipReason, ParseError> {
         let reason = SipReason {
             protocol: p.protocol,
-            cause: p.cause,
-            text: p.text,
             params: p.params,
         };
         crate::check::reads_back(reason, SipReason::parse)
@@ -295,8 +282,6 @@ impl SipReasonParts {
     fn from_value(r: SipReason) -> Self {
         SipReasonParts {
             protocol: r.protocol,
-            cause: r.cause,
-            text: r.text,
             params: r.params,
         }
     }
@@ -333,63 +318,57 @@ pub(crate) fn parse_reason(
     for p in crate::parse_params(rest) {
         let at = crate::offset_in(input, p.key);
         let name = p.name();
-        let reserved = RESERVED
-            .iter()
-            .position(|r| r.eq_ignore_ascii_case(&name));
-        match reserved {
-            Some(0)
-                if reason
-                    .cause
-                    .is_none() =>
-            {
-                p.report_name(input, warnings);
-                reason.cause = parse_cause(&p, input, warnings);
-            }
-            Some(1)
-                if reason
-                    .text
+        let typed = if name.eq_ignore_ascii_case("cause")
+            && reason
+                .param("cause")
+                .is_none()
+        {
+            p.report_name(input, warnings);
+            Some(("cause", parse_cause(&p, input, warnings)))
+        } else if name.eq_ignore_ascii_case("text")
+            && reason
+                .text()
+                .is_none()
+            && p.value
+                .is_some()
+        {
+            p.report_name(input, warnings);
+            Some(("text", parse_text(&p, input, warnings)))
+        } else {
+            None
+        };
+        let Some((key, value)) = typed else {
+            if name.eq_ignore_ascii_case("text")
+                && p.value
                     .is_none()
-                    && p.value
-                        .is_some() =>
             {
-                p.report_name(input, warnings);
-                reason.text = parse_text(&p, input, warnings);
+                warnings.push(ParseWarning::new(Field::Text, WarningCode::UnquotedText).at(at));
             }
-            _ => {
-                if reserved == Some(1)
-                    && p.value
-                        .is_none()
-                {
-                    warnings.push(ParseWarning::new(Field::Text, WarningCode::UnquotedText).at(at));
-                } else if reserved.is_some()
-                    && reason
-                        .params
-                        .get(&name)
-                        .is_none()
-                {
-                    warnings
-                        .push(ParseWarning::new(Field::Param, WarningCode::DuplicateParam).at(at));
-                }
-                reason
-                    .params
-                    .push_raw(input, &p, warnings);
-            }
+            reason
+                .params
+                .push_raw(input, &p, warnings);
+            continue;
+        };
+        if value.is_some() {
+            reason
+                .params
+                .push_read(key, value, Field::Param, at, warnings);
         }
     }
     Ok(reason)
 }
 
+/// A typed parameter's value, with whether it is written quoted and where
+/// it was read.
+type TypedValue = Option<(String, bool, Span)>;
+
 /// RFC 3326 `cause = "cause" EQUAL cause-value`, `cause-value = 1*DIGIT`.
-fn parse_cause(
-    p: &RawParam<'_>,
-    input: &str,
-    warnings: &mut Vec<ParseWarning>,
-) -> Option<SipReasonCause> {
-    if let Some(cause) = p
+fn parse_cause(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) -> TypedValue {
+    if let Some(v) = p
         .value
-        .and_then(|v| SipReasonCause::new(v).ok())
+        .filter(|v| SipReasonCause::new(v).is_ok())
     {
-        return Some(cause);
+        return Some((v.to_owned(), false, Span::within(input, v)));
     }
     let at = crate::offset_in(
         input,
@@ -401,7 +380,7 @@ fn parse_cause(
 }
 
 /// RFC 3326 `"text" EQUAL quoted-string`, unescaped.
-fn parse_text(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) -> Option<String> {
+fn parse_text(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) -> TypedValue {
     let v = p.value?;
     let at = crate::offset_in(input, v);
     let unquoted = p.unquoted()?;
@@ -416,7 +395,7 @@ fn parse_text(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) -
     if unquoted.trailing_backslash {
         warn(WarningCode::TrailingBackslash, at + v.len() - 2);
     }
-    Some(unquoted.value)
+    Some((unquoted.value, true, Span::within(input, v)))
 }
 
 #[cfg(test)]
@@ -562,8 +541,10 @@ mod tests {
         assert_eq!(cause(&p.value), Some(1));
         assert_eq!(
             p.value
-                .param("cause"),
-            Some(Some("2"))
+                .params()
+                .iter()
+                .collect::<Vec<_>>(),
+            [("cause", Some("1")), ("cause", Some("2"))]
         );
         assert_eq!(p.warnings[0].code, WarningCode::DuplicateParam);
         assert_eq!(p.warnings[0].position, input.rfind("cause"));

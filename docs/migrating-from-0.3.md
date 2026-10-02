@@ -149,7 +149,7 @@ assert!(a.equivalent(&b));
 | `UriInfoEntry { data, metadata }` | `new(Uri)`, `uri()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
 | `SipGeolocation::parse` infallible, `refs()`, `url()` as `&str` | `Err` when no entry yields a URI; `SipGeolocationEntry` with `uri()` and `cid()`; `url()` as `&Uri` |
 | `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry` |
-| `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, `cause() -> Option<&SipReasonCause>` keeping the digits (`as_u16()`, `AsRef<str>`) |
+| `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, `cause() -> Option<SipReasonCause>` keeping the digits (`as_u16()`, `AsRef<str>`); `cause` and `text` are reserved parameters, held in `params()` |
 | `join()` returning `SipReplaces` | `SipJoin`, which has no `early-only` |
 | `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68` and credential parameters |
 | value types without `Hash` | every value type is `Hash`, consistent with its `Eq` |

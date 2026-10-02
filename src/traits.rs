@@ -112,7 +112,8 @@ pub trait ListParse: HeaderParse {
 /// The value is percent-decoded as an RFC 3261 §25.1 `hvalue`, `+` staying
 /// a literal plus sign, then parsed as the header value. Error positions are
 /// dropped and warning positions point into the decoded text, since neither
-/// would point into `raw`.
+/// would point into `raw`, and the value carries no spans, its text being
+/// decoded from `raw`.
 ///
 /// ```
 /// use sip_header::{SipReason, UriHeaderParse};
