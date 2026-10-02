@@ -21,7 +21,7 @@ edition = "2021"
 rust-version = "1.79"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/ticpu/sip-header"
+repository = "https://github.com/voip-rs/sip-header"
 
 [workspace.dependencies]
 sip-uri = { version = "0.3.0-rc.1", path = "../sip-uri" }

@@ -2,7 +2,7 @@
 
 SIP header field parsers for Rust: name-addr, Contact, Via, Warning, Call-ID, authentication, the Accept family, Call-Info, History-Info, Reason, Geolocation, Security, Replaces, Join, Target-Dialog and the token lists, over the full IANA header catalog.
 
-[![CI](https://github.com/ticpu/sip-header/actions/workflows/ci.yml/badge.svg)](https://github.com/ticpu/sip-header/actions/workflows/ci.yml)
+[![CI](https://github.com/voip-rs/sip-header/actions/workflows/ci.yml/badge.svg)](https://github.com/voip-rs/sip-header/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/sip-header.svg)](https://crates.io/crates/sip-header)
 [![docs.rs](https://docs.rs/sip-header/badge.svg)](https://docs.rs/sip-header)
 ![tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/9f50aa47ea72d91eb2033a1c48f40246/raw/test-count.json)
