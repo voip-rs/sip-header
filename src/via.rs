@@ -1067,8 +1067,14 @@ mod tests {
                 .with_quoted_param("x", "1")
                 .unwrap(),
         ];
+        let branch = |e: &SipViaEntry| {
+            e.params()
+                .value_span("branch")
+        };
+        assert!(branch(&parsed).is_some());
         for entry in built {
             assert_eq!((entry.span(), entry.host_span()), (None, None), "{entry}");
+            assert_eq!(branch(&entry), None, "{entry}");
         }
         let mut kept = parsed.clone();
         assert!(kept
@@ -1076,12 +1082,14 @@ mod tests {
             .push("branch", Some("x"))
             .is_err());
         assert_eq!(kept.host_span(), parsed.host_span());
+        assert_eq!(branch(&kept), branch(&parsed));
         let mut changed = parsed;
         changed
             .params_mut()
             .push("x", None)
             .unwrap();
         assert_eq!((changed.span(), changed.host_span()), (None, None));
+        assert_eq!(branch(&changed), None);
     }
 
     #[test]

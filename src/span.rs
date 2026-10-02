@@ -640,6 +640,230 @@ mod tests {
         Ok(())
     }
 
+    const PARAM_NAMES: &[&str] = &[
+        "Purpose", "TAG", "x-Note", "lr", "Received", "MADDR", "q", "To-Tag", "n",
+    ];
+
+    /// An IPv6 address with every group written, unbracketed, as
+    /// `received` carries one.
+    fn bare_ipv6() -> impl Strategy<Value = String> {
+        (any::<[u16; 8]>(), any::<bool>()).prop_map(|(groups, upper)| {
+            let groups: Vec<String> = groups
+                .iter()
+                .map(|g| {
+                    if upper {
+                        format!("{g:04X}")
+                    } else {
+                        format!("{g:x}")
+                    }
+                })
+                .collect();
+            groups.join(":")
+        })
+    }
+
+    fn param_value() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            Just(None),
+            "[a-zA-Z0-9.!%*_+`'~-]{0,8}".prop_map(Some),
+            "([ a-zA-Z;,=<>é]|\\\\[\"\\\\a-z]){0,8}".prop_map(|s| Some(format!("\"{s}\""))),
+            via_host().prop_map(Some),
+            bare_ipv6().prop_map(Some),
+        ]
+    }
+
+    /// `(name, value)` pairs, a value as written on the wire.
+    fn wire_params() -> impl Strategy<Value = Vec<(&'static str, Option<String>)>> {
+        prop::collection::vec((prop::sample::select(PARAM_NAMES), param_value()), 0..4)
+    }
+
+    fn semi_tail(params: &[(&str, Option<String>)], spaced: bool) -> String {
+        let (semi, eq) = if spaced { (" ; ", " = ") } else { (";", "=") };
+        params
+            .iter()
+            .map(|(n, v)| match v {
+                Some(v) => format!("{semi}{n}{eq}{v}"),
+                None => format!("{semi}{n}"),
+            })
+            .collect()
+    }
+
+    const PARAM_OWNERS: &[&str] = &[
+        "<urn:example:1>",
+        "\"A\" <sip:a@example.com>",
+        "sip:a@example.com",
+        "<sip:a@example.com>;index=1",
+        "SIP/2.0/UDP Example.COM:5060",
+        "SIP/2.0/TCP [2001:DB8:0:0::1]",
+        "application/sdp",
+        "gzip",
+        "en",
+        "digest",
+        "SIP;cause=200",
+        "abc@example.com;to-tag=1;from-tag=2",
+    ];
+
+    /// Rows of entries `head` followed by each parameter tail, joined at
+    /// commas, with `snippets` injected.
+    fn owner_rows() -> impl Strategy<Value = (String, String, String, String)> {
+        (
+            prop::sample::select(PARAM_OWNERS),
+            prop::collection::vec((wire_params(), any::<bool>()), 1..3),
+            prop::collection::vec((wire_params(), any::<bool>()), 1..3),
+            prop::collection::vec((0.0..=1.0f64, prop::sample::select(INJECTED)), 0..3),
+        )
+            .prop_map(|(head, a, b, snippets)| {
+                let row = |entries: &[(Vec<(&str, Option<String>)>, bool)]| {
+                    let joined: Vec<String> = entries
+                        .iter()
+                        .map(|(p, spaced)| format!("{head}{}", semi_tail(p, *spaced)))
+                        .collect();
+                    inject(&joined.join(", "), &snippets)
+                };
+                let auth = |entries: &[(Vec<(&str, Option<String>)>, bool)]| {
+                    let params: Vec<String> = entries[0]
+                        .0
+                        .iter()
+                        .map(|(n, v)| match v {
+                            Some(v) => format!("{n}={v}"),
+                            None => n.to_string(),
+                        })
+                        .collect();
+                    inject(&format!("Digest {}", params.join(", ")), &snippets)
+                };
+                (row(&a), row(&b), auth(&a), auth(&b))
+            })
+    }
+
+    /// A quoted value's text without its quotes, `quoted-pair` unescaped.
+    fn unquoted(text: &str) -> String {
+        match text
+            .strip_prefix('"')
+            .and_then(|t| t.strip_suffix('"'))
+        {
+            Some(inner) => crate::unescape_quoted_pair(inner),
+            None => text.to_string(),
+        }
+    }
+
+    /// Every parameter's value span reads back, scrubbed and unquoted, as
+    /// the value `get` returns; a flag has none.
+    fn param_spans(rows: &[&str], params: &crate::HeaderParams) -> Result<(), TestCaseError> {
+        for (name, _) in params.iter() {
+            let span = params.value_span(name);
+            let Some(value) = params
+                .get(name)
+                .flatten()
+            else {
+                prop_assert_eq!(span, None, "{}", name);
+                continue;
+            };
+            prop_assert!(span.is_some(), "{name} {params}");
+            let text = scrubbed(rows, span.unwrap_or(Span::new(0..0)))?;
+            prop_assert_eq!(unquoted(&text), value, "{:?}", text);
+        }
+        Ok(())
+    }
+
+    fn no_value_spans(params: &crate::HeaderParams) -> Result<(), TestCaseError> {
+        for (name, _) in params.iter() {
+            prop_assert_eq!(params.value_span(name), None, "{}", name);
+        }
+        Ok(())
+    }
+
+    /// For each list type: every entry's parameter spans read back from
+    /// both rows and from the first parsed alone, and `with_param` on an
+    /// entry clears them.
+    macro_rules! list_param_spans {
+        ($rows:expr; $($List:ty),+ $(,)?) => {$(
+            if let Ok(l) = <$List>::from_rows($rows) {
+                for e in l.entries() {
+                    param_spans(&$rows, e.params())?;
+                }
+                if let Some(Ok(e)) = l.entries().first().map(|e| e.clone().with_param("x-added", Some("1"))) {
+                    no_value_spans(e.params())?;
+                }
+            }
+            if let Ok(l) = <$List>::parse($rows[0]) {
+                for e in l.entries() {
+                    param_spans(&$rows[..1], e.params())?;
+                }
+            }
+        )+};
+    }
+
+    fn param_spans_read_back(rows: (String, String, String, String)) -> Result<(), TestCaseError> {
+        use crate::{
+            SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipHeaderLookup,
+            SipHeaderRowsExt, SipReasonList, SipReplaces, SipSecurity,
+        };
+        use std::collections::HashMap;
+
+        let (a, b, auth_a, auth_b) = rows;
+        let rows = [a.as_str(), b.as_str()];
+        list_param_spans!(rows; UriInfo, SipGeolocation, SipHeaderAddrList, SipVia, SipAccept,
+            SipAcceptEncoding, SipAcceptLanguage, SipSecurity, SipReasonList);
+        if let Ok(l) = HistoryInfo::from_rows(rows) {
+            for e in l.entries() {
+                param_spans(&rows, e.params())?;
+            }
+        }
+        if let Ok(l) = ContactList::from_rows(rows) {
+            for e in l.addrs() {
+                param_spans(&rows, e.params())?;
+            }
+        }
+        if let Ok(addr) = SipHeaderAddr::parse(&a) {
+            param_spans(&rows[..1], addr.params())?;
+            for built in [
+                addr.clone()
+                    .with_tag("t"),
+                addr.clone()
+                    .with_display_name("B"),
+            ] {
+                no_value_spans(
+                    built
+                        .map_err(|e| TestCaseError::fail(e.to_string()))?
+                        .params(),
+                )?;
+            }
+        }
+        if let Ok(r) = SipReplaces::parse(&a) {
+            param_spans(&rows[..1], r.params())?;
+        }
+        let auth_rows = [auth_a.as_str(), auth_b.as_str()];
+        if let Ok(v) = SipAuthValue::parse(&auth_a) {
+            param_spans(&auth_rows[..1], v.params())?;
+            if let Ok(v) = v.with_param("x-added", "1") {
+                no_value_spans(v.params())?;
+            }
+        }
+        let store: HashMap<String, Vec<String>> = HashMap::from([
+            (
+                "Authorization".to_string(),
+                vec![auth_a.clone(), auth_b.clone()],
+            ),
+            ("From".to_string(), vec![a.clone()]),
+            ("Replaces".to_string(), vec![a.clone()]),
+        ]);
+        if let Ok(Some(values)) = store.authorization() {
+            let rows = store
+                .sip_header_rows(SipHeader::Authorization)
+                .unwrap_or_default();
+            for v in values {
+                param_spans(&rows, v.params())?;
+            }
+        }
+        if let Ok(Some(from)) = store.sip_from() {
+            param_spans(&rows[..1], from.params())?;
+        }
+        if let Ok(Some(r)) = store.replaces() {
+            param_spans(&rows[..1], r.params())?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn a_control_before_a_display_name_keeps_its_spans() {
         let base = BASES[0];
@@ -655,6 +879,11 @@ mod tests {
         #[test]
         fn via_span_text_reads_back_as_its_value(a in via_row(), b in via_row()) {
             via_spans_read_back(&a, &b)?;
+        }
+
+        #[test]
+        fn param_value_spans_read_back_as_their_value(rows in owner_rows()) {
+            param_spans_read_back(rows)?;
         }
 
         #[test]

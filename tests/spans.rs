@@ -222,6 +222,37 @@ fn built_values_have_no_span() {
     assert_eq!((hi.span(), hi.uri_span()), (None, None));
 }
 
+#[test]
+fn a_parameter_value_span_covers_the_value_as_received() {
+    let row = r#"<sip:a@example.com>;Note = "a \"b\"";lr;tag=X"#;
+    let addr = SipHeaderAddr::parse(row).unwrap();
+    let p = addr.params();
+    assert_eq!(text(p.value_span("NOTE"), row), Ok(r#""a \"b\"""#));
+    assert_eq!(p.get("note"), Some(Some(r#"a "b""#)));
+    assert_eq!(text(p.value_span("tag"), row), Ok("X"));
+    assert_eq!(p.value_span("lr"), None);
+    assert_eq!(p.value_span("absent"), None);
+
+    let built = SipHeaderAddr::new(
+        addr.uri()
+            .clone(),
+    )
+    .unwrap()
+    .with_quoted_param("note", r#"a "b""#)
+    .unwrap()
+    .with_param("lr", None)
+    .unwrap()
+    .with_tag("X")
+    .unwrap();
+    assert_eq!(
+        built
+            .params()
+            .value_span("tag"),
+        None
+    );
+    same_value(p, built.params());
+}
+
 fn same_value<T: PartialEq + Hash + std::fmt::Debug>(parsed: &T, built: &T) {
     assert_eq!(parsed, built);
     let state = RandomState::new();
@@ -288,6 +319,13 @@ fn serde_drops_spans_and_reads_back_an_equal_value() {
     check(&geo.entries()[0], |e| (e.span(), e.uri_span()));
     let addr = SipHeaderAddr::parse(" \"A\" <sip:a@example.com>;tag=x").unwrap();
     check(&addr, |e| (e.span(), e.uri_span()));
+    check(&addr, |e| {
+        (
+            e.params()
+                .value_span("tag"),
+            None,
+        )
+    });
     let hi = HistoryInfo::parse(" <sip:a@example.com>;index=1").unwrap();
     check(&hi.entries()[0], |e| (e.span(), e.uri_span()));
 }
