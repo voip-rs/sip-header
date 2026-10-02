@@ -191,15 +191,15 @@ pub(crate) fn row_offset(outer: &str, inner: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use crate::sip_uri::{Host, Uri, UriParse};
     use proptest::prelude::*;
-    use sip_uri::{Uri, UriParse};
 
     use super::Span;
     use crate::scrub::scrub;
     use crate::token_list::TokenList;
     use crate::{
         split_comma_entries, ContactList, HeaderParse, HistoryInfo, ListParse, ParseError, Parsed,
-        SipGeolocation, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipWarning, UriInfo,
+        SipGeolocation, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipVia, SipWarning, UriInfo,
         WarningCode,
     };
 
@@ -260,12 +260,13 @@ mod tests {
     }
 
     /// Each entry's spans hold text that reads back as the entry and its
-    /// URI, and no two entries' spans overlap.
-    fn check<E: PartialEq + std::fmt::Debug>(
+    /// inner value, and no two entries' spans overlap.
+    fn check<E: PartialEq + std::fmt::Debug, V: PartialEq + std::fmt::Debug>(
         rows: &[&str],
         entries: &[E],
         spans: impl Fn(&E) -> (Option<Span>, Option<Span>),
-        uri: impl Fn(&E) -> &Uri,
+        inner: impl Fn(&E) -> &V,
+        read_inner: impl Fn(&str) -> Option<V>,
         reparse: impl Fn(&str) -> Option<E>,
     ) -> Result<(), TestCaseError> {
         let mut seen: Vec<Span> = Vec::new();
@@ -315,8 +316,8 @@ mod tests {
             let back = reparse(&text);
             prop_assert_eq!(back.as_ref(), Some(e), "{:?}", text);
             let text = scrubbed(rows, uri_span)?;
-            let back = Uri::parse(&text);
-            prop_assert_eq!(back.as_ref(), Ok(uri(e)), "{:?}", text);
+            let back = read_inner(&text);
+            prop_assert_eq!(back.as_ref(), Some(inner(e)), "{:?}", text);
         }
         Ok(())
     }
@@ -334,6 +335,10 @@ mod tests {
             Uri::parse(&scrub("urn:example:1\r\n ").text).as_ref(),
             Ok(entry.uri())
         );
+    }
+
+    fn uri(text: &str) -> Option<Uri> {
+        Uri::parse(text).ok()
     }
 
     type Framing<L> = Option<(L, Vec<(WarningCode, Option<usize>)>)>;
@@ -440,6 +445,7 @@ mod tests {
                 l.entries(),
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| {
                     UriInfo::parse(t)
                         .ok()
@@ -453,6 +459,7 @@ mod tests {
                 l.entries(),
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| {
                     SipGeolocation::parse(t)
                         .ok()
@@ -466,6 +473,7 @@ mod tests {
                 l.entries(),
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| {
                     HistoryInfo::parse(t)
                         .ok()
@@ -479,6 +487,7 @@ mod tests {
                 l.entries(),
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| {
                     SipHeaderAddrList::parse(t)
                         .ok()
@@ -492,6 +501,7 @@ mod tests {
                 l.addrs(),
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| {
                     ContactList::parse(t)
                         .ok()
@@ -505,7 +515,80 @@ mod tests {
                 &[addr],
                 |e| (e.span(), e.uri_span()),
                 |e| e.uri(),
+                uri,
                 |t| SipHeaderAddr::parse(t).ok(),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A `sent-by` host: a mixed-case hostname, or an IPv6 reference with
+    /// every group written, in either case and optionally zero-padded.
+    fn via_host() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-zA-Z][a-zA-Z0-9]{0,6}(\\.[a-zA-Z]{1,4}){0,2}",
+            (any::<[u16; 8]>(), any::<bool>(), any::<bool>()).prop_map(|(groups, upper, pad)| {
+                let groups: Vec<String> = groups
+                    .iter()
+                    .map(|g| match (upper, pad) {
+                        (true, true) => format!("{g:04X}"),
+                        (true, false) => format!("{g:X}"),
+                        (false, true) => format!("{g:04x}"),
+                        (false, false) => format!("{g:x}"),
+                    })
+                    .collect();
+                format!("[{}]", groups.join(":"))
+            }),
+            Just("[2001:DB8:0:0::1]".to_string()),
+        ]
+    }
+
+    fn via_entry() -> impl Strategy<Value = String> {
+        (
+            prop::sample::select(&["SIP/2.0/UDP ", "SIP / 2.0 / TLS ", "SIP/2.0/tcp "][..]),
+            via_host(),
+            prop::sample::select(&["", ":5060", " : 5061"][..]),
+            prop::sample::select(&["", ";branch=z9hG4bK1;rport", ";received=203.0.113.1"][..]),
+        )
+            .prop_map(|(p, h, port, params)| format!("{p}{h}{port}{params}"))
+    }
+
+    fn via_row() -> impl Strategy<Value = String> {
+        (
+            prop::collection::vec(via_entry(), 1..4),
+            prop::collection::vec((0.0..=1.0f64, prop::sample::select(INJECTED)), 0..3),
+        )
+            .prop_map(|(entries, snippets)| inject(&entries.join(", "), &snippets))
+    }
+
+    /// Every Via entry's span reads back as the entry, its host span as
+    /// its host.
+    fn via_spans_read_back(a: &str, b: &str) -> Result<(), TestCaseError> {
+        let host = |t: &str| Host::parse(t).ok();
+        let reparse = |t: &str| {
+            SipVia::parse(t)
+                .ok()
+                .and_then(|l| one(l.entries()))
+        };
+        let rows = [a, b];
+        if let Ok(l) = SipVia::from_rows(rows) {
+            check(
+                &rows,
+                l.entries(),
+                |e| (e.span(), e.host_span()),
+                |e| e.host(),
+                host,
+                reparse,
+            )?;
+        }
+        if let Ok(l) = SipVia::parse(a) {
+            check(
+                &rows[..1],
+                l.entries(),
+                |e| (e.span(), e.host_span()),
+                |e| e.host(),
+                host,
+                reparse,
             )?;
         }
         Ok(())
@@ -521,6 +604,11 @@ mod tests {
         #[test]
         fn span_text_reads_back_as_its_value(a in row(), b in row()) {
             spans_read_back(&a, &b)?;
+        }
+
+        #[test]
+        fn via_span_text_reads_back_as_its_value(a in via_row(), b in via_row()) {
+            via_spans_read_back(&a, &b)?;
         }
     }
 }

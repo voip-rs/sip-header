@@ -956,6 +956,58 @@ mod tests {
     }
 
     #[test]
+    fn builders_clear_spans() {
+        let raw = "SIP/2.0/UDP Example.COM:5060;branch=z9hG4bK1";
+        let parsed = SipVia::parse(raw)
+            .unwrap()
+            .entries()[0]
+            .clone();
+        assert_eq!(
+            parsed
+                .host_span()
+                .and_then(|s| s.get(raw)),
+            Some("Example.COM")
+        );
+        assert_eq!(
+            parsed
+                .span()
+                .and_then(|s| s.get(raw)),
+            Some(raw)
+        );
+        let built = [
+            parsed
+                .clone()
+                .with_port(5070),
+            parsed
+                .clone()
+                .with_rport(None),
+            parsed
+                .clone()
+                .with_param("x", Some("1"))
+                .unwrap(),
+            parsed
+                .clone()
+                .with_quoted_param("x", "1")
+                .unwrap(),
+        ];
+        for entry in built {
+            assert_eq!((entry.span(), entry.host_span()), (None, None), "{entry}");
+        }
+        let mut kept = parsed.clone();
+        assert!(kept
+            .params_mut()
+            .push("branch", Some("x"))
+            .is_err());
+        assert_eq!(kept.host_span(), parsed.host_span());
+        let mut changed = parsed;
+        changed
+            .params_mut()
+            .push("x", None)
+            .unwrap();
+        assert_eq!((changed.span(), changed.host_span()), (None, None));
+    }
+
+    #[test]
     fn from_entries_empty_is_empty_error() {
         assert_eq!(
             SipVia::from_entries(std::iter::empty::<&str>()),
