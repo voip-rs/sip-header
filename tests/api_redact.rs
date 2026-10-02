@@ -2,8 +2,8 @@
 
 use sip_header::sip_uri::{Redaction, UserMask};
 use sip_header::{
-    ContactList, HeaderParse, HeaderRedaction, HistoryInfo, ParseError, Redact, SipGeolocation,
-    SipHeaderAddr, SipHeaderAddrList, UriInfo, WarningCode,
+    ContactList, HeaderParse, HeaderRedaction, HistoryInfo, ParseError, Redact, SipAuthValue,
+    SipGeolocation, SipHeaderAddr, SipHeaderAddrList, UriInfo, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -169,6 +169,18 @@ fn a_param_name_the_uri_policy_masks_is_masked_in_the_header() -> R {
         addr.redacted(&how)
             .to_string(),
         "<sip:alice@example.com;ParticipantId=***>;participantid=***;other=3"
+    );
+    let auth = SipAuthValue::parse(r#"Digest realm="example.com", participantid="2", other=3"#)?;
+    assert_eq!(
+        auth.redacted(&how)
+            .to_string(),
+        r#"Digest realm="example.com", participantid="***", other=3"#
+    );
+    let auth = SipAuthValue::parse(r#"Digest realm="example.com", +sip.instance="<urn:x:1>""#)?;
+    assert_eq!(
+        auth.redacted(&HeaderRedaction::default())
+            .to_string(),
+        r#"Digest realm="example.com", +sip.instance="***""#
     );
     Ok(())
 }
