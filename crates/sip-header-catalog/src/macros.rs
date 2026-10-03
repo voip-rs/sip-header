@@ -6,7 +6,19 @@ use core::str::FromStr;
 ///
 /// Mirrors the inherent `ALL` and `as_str` every generated enum carries, for
 /// code generic over name catalogs.
-pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr + 'static {
+pub trait HeaderName:
+    Copy
+    + Eq
+    + Hash
+    + Debug
+    + Display
+    + AsRef<str>
+    + FromStr<Err = <Self as HeaderName>::ParseError>
+    + 'static
+{
+    /// The `FromStr` error, so generic code can box or propagate it.
+    type ParseError: std::error::Error + Send + Sync + 'static;
+
     /// Every variant, in unspecified order.
     const ALL: &'static [Self];
 
@@ -28,7 +40,8 @@ pub trait HeaderName: Copy + Eq + Hash + Debug + Display + AsRef<str> + FromStr 
 /// - With `error_type: E => "msg",`: the error `struct E(pub String)`
 ///   holding the rejected input, its `Display` (`msg (<n> bytes)`), and
 ///   `std::error::Error`. With `error_type: E,` the caller defines
-///   `E(String)` and keeps its `Display` free of the input.
+///   `E(String)`, implementing `std::error::Error + Send + Sync`, and keeps
+///   its `Display` free of the input.
 /// - With `serde,`: `Serialize` as the wire name and `Deserialize` through
 ///   `FromStr`, accepting any spelling it does, whose error never quotes
 ///   the input. Needs this crate's `serde` feature; an invocation without
@@ -170,6 +183,8 @@ macro_rules! define_header_enum {
         }
 
         impl $crate::HeaderName for $Name {
+            type ParseError = $Err;
+
             const ALL: &'static [Self] = $Name::ALL;
 
             fn as_str(&self) -> &'static str {
