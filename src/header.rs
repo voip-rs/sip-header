@@ -189,13 +189,13 @@ impl<'a> TypedHeader<'a> for Vec<SipAuthValue> {
     ];
 }
 
-impl<'a> rows::FromRows<'a> for TokenList<'a> {
+impl<'a> rows::FromRows<'a> for TokenList {
     fn from_rows(header: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
-        TokenList::from_rows(header, rows)
+        TokenList::from_rows_with_warnings(header, rows)
     }
 }
 
-impl<'a> TypedHeader<'a> for TokenList<'a> {
+impl<'a> TypedHeader<'a> for TokenList {
     const HEADERS: &'static [SipHeader] = &[
         SipHeader::Allow,
         SipHeader::Supported,
@@ -381,47 +381,47 @@ pub trait SipHeaderLookup: SipHeaderRows {
     }
 
     /// `Allow` methods (RFC 3261 §20.5).
-    fn allow(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn allow(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::Allow))
     }
 
     /// `Supported` option tags (RFC 3261 §20.37).
-    fn supported(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn supported(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::Supported))
     }
 
     /// `Require` option tags (RFC 3261 §20.32).
-    fn require(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn require(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::Require))
     }
 
     /// `Proxy-Require` option tags (RFC 3261 §20.29).
-    fn proxy_require(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn proxy_require(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::ProxyRequire))
     }
 
     /// `Unsupported` option tags (RFC 3261 §20.40).
-    fn unsupported(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn unsupported(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::Unsupported))
     }
 
     /// `Allow-Events` event types (RFC 6665).
-    fn allow_events(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn allow_events(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::AllowEvents))
     }
 
     /// `Content-Encoding` codings (RFC 3261 §20.12).
-    fn content_encoding(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn content_encoding(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::ContentEncoding))
     }
 
     /// `Content-Language` language tags (RFC 3261 §20.13).
-    fn content_language(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn content_language(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::ContentLanguage))
     }
 
     /// `In-Reply-To` Call-IDs (RFC 3261 §20.21).
-    fn in_reply_to(&self) -> Result<Option<TokenList<'_>>, ParseError> {
+    fn in_reply_to(&self) -> Result<Option<TokenList>, ParseError> {
         lenient(self.parse_header(SipHeader::InReplyTo))
     }
 
@@ -536,7 +536,7 @@ mod tests {
             .collect()
     }
 
-    fn tokens(list: Result<Option<TokenList<'_>>, ParseError>) -> Vec<String> {
+    fn tokens(list: Result<Option<TokenList>, ParseError>) -> Vec<String> {
         list.unwrap()
             .unwrap()
             .iter()
@@ -1059,7 +1059,7 @@ mod tests {
             ("Content-Encoding", &["gzip"]),
             ("Content-Language", &["en"]),
         ]);
-        let exact = |l: Result<Option<TokenList<'_>>, ParseError>, upper: &str| {
+        let exact = |l: Result<Option<TokenList>, ParseError>, upper: &str| {
             let l = l
                 .unwrap()
                 .unwrap();
@@ -1069,7 +1069,7 @@ mod tests {
         exact(h.allow(), "invite");
         exact(h.allow_events(), "DIALOG");
         exact(h.in_reply_to(), "ABC@example.com");
-        let folded = |l: Result<Option<TokenList<'_>>, ParseError>, upper: &str| {
+        let folded = |l: Result<Option<TokenList>, ParseError>, upper: &str| {
             let l = l
                 .unwrap()
                 .unwrap();

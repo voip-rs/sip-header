@@ -169,6 +169,11 @@ fn token_list_builds_and_mutates_by_its_grammar() -> Result<(), ParseError> {
     l.retain(|_| false)?;
     assert!(l.is_empty());
     assert!(TokenList::new(SipHeader::Allow, Vec::<&str>::new())?.is_empty());
+    assert!(is_empty_fault(TokenList::parse(
+        SipHeader::Require,
+        r#"<>, """#
+    )));
+    assert!(TokenList::parse(SipHeader::Supported, r#"<>, """#)?.is_empty());
 
     assert!(is_empty_fault(TokenList::new(
         SipHeader::Require,

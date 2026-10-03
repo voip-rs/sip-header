@@ -201,9 +201,9 @@ pub(crate) fn dialogs_equivalent(a: &DialogId, b: &DialogId) -> bool {
         && same_params(a.params(), b.params())
 }
 
-impl sealed::Sealed for TokenList<'_> {}
+impl sealed::Sealed for TokenList {}
 
-impl HeaderEquivalence for TokenList<'_> {
+impl HeaderEquivalence for TokenList {
     fn equivalent(&self, other: &Self) -> bool {
         let case_sensitive = self.is_case_sensitive();
         case_sensitive == other.is_case_sensitive()

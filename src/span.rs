@@ -411,8 +411,11 @@ mod tests {
     }
 
     fn token_framing(row: &str) -> Framing<String> {
-        framing(TokenList::from_rows(SipHeader::Require, vec![row]))
-            .map(|(l, codes)| (l.to_string(), codes))
+        framing(TokenList::from_rows_with_warnings(
+            SipHeader::Require,
+            [row],
+        ))
+        .map(|(l, codes)| (l.to_string(), codes))
     }
 
     #[test]

@@ -133,7 +133,7 @@ fn every_accessor_reads_a_wire_store() -> R {
 #[test]
 fn token_lists_borrow_and_know_their_case_rule() -> R {
     let m = message();
-    let allow: TokenList<'_> = m
+    let allow: TokenList = m
         .allow()?
         .unwrap();
     assert_eq!(

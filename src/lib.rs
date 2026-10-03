@@ -269,7 +269,7 @@ fn closing_quote(s: &str) -> Option<usize> {
 }
 
 /// What frames a list entry: a quoted string, a bracket, the separator.
-const FRAMING: [char; 4] = ['"', '<', '>', ','];
+pub(crate) const FRAMING: [char; 4] = ['"', '<', '>', ','];
 
 /// `part` without [`FRAMING`] characters, or the whitespace their removal
 /// exposes at either end.
