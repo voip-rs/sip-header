@@ -88,7 +88,7 @@ The catalog's holders keep names and values exactly as received, control charact
 
 ## Parsing is spelled through extension traits
 
-Parsing, equivalence and redaction are sealed extension traits a caller imports by name (`HeaderParse`, `ListParse` and their siblings), as sip-uri's `UriParse` is, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway, and spelling them as traits keeps that move from breaking callers. Every example opens with the exact `use` line it needs, and each value type's rustdoc links the trait that parses it.
+Parsing, equivalence and redaction are sealed extension traits a caller imports by name (`HeaderParse`, `ListParse` and their siblings), as sip-uri's `UriParse` is, so the two crates read one way. Should value types later move to a crate of their own, the orphan rule would force traits anyway, and spelling them as traits keeps that move from breaking callers. Every example opens with the exact `use` line it needs, and each value type's rustdoc links the trait that parses it. A token list parses through its own constructors, which take the header, since its case rule comes from the header it holds.
 
 ## Lookup stores implement the raw row trait
 
