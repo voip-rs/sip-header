@@ -376,6 +376,32 @@ fn read_token(header: SipHeader, entry: &str, warnings: &mut Vec<ParseWarning>) 
     Some(token)
 }
 
+#[cfg(feature = "serde")]
+serde_parts!(TokenList, TokenListParts);
+
+#[cfg(feature = "serde")]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenListParts {
+    header: SipHeader,
+    #[serde(deserialize_with = "crate::serde_parts::field::tokens")]
+    tokens: Vec<String>,
+}
+
+#[cfg(feature = "serde")]
+impl TokenListParts {
+    fn into_value(p: Self) -> Result<TokenList, ParseError> {
+        TokenList::new(p.header, p.tokens)
+    }
+
+    fn from_value(list: TokenList) -> Self {
+        TokenListParts {
+            header: list.header,
+            tokens: list.tokens,
+        }
+    }
+}
+
 impl fmt::Display for TokenList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         crate::fmt_joined(f, &self.tokens, ", ")

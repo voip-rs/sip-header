@@ -214,7 +214,7 @@ log::info!("from {}", addr.redacted(&how));
 
 ## Serde
 
-Value types serialize as their parts and deserialize through the same checks a parse makes, so a deserialized value is one a parse could have produced. Parameters are written as held, `[[name, value, quoted]]` in order, reserved keys such as `tag` and `rport` among them. Unknown fields are refused. `SipHeader` serializes as its wire name (`"Call-ID"`), and deserialization accepts any spelling `parse_name` does. The `serde_str` adapters carry the wire text instead.
+Value types serialize as their parts and deserialize through the same checks a parse makes, so a deserialized value is one a parse could have produced. Parameters are written as held, `[[name, value, quoted]]` in order, reserved keys such as `tag` and `rport` among them. Unknown fields are refused. A `TokenList` is `{"header", "tokens"}`, its header by wire name, since its case rule and emptiness come from the header. `SipHeader` serializes as its wire name (`"Call-ID"`), and deserialization accepts any spelling `parse_name` does. The `serde_str` adapters carry the wire text instead, for every value type but `TokenList`, whose text alone does not name its header.
 
 ## Changes that still compile
 

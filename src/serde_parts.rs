@@ -50,6 +50,10 @@ impl Expected for bool {
     const TEXT: &'static str = "a boolean";
 }
 
+impl Expected for Vec<String> {
+    const TEXT: &'static str = "a sequence of strings";
+}
+
 /// `read` over a value where `what` is expected, described by `expected`;
 /// any error becomes one naming both.
 pub(crate) fn leaf<'de, D: Deserializer<'de>, T>(
@@ -109,7 +113,7 @@ pub(crate) mod field {
     fields! {
         agent call_id code display_name early_only encoding framing from_tag language
         local_tag mechanism media_type name port protocol quoted remote_tag scheme subtype
-        text to_tag token68 transport value version
+        text to_tag token68 tokens transport value version
     }
 }
 
