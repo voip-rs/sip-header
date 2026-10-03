@@ -102,7 +102,7 @@ struct FailingStore;
 impl SipHeaderRows for FailingStore {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
         if SipHeader::Contact.matches(name) {
-            return Err(RowError::malformed().in_entry(2));
+            return Err(RowError::malformed().in_row(2));
         }
         Ok(vec!["first", "second"])
     }
@@ -113,11 +113,11 @@ fn single_row_lookup_is_the_first_row_and_carries_the_error() {
     assert_eq!(FailingStore.sip_header_str("Via"), Ok(Some("first")));
     assert_eq!(
         FailingStore.sip_header(SipHeader::Contact),
-        Err(RowError::malformed().in_entry(2))
+        Err(RowError::malformed().in_row(2))
     );
     assert_eq!(
         FailingStore.sip_header_rows(SipHeader::Contact),
-        Err(RowError::malformed().in_entry(2))
+        Err(RowError::malformed().in_row(2))
     );
 }
 
@@ -145,7 +145,7 @@ fn forwarding_impls() {
     let failing: Rc<FailingStore> = Rc::new(FailingStore);
     assert_eq!(
         failing.sip_header(SipHeader::Contact),
-        Err(RowError::malformed().in_entry(2))
+        Err(RowError::malformed().in_row(2))
     );
 }
 
@@ -219,17 +219,17 @@ fn hashmap_single_value_and_custom_hasher() {
 
 #[test]
 fn row_error_shape() {
-    let e = RowError::too_many_entries(4001, 4000);
-    assert_eq!(e.kind(), RowErrorKind::TooManyEntries);
+    let e = RowError::too_many_rows(4001, 4000);
+    assert_eq!(e.kind(), RowErrorKind::TooManyRows);
     assert_eq!(
-        (e.count(), e.limit(), e.entry()),
+        (e.count(), e.limit(), e.row()),
         (Some(4001), Some(4000), None)
     );
-    assert_eq!(e.to_string(), "too-many-entries: 4001, limit 4000");
-    let e = RowError::malformed().in_entry(3);
+    assert_eq!(e.to_string(), "too-many-rows: 4001, limit 4000");
+    let e = RowError::malformed().in_row(3);
     assert_eq!(e.kind(), RowErrorKind::Malformed);
-    assert_eq!((e.count(), e.limit(), e.entry()), (None, None, Some(3)));
-    assert_eq!(e.to_string(), "malformed in entry 3");
+    assert_eq!((e.count(), e.limit(), e.row()), (None, None, Some(3)));
+    assert_eq!(e.to_string(), "malformed in row 3");
     assert_eq!(RowError::malformed().to_string(), "malformed");
     let copy = e.clone();
     assert_eq!(copy, e);
