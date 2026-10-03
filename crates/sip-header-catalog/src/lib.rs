@@ -570,13 +570,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ord_is_wire_name_order() {
+    fn no_two_wire_names_differ_only_by_case() {
+        for a in SipHeader::ALL {
+            for b in SipHeader::ALL {
+                assert_eq!(
+                    a.as_str()
+                        .eq_ignore_ascii_case(b.as_str()),
+                    a == b,
+                    "{a} {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ord_is_wire_name_order_ignoring_case() {
         for a in SipHeader::ALL {
             for b in SipHeader::ALL {
                 assert_eq!(
                     a.cmp(b),
                     a.as_str()
-                        .cmp(b.as_str()),
+                        .to_ascii_lowercase()
+                        .cmp(
+                            &b.as_str()
+                                .to_ascii_lowercase()
+                        ),
                     "{a} {b}"
                 );
                 assert_eq!(a.partial_cmp(b), Some(a.cmp(b)));
