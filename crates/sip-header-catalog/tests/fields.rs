@@ -1,7 +1,9 @@
 use std::borrow::Cow;
+use std::fmt::Debug;
+use std::iter::FusedIterator;
 
 use sip_header_catalog::{
-    SipHeader, SipHeaderField, SipHeaderFields, SipHeaderRows, SipHeaderRowsExt,
+    SipHeader, SipHeaderField, SipHeaderFieldRows, SipHeaderFields, SipHeaderRows, SipHeaderRowsExt,
 };
 
 fn interleaved() -> SipHeaderFields<'static> {
@@ -318,4 +320,36 @@ fn an_unregistered_name_has_no_header_and_matches_by_case() {
             .len(),
         0
     );
+}
+
+fn all_ways<'a, I>(rows: I, expected: &[&str])
+where
+    I: ExactSizeIterator<Item = &'a str> + DoubleEndedIterator + FusedIterator + Clone + Debug,
+{
+    assert_eq!(rows.len(), expected.len());
+    assert_eq!(
+        rows.clone()
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let mut reversed: Vec<&str> = rows
+        .rev()
+        .collect();
+    reversed.reverse();
+    assert_eq!(reversed, expected);
+}
+
+#[test]
+fn field_rows_iterate_both_ways_with_an_exact_size() {
+    let field = SipHeaderField::new("v", vec!["a", "b", "c"]);
+    let rows: SipHeaderFieldRows<'_> = field.rows();
+    all_ways(rows, &["a", "b", "c"]);
+    all_ways(SipHeaderField::new("v", Vec::<&str>::new()).rows(), &[]);
+    let mut rows = field.rows();
+    assert_eq!(rows.next(), Some("a"));
+    assert_eq!(rows.next_back(), Some("c"));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.next(), Some("b"));
+    assert_eq!(rows.next(), None);
+    assert_eq!(rows.next(), None);
 }

@@ -4,11 +4,11 @@
 use std::fmt::{Debug, Display};
 
 use sip_header::{
-    ContactList, HistoryInfo, ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage,
-    SipAuthValue, SipCallId, SipGeolocation, SipHeader, SipHeaderAddr, SipHeaderAddrList,
-    SipHeaderField, SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipJoin, SipReasonList,
-    SipReplaces, SipSecurity, SipTargetDialog, SipVia, SipWarning, TokenList, TypedHeader, UriInfo,
-    WarningCode,
+    ContactList, HistoryInfo, ListParse, ParseError, SipAccept, SipAcceptEncoding,
+    SipAcceptLanguage, SipAuthValue, SipCallId, SipGeolocation, SipHeader, SipHeaderAddr,
+    SipHeaderAddrList, SipHeaderField, SipHeaderFieldRows, SipHeaderFields, SipHeaderLookup,
+    SipHeaderRows, SipJoin, SipReasonList, SipReplaces, SipSecurity, SipTargetDialog, SipVia,
+    SipWarning, TokenList, TypedHeader, UriInfo, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -159,6 +159,8 @@ fn a_field_is_a_store_for_its_own_header() -> R {
         2
     );
     assert_eq!(field.sip_from()?, None);
+    let rows: SipHeaderFieldRows<'_> = field.rows();
+    assert_eq!(SipVia::from_rows(rows)?.len(), 2);
     Ok(())
 }
 
