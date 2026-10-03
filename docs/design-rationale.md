@@ -100,7 +100,7 @@ The catalog says of each header whether its grammar is a comma list, safe to spl
 
 ## Redaction masks identity parameters and location references by default
 
-A redacted header hides, besides the URI's user part, the parameters that name a device or user (instance identifiers, GRUUs) and Geolocation references, since each identifies a caller as surely as a number does. A caller that needs one shown opts in per kind. Redaction is policy and lives in this crate: its configuration owns its data so it is built once and lent to every rendering, every URI a value holds renders through sip-uri's redaction, and a parameter name that policy masks is masked wherever it appears, in a URI or a header. Debug masks credentials, since debug output reaches logs without anyone choosing it.
+A redacted header hides, besides the URI's user part, the parameters that name a device or user (instance identifiers, GRUUs), Geolocation references, and the addresses a Via carries for the caller's device, since each identifies a caller as surely as a number does. A caller that needs one shown opts in per kind. Redaction is policy and lives in this crate: its configuration owns its data so it is built once and lent to every rendering, every URI a value holds renders through sip-uri's redaction, and a parameter name that policy masks is masked wherever it appears, in a URI or a header. Debug masks credentials and the username beside them, since debug output reaches logs without anyone choosing it.
 
 ## Serde converts through private functions
 
@@ -112,7 +112,7 @@ Headers from expired drafts that remain deployed are ordinary catalog entries, w
 
 ## Catalog serde and ordering use the wire name
 
-A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. It sorts by that spelling too, so a sorted map or log keeps its order when variants are added or moved. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type. An invocation may ask under a cfg of its own, so a crate whose serde is optional gets it exactly when its own feature is on.
+A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. It sorts by that spelling too, ignoring case as header names do, so a sorted map or log reads alphabetically and keeps its order when variants are added or moved. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type. An invocation may ask under a cfg of its own, so a crate whose serde is optional gets it exactly when its own feature is on.
 
 ## Error Display never carries the rejected bytes
 

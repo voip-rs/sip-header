@@ -46,7 +46,8 @@ deserializer accepts whatever the parser can produce and refuses only what
 reads back as a different value. The parser shares the stored form
 (lowercasing, quoting) and warns where builders refuse. Builders take `impl AsRef<str>` names and text and
 `Option<&str>` optional values, one shape across builders and collection
-mutation.
+mutation; an auth-param value is required (RFC 3261 §25.1), so its builders
+take `impl AsRef<str>`.
 
 ## No FreeSWITCH Coupling
 
