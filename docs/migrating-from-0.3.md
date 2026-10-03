@@ -183,6 +183,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 
 - `SipHeader::is_multi_valued()` is `is_list()`, a comma list safe to split, and `may_repeat()`. The authentication headers may repeat but are never split.
 - `SipHeader::from_compact` takes a `char`, the type `compact_form()` returns.
+- `n` is not a compact form: the IANA registry lists none for Identity-Info, so `from_compact('n')` is `None`.
 - The `draft` feature is gone. Diversion, Remote-Party-ID and the other deployed draft headers are always present, and `registry()` says which registry each comes from.
 - `define_header_enum!` gives serde only when the invocation asks for it with its `serde,` or `serde(cfg(…)),` arm, using wire names. To keep 0.3's variant-name JSON, derive serde on the enum inside the invocation yourself.
 

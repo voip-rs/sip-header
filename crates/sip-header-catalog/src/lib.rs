@@ -266,7 +266,7 @@ define_header_enum! {
 /// RFC 3261 §7.3.3 compact header form mappings.
 ///
 /// Includes forms from RFC 3261, RFC 3515, RFC 3841, RFC 3892, RFC 4028,
-/// RFC 4474, and RFC 6665.
+/// RFC 6665, and RFC 8224.
 const COMPACT_FORMS: &[(char, SipHeader)] = &[
     ('a', SipHeader::AcceptContact),
     ('b', SipHeader::ReferredBy),
@@ -279,7 +279,6 @@ const COMPACT_FORMS: &[(char, SipHeader)] = &[
     ('k', SipHeader::Supported),
     ('l', SipHeader::ContentLength),
     ('m', SipHeader::Contact),
-    ('n', SipHeader::IdentityInfo),
     ('o', SipHeader::Event),
     ('r', SipHeader::ReferTo),
     ('s', SipHeader::Subject),
