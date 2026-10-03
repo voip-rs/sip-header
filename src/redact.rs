@@ -37,14 +37,19 @@ pub trait Redact: sealed::Sealed {
 /// `+sip.instance`, RFC 5627 `pub-gruu` and `temp-gruu`.
 const IDENTITY_PARAMS: &[&str] = &["+sip.instance", "pub-gruu", "temp-gruu"];
 
+/// Via parameters whose value is an address of the sender's device.
+const VIA_ADDRESS_PARAMS: &[&str] = &["received", "maddr"];
+
 /// How [`Redact::redacted`](crate::Redact::redacted) renders a header value.
 ///
 /// Wraps sip-uri's [`Redaction`], which masks what the URIs carry. By
 /// default the value of every identity parameter (`+sip.instance`,
 /// `pub-gruu`, `temp-gruu`) is `***`, and so is everything after the
 /// scheme of a Geolocation reference, which names a location body or a
-/// dereference URL. A parameter name [`Redaction::params`] masks is masked
-/// in the header's parameters as in the URI's.
+/// dereference URL, and so are a Via's `sent-by` host and its `received`
+/// and `maddr` values, the addresses of the caller's device. A parameter
+/// name [`Redaction::params`] masks is masked in the header's parameters as
+/// in the URI's.
 ///
 /// ```
 /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
@@ -68,6 +73,7 @@ pub struct HeaderRedaction {
     uri: Redaction,
     show_instance: bool,
     show_location: bool,
+    show_via_addresses: bool,
 }
 
 impl HeaderRedaction {
@@ -97,9 +103,21 @@ impl HeaderRedaction {
         self
     }
 
+    /// Render a Via's `sent-by` host and its `received` and `maddr` values
+    /// as sent.
+    pub fn show_via_addresses(mut self) -> Self {
+        self.show_via_addresses = true;
+        self
+    }
+
     /// Whether Geolocation references render as their scheme alone.
     pub(crate) fn masks_location(&self) -> bool {
         !self.show_location
+    }
+
+    /// Whether a Via's `sent-by` host renders as `***`.
+    pub(crate) fn masks_via_host(&self) -> bool {
+        !self.show_via_addresses
     }
 
     /// Whether a header parameter named `name` (lowercase) renders its value
@@ -109,6 +127,12 @@ impl HeaderRedaction {
             || self
                 .uri
                 .masks_param(name)
+    }
+
+    /// [`masks_param`](Self::masks_param) for a Via parameter, which also
+    /// masks the address parameters.
+    pub(crate) fn masks_via_param(&self, name: &str) -> bool {
+        (self.masks_via_host() && VIA_ADDRESS_PARAMS.contains(&name)) || self.masks_param(name)
     }
 }
 

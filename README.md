@@ -199,7 +199,7 @@ assert_eq!(fields.via()?.unwrap().len(), 1);
 
 ## Redaction
 
-`Redact::redacted` renders a value for logs through a `HeaderRedaction`, which wraps sip-uri's `Redaction`. An address masks its display name along with the user part, and the identity parameters (`+sip.instance`, `pub-gruu`, `temp-gruu`) unless shown; a Geolocation masks each reference after its scheme unless shown; `SipAuthValue` masks its credentials, and the username with the user part.
+`Redact::redacted` renders a value for logs through a `HeaderRedaction`, which wraps sip-uri's `Redaction`. An address masks its display name along with the user part, and the identity parameters (`+sip.instance`, `pub-gruu`, `temp-gruu`) unless shown; a Geolocation masks each reference after its scheme unless shown; a Via masks its sent-by host and its received and maddr values unless shown (`show_via_addresses`); `SipAuthValue` masks its credentials, and the username with the user part.
 
 ```rust
 use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};

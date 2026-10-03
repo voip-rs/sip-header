@@ -13,7 +13,9 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::{checked_token, HeaderParams};
+use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
+use crate::traits::sealed;
 use crate::{is_token, RawParam};
 
 /// A single Via entry.
@@ -246,19 +248,93 @@ impl SipViaEntry {
     }
 }
 
-impl fmt::Display for SipViaEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl SipViaEntry {
+    fn write_with(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        host: &dyn fmt::Display,
+        params: &dyn fmt::Display,
+    ) -> fmt::Result {
         write!(
             f,
-            "{}/{}/{} {}",
-            self.protocol_name, self.protocol_version, self.transport, self.host
+            "{}/{}/{} {host}",
+            self.protocol_name, self.protocol_version, self.transport
         )?;
-
         if let Some(port) = self.port {
-            write!(f, ":{}", port)?;
+            write!(f, ":{port}")?;
         }
+        write!(f, "{params}")
+    }
+}
 
-        write!(f, "{}", self.params)
+impl fmt::Display for SipViaEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_with(f, &self.host, &self.params)
+    }
+}
+
+impl sealed::Sealed for SipViaEntry {}
+
+impl Redact for SipViaEntry {
+    /// Render for logs: the `sent-by` host and the `received` and `maddr`
+    /// values as `***` unless `how` shows Via addresses, the other
+    /// parameters `how` masks as `***`, and `sent-protocol` and the port as
+    /// sent.
+    ///
+    /// ```
+    /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipVia};
+    ///
+    /// let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060;branch=z9hG4bK1;received=203.0.113.10")?;
+    /// assert_eq!(
+    ///     via.redacted(&HeaderRedaction::default()).to_string(),
+    ///     "SIP/2.0/UDP ***:5060;branch=z9hG4bK1;received=***"
+    /// );
+    /// assert_eq!(
+    ///     via.redacted(&HeaderRedaction::default().show_via_addresses()).to_string(),
+    ///     via.to_string()
+    /// );
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedVia { via: self, how }
+    }
+}
+
+struct RedactedVia<'a> {
+    via: &'a SipViaEntry,
+    how: &'a HeaderRedaction,
+}
+
+impl fmt::Display for RedactedVia<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let params = self
+            .via
+            .params
+            .masked_by(self.how, HeaderRedaction::masks_via_param);
+        if self
+            .how
+            .masks_via_host()
+        {
+            self.via
+                .write_with(f, &"***", &params)
+        } else {
+            self.via
+                .write_with(
+                    f,
+                    &self
+                        .via
+                        .host,
+                    &params,
+                )
+        }
+    }
+}
+
+impl Redact for SipVia {
+    /// Render for logs: every entry as [`SipViaEntry`]'s rendering writes
+    /// it.
+    fn redacted<'a>(&'a self, how: &'a HeaderRedaction) -> impl fmt::Display + 'a {
+        RedactedList(self.entries(), how)
     }
 }
 

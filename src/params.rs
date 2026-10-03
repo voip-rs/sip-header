@@ -737,7 +737,20 @@ impl HeaderParams {
     /// [`Display`](fmt::Display), the value of every parameter `how` masks
     /// written as `***`.
     pub(crate) fn masked<'a>(&'a self, how: &'a HeaderRedaction) -> MaskedParams<'a> {
-        MaskedParams { params: self, how }
+        self.masked_by(how, HeaderRedaction::masks_param)
+    }
+
+    /// [`masked`](Self::masked), `masks` deciding which names `how` masks.
+    pub(crate) fn masked_by<'a>(
+        &'a self,
+        how: &'a HeaderRedaction,
+        masks: fn(&HeaderRedaction, &str) -> bool,
+    ) -> MaskedParams<'a> {
+        MaskedParams {
+            params: self,
+            how,
+            masks,
+        }
     }
 }
 
@@ -745,6 +758,7 @@ impl HeaderParams {
 pub(crate) struct MaskedParams<'a> {
     params: &'a HeaderParams,
     how: &'a HeaderRedaction,
+    masks: fn(&HeaderRedaction, &str) -> bool,
 }
 
 impl fmt::Display for MaskedParams<'_> {
@@ -756,9 +770,7 @@ impl fmt::Display for MaskedParams<'_> {
             f.write_char(';')?;
             if p.value
                 .is_some()
-                && self
-                    .how
-                    .masks_param(&p.name)
+                && (self.masks)(self.how, &p.name)
             {
                 write!(f, "{}=***", p.name)?;
             } else {

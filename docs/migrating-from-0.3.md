@@ -210,7 +210,7 @@ let how = HeaderRedaction::new(Redaction::default().user(UserMask::KeepLast(4)))
 log::info!("from {}", addr.redacted(&how));
 ```
 
-`HeaderRedaction` owns its configuration and is lent by reference; it is `Clone`, not `Copy`. Every type holding a URI implements `Redact`. By default it masks the URI's user part and header values (through sip-uri), the display name, identity parameters (`+sip.instance`, GRUUs) and Geolocation references. A parameter name `Redaction::params` masks is masked in header parameters as well as in the URI. Use the redacted rendering for logs, never Display.
+`HeaderRedaction` owns its configuration and is lent by reference; it is `Clone`, not `Copy`. Every type holding a URI implements `Redact`, and so does Via. By default it masks the URI's user part and header values (through sip-uri), the display name, identity parameters (`+sip.instance`, GRUUs), Geolocation references, and a Via's sent-by host and received and maddr values. A parameter name `Redaction::params` masks is masked in header parameters as well as in the URI. Use the redacted rendering for logs, never Display.
 
 ## Serde
 
