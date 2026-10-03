@@ -313,9 +313,10 @@ macro_rules! __define_header_enum_serde {
 #[doc = "```"]
 struct GatedSerdeNeedsTheCatalogFeature;
 
-/// The caller's `missing_docs` lint sees an undocumented variant.
+/// Every variant carries its wire name as a doc line, so the caller's
+/// `missing_docs` lint passes an undocumented variant.
 ///
-/// ```compile_fail
+/// ```
 /// /// Names.
 /// #[deny(missing_docs)]
 /// pub mod names {
@@ -346,7 +347,7 @@ struct GatedSerdeNeedsTheCatalogFeature;
 /// fn main() {}
 /// ```
 #[cfg(doctest)]
-struct VariantDocsReachTheCallersLint;
+struct EveryVariantIsDocumented;
 
 #[cfg(test)]
 mod tests {
