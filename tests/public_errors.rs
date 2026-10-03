@@ -240,10 +240,7 @@ fn a_uri_fault_spans_the_uri() {
     assert_eq!(fault.span(), e.span());
     assert_eq!(fault.row(), None);
 
-    let rows = [
-        "SIP/2.0/UDP a.example.com",
-        "SIP/2.0/UDP b.example.com, SIP/2.0/UDP [zz]:5060",
-    ];
+    let rows = [" ", ", SIP/2.0/UDP [zz]:5060"];
     let e = SipVia::from_rows(rows).unwrap_err();
     let at = rows[1]
         .find('[')
@@ -262,7 +259,7 @@ fn a_uri_fault_spans_the_uri() {
 fn an_empty_uri_is_an_empty_span_where_it_stood() {
     use sip_header::{HeaderParse, ListParse, SipHeaderAddr, SipHeaderAddrList};
 
-    let rows = ["<sip:a@example.com>", "<sip:b@example.com>, Bob <>"];
+    let rows = [" ", ", Bob <>"];
     let e = SipHeaderAddrList::from_rows(rows).unwrap_err();
     let at = rows[1]
         .rfind('>')
@@ -278,7 +275,7 @@ fn an_empty_uri_is_an_empty_span_where_it_stood() {
 fn a_fault_spans_from_its_position_to_its_end() {
     use sip_header::{ListParse, SipHeaderAddrList};
 
-    let rows = ["<sip:a@example.com>", "<sip:b@example.com"];
+    let rows = [" ", "<sip:b@example.com"];
     let e = SipHeaderAddrList::from_rows(rows).unwrap_err();
     assert_eq!(span_of(&e, &rows), Some((Some(1), 0..0, String::new())));
 

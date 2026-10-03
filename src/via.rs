@@ -904,11 +904,20 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
-        assert!(matches!(
-            SipVia::from_entries(["SIP/2.0/UDP 198.51.100.1", "invalid"]),
-            Err(ParseError::Malformed(f)) if f.entry == Some(1)
-        ));
+    fn from_entries_bad_entry_is_skipped() {
+        let parsed =
+            SipVia::from_entries_with_warnings(["SIP/2.0/UDP 198.51.100.1", "invalid"]).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            1
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.code, w.row, w.entry),
+            (WarningCode::SkippedEntry, Some(1), Some(1))
+        );
     }
 
     #[test]

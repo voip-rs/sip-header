@@ -1169,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn addr_list_error_carries_entry_index_across_rows() {
+    fn addr_list_skip_carries_entry_index_across_rows() {
         let h = rows(&[(
             "Route",
             &[
@@ -1177,10 +1177,9 @@ mod tests {
                 "<sip:c@example.com",
             ],
         )]);
-        assert!(matches!(
-            h.route(),
-            Err(ParseError::Malformed(f)) if f.entry == Some(2) && f.code == FaultCode::Unterminated
-        ));
+        let (route, seen) = row_warnings::<SipHeaderAddrList>(&h, SipHeader::Route);
+        assert_eq!(route.len(), 2);
+        assert_eq!(seen, [(crate::WarningCode::SkippedEntry, Some(2))]);
     }
 
     #[test]
@@ -1349,10 +1348,21 @@ mod tests {
             "<sip:a@example.com>, <sip:b@example.com>",
             "<sip:c@example.com",
         ];
-        assert!(matches!(
-            SipHeaderAddrList::from_rows(bad),
-            Err(ParseError::Malformed(f)) if f.entry == Some(2)
-        ));
+        let skipped = SipHeaderAddrList::from_rows_with_warnings(bad).unwrap();
+        assert_eq!(
+            skipped
+                .value
+                .len(),
+            2
+        );
+        assert_eq!(
+            skipped
+                .warnings
+                .iter()
+                .map(|w| (w.row, w.entry))
+                .collect::<Vec<_>>(),
+            [(Some(1), Some(2))]
+        );
         let comma = ["<sip:a@example.com>,", "<sip:b@example.com>"];
         assert!(SipHeaderAddrList::from_rows(comma).is_ok());
         assert!(matches!(

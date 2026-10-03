@@ -714,11 +714,20 @@ mod tests {
     }
 
     #[test]
-    fn bad_entry_error_carries_index() {
-        assert!(matches!(
-            HistoryInfo::parse("<sip:a@example.com>;index=1, <sip:b@example.com"),
-            Err(ParseError::Malformed(f)) if f.entry == Some(1) && f.code == FaultCode::Unterminated
-        ));
+    fn bad_entry_skip_carries_index() {
+        let raw = "<sip:a@example.com>;index=1, <sip:b@example.com";
+        let parsed = HistoryInfo::parse_with_warnings(raw).unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            1
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.code, w.kind, w.entry),
+            (WarningCode::SkippedEntry, WarningKind::Lost, Some(1))
+        );
     }
 
     #[test]

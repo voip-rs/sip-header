@@ -192,26 +192,42 @@ fn a_final_comma_is_positioned_at_the_comma() {
 }
 
 #[test]
-fn a_row_error_names_its_row_and_position() {
+fn a_skipped_entry_names_its_row_and_position() {
     let rows = [
         "<sip:a@example.com>, <sip:b@example.com>",
         "<sip:c@example.com>, <sip:d@example.com",
     ];
+    let parsed = SipHeaderAddrList::from_rows_with_warnings(rows).unwrap();
+    assert_eq!(
+        parsed
+            .value
+            .len(),
+        3
+    );
+    assert_eq!(
+        at(&parsed.warnings[0]),
+        (
+            WarningCode::SkippedEntry,
+            rows[1].rfind('<'),
+            Some(1),
+            Some(3)
+        )
+    );
+}
+
+#[test]
+fn a_list_left_without_entries_errs_at_the_entry_that_failed() {
+    let rows = ["  ", "<sip:d@example.com"];
     let Err(ParseError::Malformed(fault)) = SipHeaderAddrList::from_rows(rows) else {
         panic!("not Malformed");
     };
     assert_eq!(
         (fault.field, fault.position, fault.row, fault.entry),
-        (Field::Addr, rows[1].rfind('<'), Some(1), Some(3))
+        (Field::Addr, Some(0), Some(1), Some(1))
     );
     assert_eq!(
         ParseError::Malformed(fault).to_string(),
-        format!(
-            "malformed header value: addr: unterminated at byte {} in row 1 in entry 3",
-            rows[1]
-                .rfind('<')
-                .unwrap()
-        )
+        "malformed header value: addr: unterminated at byte 0 in row 1 in entry 1"
     );
 }
 

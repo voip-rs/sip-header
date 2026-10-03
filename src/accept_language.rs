@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn error_display_omits_input() {
-        let err = SipAcceptLanguage::parse(";secretvalue").unwrap_err();
+        let err = SipAcceptLanguage::parse_strict(";secretvalue").unwrap_err();
         assert!(!err
             .to_string()
             .contains("secretvalue"));
@@ -272,10 +272,18 @@ mod tests {
     }
 
     #[test]
-    fn params_without_language_is_error() {
+    fn params_without_language_skip_the_entry() {
+        let (al, seen) = testing::lenient::<SipAcceptLanguage>("en, ;q=1");
+        assert_eq!(al, SipAcceptLanguage::parse("en").unwrap());
         assert_eq!(
-            SipAcceptLanguage::parse("en, ;q=1"),
-            Err(ParseError::malformed(Field::Language, FaultCode::Missing, Some(4)).in_entry(1))
+            seen,
+            [(
+                Field::Language,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(4),
+                Some(1)
+            )]
         );
     }
 

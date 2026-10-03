@@ -68,6 +68,8 @@ Received text that would reframe a header is cleaned under a warning:
 - A `"` opens a quoted string only where the grammar lets one start, and only when it closes. A `"`, `<`, `>` or `,` inside a token field is dropped with `StrayDelimiter`, since a token has no escape form.
 - Text after a Warning's warn-text is dropped with `TrailingContent`.
 
+A list entry that yields no value is dropped with `SkippedEntry`, naming its field, position and entry index, and the other entries are kept. A list is `Err` only when its grammar needs an entry and none is left; Accept, Accept-Encoding and Accept-Language are then the empty list.
+
 List types take entries a transport already split through `ListParse::from_entries` and its siblings, and header occurrences through `from_rows`, which splits each row as the store accessors do. Prefer `from_rows` over joining rows with `,` before parsing.
 
 The parameters after a bare addr-spec (`sip:alice@example.com;tag=x`) are header parameters, as RFC 3261 §20.10 says, so `tag()` reads them and Display brackets the URI.

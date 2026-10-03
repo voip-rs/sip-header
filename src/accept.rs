@@ -464,17 +464,25 @@ mod tests {
 
     #[test]
     fn error_display_omits_input() {
-        let err = SipAccept::parse("secretvalue").unwrap_err();
+        let err = SipAccept::parse_strict("secretvalue").unwrap_err();
         assert!(!err
             .to_string()
             .contains("secretvalue"));
     }
 
     #[test]
-    fn missing_slash() {
+    fn missing_slash_skips_the_entry() {
+        let (accept, seen) = testing::lenient::<SipAccept>("application");
+        assert!(accept.is_empty());
         assert_eq!(
-            SipAccept::parse("application"),
-            Err(ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(0)).in_entry(0))
+            seen,
+            [(
+                Field::MediaRange,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(0),
+                Some(0)
+            )]
         );
     }
 
@@ -501,14 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
+    fn from_entries_bad_entry_is_skipped_in_its_row() {
+        let parsed =
+            SipAccept::from_entries_with_warnings(["application/sdp", " noslash"]).unwrap();
+        assert_eq!(parsed.value, SipAccept::parse("application/sdp").unwrap());
+        let w = parsed.warnings[0];
         assert_eq!(
-            SipAccept::from_entries(["application/sdp", " noslash"]),
-            Err(
-                ParseError::malformed(Field::MediaRange, FaultCode::Missing, Some(1))
-                    .in_row(1)
-                    .in_entry(1)
-            )
+            (w.code, w.position, w.row, w.entry),
+            (WarningCode::SkippedEntry, Some(1), Some(1), Some(1))
         );
     }
 

@@ -565,14 +565,23 @@ mod tests {
     }
 
     #[test]
-    fn from_entries_bad_entry_is_error() {
+    fn from_entries_bad_entry_is_skipped() {
+        let parsed =
+            SipWarning::from_entries_with_warnings([r#"399 example.com "ok""#, "nope"]).unwrap();
         assert_eq!(
-            SipWarning::from_entries([r#"399 example.com "ok""#, "nope"]),
-            Err(
-                ParseError::malformed(Field::Agent, FaultCode::Missing, None)
+            parsed
+                .value
+                .len(),
+            1
+        );
+        assert_eq!(
+            parsed.warnings,
+            [
+                ParseWarning::new(Field::Agent, crate::WarningCode::SkippedEntry)
+                    .at(0)
                     .in_row(1)
                     .in_entry(1)
-            )
+            ]
         );
     }
 

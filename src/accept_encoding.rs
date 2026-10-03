@@ -149,7 +149,6 @@ mod tests {
 
     use super::*;
     use crate::diagnostic::WarningCode;
-    use crate::error::FaultCode;
 
     #[test]
     fn single_encoding() {
@@ -208,7 +207,7 @@ mod tests {
 
     #[test]
     fn error_display_omits_input() {
-        let err = SipAcceptEncoding::parse(";secretvalue").unwrap_err();
+        let err = SipAcceptEncoding::parse_strict(";secretvalue").unwrap_err();
         assert!(!err
             .to_string()
             .contains("secretvalue"));
@@ -247,10 +246,18 @@ mod tests {
     }
 
     #[test]
-    fn params_without_coding_is_error() {
+    fn params_without_coding_skip_the_entry() {
+        let (ae, seen) = testing::lenient::<SipAcceptEncoding>(" ;q=1");
+        assert!(ae.is_empty());
         assert_eq!(
-            SipAcceptEncoding::parse(" ;q=1"),
-            Err(ParseError::malformed(Field::Coding, FaultCode::Missing, Some(1)).in_entry(0))
+            seen,
+            [(
+                Field::Coding,
+                WarningCode::SkippedEntry,
+                WarningKind::Lost,
+                Some(1),
+                Some(0)
+            )]
         );
     }
 

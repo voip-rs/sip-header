@@ -52,6 +52,11 @@ pub trait HeaderParse: Sized + sealed::Sealed {
 /// are header occurrences, each split at its top-level commas as the typed
 /// accessors of [`SipHeaderLookup`](crate::SipHeaderLookup) split them.
 ///
+/// Every read of a list type, `parse` included, drops an entry that yields
+/// no value under [`SkippedEntry`](crate::WarningCode::SkippedEntry) at the
+/// failing field and position. The read errs only when the grammar needs an
+/// entry and none is left, with the first dropped entry's error if one was.
+///
 /// ```
 /// use sip_header::{ListParse, SipVia};
 ///
