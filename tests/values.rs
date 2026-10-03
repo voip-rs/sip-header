@@ -198,8 +198,46 @@ mod serde_round_trip {
     use serde_json::json;
     use sip_header::{
         HeaderParse, ListParse, SipCallId, SipHeader, SipHeaderAddrList, SipJoin, SipReasonCause,
-        SipReasonList,
+        SipReasonList, TokenList, TypedHeader,
     };
+
+    fn token_list() -> TokenList {
+        TokenList::new(SipHeader::Supported, ["timer", "100rel"]).unwrap()
+    }
+
+    #[test]
+    fn token_lists_round_trip_as_header_and_tokens() -> R {
+        pinned(
+            &token_list(),
+            json!({"header": "Supported", "tokens": ["timer", "100rel"]}),
+        );
+        for header in <TokenList as TypedHeader>::HEADERS {
+            let token = if *header == SipHeader::InReplyTo {
+                "a@example.com"
+            } else {
+                "x"
+            };
+            round_trip(TokenList::new(*header, [token])?);
+        }
+        round_trip(TokenList::new(SipHeader::Allow, Vec::<&str>::new())?);
+        assert_eq!(
+            serde_json::from_value::<TokenList>(json!({"header": "k", "tokens": ["timer"]}))
+                .unwrap(),
+            TokenList::new(SipHeader::Supported, ["timer"])?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn token_lists_refuse_what_new_refuses() {
+        rejects::<TokenList>(json!({"header": "Require", "tokens": []}));
+        rejects::<TokenList>(json!({"header": "Via", "tokens": ["secret"]}));
+        rejects::<TokenList>(json!({"header": "Supported", "tokens": ["secret, x"]}));
+        rejects::<TokenList>(json!({"header": "Supported", "tokens": ["secret\r\n"]}));
+        rejects::<TokenList>(json!({"header": "X-Secret", "tokens": ["x"]}));
+        rejects::<TokenList>(json!({"tokens": ["secret"]}));
+        refuses_field(&token_list(), "unknown");
+    }
 
     fn round_trip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: T) {
         let json = serde_json::to_value(&value).unwrap();
@@ -634,6 +672,11 @@ mod serde_round_trip {
         found.extend(leaks(&DialogFraming::UriHeader));
         found.extend(leaks(addr().params()));
         found.extend(leaks(&SipHeader::CallId));
+        found.extend(leaks(&token_list()));
+        found.extend(leaks(&TokenList::new(
+            SipHeader::InReplyTo,
+            ["a@example.com"],
+        )?));
         assert!(found.is_empty(), "{}", found.join("\n"));
         Ok(())
     }
