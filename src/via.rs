@@ -538,7 +538,8 @@ fn parse_host_port(
         if port.is_none() {
             warnings.push(
                 ParseWarning::new(Field::SentBy, WarningCode::InvalidPort)
-                    .at(crate::offset_in(entry, p)),
+                    .at(crate::offset_in(entry, p))
+                    .covering(Span::within(entry, p.trim_end())),
             );
         }
         port

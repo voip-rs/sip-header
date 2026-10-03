@@ -3,7 +3,7 @@
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
 use crate::scrub::{merge, scrub, Scrubbed};
-use crate::span::Located;
+use crate::span::{Located, Span};
 use crate::{QuoteStart, RowEntry};
 
 /// Constructor, accessors, iteration and Display for a
@@ -361,17 +361,22 @@ pub(crate) trait CommaList: Sized {
                 .relocation()
                 .then_shift(entry.base, entry.row);
             let mut found = Vec::new();
+            let whole = Span::within(
+                &scrubbed.text,
+                scrubbed
+                    .text
+                    .trim(),
+            );
             let value = match Self::parse_entry(&scrubbed.text, &mut found) {
                 Ok(value) => value,
                 Err(ParseError::Row(e)) => return Err(ParseError::Row(e)),
                 Err(e) => {
-                    let at = crate::offset_in(
-                        &scrubbed.text,
-                        scrubbed
-                            .text
-                            .trim_start(),
-                    );
-                    found.push(skipped(&e, at));
+                    found.push(skipped(
+                        &e,
+                        whole
+                            .range()
+                            .start,
+                    ));
                     first_fault.get_or_insert_with(|| {
                         e.relocate(&back)
                             .in_entry(i)
@@ -379,6 +384,18 @@ pub(crate) trait CommaList: Sized {
                     None
                 }
             };
+            if value.is_none() {
+                for w in found
+                    .iter_mut()
+                    .filter(|w| {
+                        w.code == WarningCode::SkippedEntry
+                            && w.span
+                                .is_none()
+                    })
+                {
+                    w.span = Some(whole);
+                }
+            }
             let found = found
                 .into_iter()
                 .map(|w| w.relocate(&back))

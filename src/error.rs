@@ -66,8 +66,9 @@ impl ParseError {
     /// The text this error points at, in the row it names: a
     /// [`Malformed`](Self::Malformed) fault from its position to its end, a
     /// [`Uri`](Self::Uri) the URI refused, a
-    /// [`NonConformant`](Self::NonConformant) warning its point, as an
-    /// empty range. `None` without a position, and for a row error.
+    /// [`NonConformant`](Self::NonConformant) warning its
+    /// [`span`](ParseWarning::span), else its point as an empty range.
+    /// `None` without a position, and for a row error.
     pub fn span(&self) -> Option<Span> {
         match self {
             ParseError::Malformed(fault) => fault
@@ -81,8 +82,11 @@ impl ParseError {
                 }),
             ParseError::Uri(fault) => fault.span(),
             ParseError::NonConformant(w) => w
-                .position
-                .map(|p| Span::in_row(w.row, p..p)),
+                .span()
+                .or_else(|| {
+                    w.position
+                        .map(|p| Span::in_row(w.row, p..p))
+                }),
             ParseError::Row(_) => None,
         }
     }
@@ -104,6 +108,7 @@ impl ParseError {
             ParseError::NonConformant(w) => ParseError::NonConformant(ParseWarning {
                 position: None,
                 row: None,
+                span: None,
                 ..w
             }),
             ParseError::Row(e) => ParseError::Row(e),

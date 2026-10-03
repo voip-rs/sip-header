@@ -189,6 +189,9 @@ pub(crate) fn parse_uri_header<T: Located>(
     parsed
         .value
         .relocate_spans(&Relocation::shift(None, None));
+    for w in &mut parsed.warnings {
+        w.span = None;
+    }
     Ok(parsed)
 }
 

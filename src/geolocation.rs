@@ -300,13 +300,16 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeoloc
     let params = if junk.is_empty() || junk.starts_with(';') {
         tail
     } else {
+        let (dropped, params) = junk.split_at(
+            junk.find(';')
+                .unwrap_or(junk.len()),
+        );
         warnings.push(
             ParseWarning::new(Field::Param, WarningCode::TrailingContent)
-                .at(crate::offset_in(entry, junk)),
+                .at(crate::offset_in(entry, junk))
+                .covering(Span::within(entry, dropped.trim_end())),
         );
-        &junk[junk
-            .find(';')
-            .unwrap_or(junk.len())..]
+        params
     };
     let at = crate::offset_in(entry, raw);
     Some(SipGeolocationEntry {

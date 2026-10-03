@@ -375,7 +375,11 @@ fn parse_cause(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) 
         p.value
             .unwrap_or(p.key),
     );
-    warnings.push(ParseWarning::new(Field::Cause, WarningCode::InvalidCause).at(at));
+    let warning = ParseWarning::new(Field::Cause, WarningCode::InvalidCause).at(at);
+    warnings.push(match p.value {
+        Some(v) => warning.covering(Span::within(input, v)),
+        None => warning,
+    });
     None
 }
 

@@ -8,6 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
+use crate::span::Span;
 
 /// `warn-code = 3DIGIT` (RFC 3261 §20.43).
 const WARN_CODE_DIGITS: usize = 3;
@@ -290,7 +291,8 @@ fn parse_quoted_string(
             if let Some(junk) = Some(after.trim_start()).filter(|j| !j.is_empty()) {
                 warnings.push(
                     ParseWarning::new(Field::Text, WarningCode::TrailingContent)
-                        .at(crate::offset_in(entry, junk)),
+                        .at(crate::offset_in(entry, junk))
+                        .covering(Span::within(entry, junk.trim_end())),
                 );
             }
             return Ok(crate::unescape_quoted_pair(&content[..i]));

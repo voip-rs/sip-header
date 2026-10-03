@@ -54,7 +54,8 @@ pub trait HeaderParse: Sized + sealed::Sealed {
 ///
 /// Every read of a list type, `parse` included, drops an entry that yields
 /// no value under [`SkippedEntry`](crate::WarningCode::SkippedEntry) at the
-/// failing field and position. The read errs only when the grammar needs an
+/// failing field and position, its [`span`](crate::ParseWarning::span) over
+/// the entry as received. The read errs only when the grammar needs an
 /// entry and none is left, with the first dropped entry's error if one was.
 ///
 /// ```
@@ -117,8 +118,8 @@ pub trait ListParse: HeaderParse {
 /// The value is percent-decoded as an RFC 3261 §25.1 `hvalue`, `+` staying
 /// a literal plus sign, then parsed as the header value. Error positions are
 /// dropped and warning positions point into the decoded text, since neither
-/// would point into `raw`, and the value carries no spans, its text being
-/// decoded from `raw`.
+/// would point into `raw`, and neither the value nor a warning carries a
+/// span, their text being decoded from `raw`.
 ///
 /// ```
 /// use sip_header::{SipReason, UriHeaderParse};

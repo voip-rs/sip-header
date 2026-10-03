@@ -1,10 +1,11 @@
 //! Parse results together with the grammar breaches the parser survived.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use sip_uri::WarningKind;
 
-use crate::span::Relocation;
+use crate::span::{relocated, Relocation, Span};
 
 /// A parse result together with the non-conformance found on the way.
 ///
@@ -42,8 +43,9 @@ impl<T> Parsed<T> {
 
 /// A grammar breach the parser accepted rather than rejected.
 ///
-/// Names where the breach is, never what text it was.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Names where the breach is, never what text it was. Equality and hashing
+/// ignore its [`span`](Self::span), as they ignore a value's spans.
+#[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct ParseWarning {
     /// Part of the header value the breach is in.
@@ -61,6 +63,47 @@ pub struct ParseWarning {
     pub entry: Option<usize>,
     /// Whether the parsed value still carries what was sent.
     pub kind: WarningKind,
+    pub(crate) span: Option<Span>,
+}
+
+impl ParseWarning {
+    /// Every field but the span.
+    fn identity(
+        &self,
+    ) -> (
+        Field,
+        WarningCode,
+        Option<usize>,
+        Option<usize>,
+        Option<usize>,
+        WarningKind,
+    ) {
+        let ParseWarning {
+            field,
+            code,
+            position,
+            row,
+            entry,
+            kind,
+            span: _,
+        } = *self;
+        (field, code, position, row, entry, kind)
+    }
+}
+
+impl PartialEq for ParseWarning {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for ParseWarning {}
+
+impl Hash for ParseWarning {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity()
+            .hash(state);
+    }
 }
 
 impl ParseWarning {
@@ -84,7 +127,34 @@ impl ParseWarning {
             row: None,
             entry: None,
             kind: code.own_kind(),
+            span: None,
         }
+    }
+
+    /// The text the warning concerns, in the row it names: the whole entry
+    /// a [`WarningCode::SkippedEntry`] dropped, or the text a
+    /// [`WarningCode::TrailingContent`], [`WarningCode::InvalidPort`] or
+    /// [`WarningCode::InvalidCause`] dropped. `None` for a warning that
+    /// names no range, and for text decoded before parsing.
+    ///
+    /// ```
+    /// use sip_header::{HeaderParse, SipVia, WarningCode};
+    ///
+    /// let row = "SIP/2.0/UDP example.com, SIP/2.0/UDP :5060";
+    /// let parsed = SipVia::parse_with_warnings(row)?;
+    /// let w = &parsed.warnings[0];
+    /// assert_eq!(w.code, WarningCode::SkippedEntry);
+    /// assert_eq!(w.span().unwrap().get(row), Ok("SIP/2.0/UDP :5060"));
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Cover the text `span` holds.
+    pub(crate) fn covering(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 
     /// Point the warning at byte `position`.
@@ -96,6 +166,9 @@ impl ParseWarning {
     /// Place the warning in row `row`.
     pub fn in_row(mut self, row: usize) -> Self {
         self.row = Some(row);
+        self.span = self
+            .span
+            .map(|s| Span::in_row(Some(row), s.range()));
         self
     }
 
@@ -110,6 +183,7 @@ impl ParseWarning {
             row: None,
             entry: None,
             kind: w.kind,
+            span: None,
         }
     }
 
@@ -118,6 +192,7 @@ impl ParseWarning {
         self.position = self
             .position
             .and_then(|p| to.start(p));
+        relocated(&mut self.span, to);
         self.row = to
             .row()
             .or(self.row);

@@ -609,11 +609,15 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let params_start = if tail[junk..].is_empty() || tail[junk..].starts_with(';') {
         0
     } else {
+        let params_start = tail
+            .find(';')
+            .unwrap_or(tail.len());
         warnings.push(
-            ParseWarning::new(Field::Param, WarningCode::TrailingContent).at(lead + after + junk),
+            ParseWarning::new(Field::Param, WarningCode::TrailingContent)
+                .at(lead + after + junk)
+                .covering(Span::within(input, tail[junk..params_start].trim_end())),
         );
-        tail.find(';')
-            .unwrap_or(tail.len())
+        params_start
     };
     let params = HeaderParams::read(input, &tail[params_start..], &mut warnings);
     let addr = SipHeaderAddr {
