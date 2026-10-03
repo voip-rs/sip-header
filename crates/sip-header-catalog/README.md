@@ -27,7 +27,7 @@ assert!(SipHeader::Via.is_list());
 assert!(SipHeader::Authorization.may_repeat() && !SipHeader::Authorization.is_list());
 ```
 
-`FromStr` takes canonical names, case-insensitively; `parse_name` also takes compact forms. `Display` always writes the canonical name, and `SipHeader` sorts by it.
+`FromStr` takes canonical names, case-insensitively; `parse_name` also takes compact forms. `Display` always writes the canonical name, and `SipHeader` sorts by it, ignoring ASCII case.
 
 ## Implementing a store
 

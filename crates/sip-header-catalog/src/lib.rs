@@ -48,8 +48,8 @@ define_header_enum! {
     /// `parse_name` accepts.
     ///
     /// The order of `ALL` and the discriminant values are unspecified. `Ord`
-    /// compares the canonical wire names byte by byte, as [`as_str`](Self::as_str)
-    /// returns them.
+    /// compares the canonical wire names, as [`as_str`](Self::as_str) returns
+    /// them, byte by byte ignoring ASCII case.
     pub enum SipHeader {
         /// RFC 3261.
         Accept => "Accept",
@@ -520,11 +520,16 @@ impl SipHeader {
     }
 }
 
-/// By canonical wire name, byte by byte, never by discriminant.
+/// By canonical wire name ignoring ASCII case, never by discriminant; no two
+/// wire names differ only by case, so this agrees with `Eq`.
 impl Ord for SipHeader {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.as_str()
-            .cmp(other.as_str())
+        let fold = |h: &Self| {
+            h.as_str()
+                .bytes()
+                .map(|b| b.to_ascii_lowercase())
+        };
+        fold(self).cmp(fold(other))
     }
 }
 
