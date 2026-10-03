@@ -4,7 +4,9 @@ use std::hash::BuildHasherDefault;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sip_header_catalog::{RowError, RowErrorKind, SipHeader, SipHeaderRows, SipHeaderRowsExt};
+use sip_header_catalog::{
+    NameMatcher, RowError, RowErrorKind, SipHeader, SipHeaderRows, SipHeaderRowsExt,
+};
 
 /// A store keyed by wire name, holding every row in wire order.
 struct WireStore(Vec<(String, String)>);
@@ -21,10 +23,11 @@ impl WireStore {
 
 impl SipHeaderRows for WireStore {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
+        let matcher = NameMatcher::new(name);
         Ok(self
             .0
             .iter()
-            .filter(|(k, _)| SipHeader::name_matches(name, k))
+            .filter(|(k, _)| matcher.matches(k))
             .map(|(_, v)| v.as_str())
             .collect())
     }
@@ -94,6 +97,67 @@ fn name_matching() {
     assert!(SipHeader::name_matches("X-Custom", "x-custom"));
     assert!(!SipHeader::name_matches("X-Custom", "x"));
     assert!(!SipHeader::name_matches("From", "t"));
+}
+
+fn spellings() -> Vec<String> {
+    let mut names: Vec<String> = ["X-Custom", "x-custom", "X Bad\r\n", "", "z", "Vias", "ü"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    for h in SipHeader::ALL {
+        names.push(
+            h.as_str()
+                .to_string(),
+        );
+        names.push(
+            h.as_str()
+                .to_ascii_lowercase(),
+        );
+        names.push(
+            h.as_str()
+                .to_ascii_uppercase(),
+        );
+        if let Some(c) = h.compact_form() {
+            names.push(c.to_string());
+            names.push(
+                c.to_ascii_uppercase()
+                    .to_string(),
+            );
+        }
+    }
+    names
+}
+
+#[test]
+fn a_matcher_names_one_header_or_one_unregistered_name() {
+    let names = spellings();
+    for name in &names {
+        let matcher = NameMatcher::new(name);
+        for wire in &names {
+            let expected = match (SipHeader::parse_name(name), SipHeader::parse_name(wire)) {
+                (Ok(a), Ok(b)) => a == b,
+                (Err(_), Err(_)) => name.eq_ignore_ascii_case(wire),
+                _ => false,
+            };
+            assert_eq!(matcher.matches(wire), expected, "{name:?} {wire:?}");
+            assert_eq!(
+                SipHeader::name_matches(name, wire),
+                expected,
+                "{name:?} {wire:?}"
+            );
+        }
+    }
+    for h in SipHeader::ALL {
+        let matcher = NameMatcher::from(*h);
+        for wire in &names {
+            assert_eq!(matcher.matches(wire), h.matches(wire), "{h} {wire:?}");
+            assert_eq!(
+                matcher.matches(wire),
+                SipHeader::parse_name(wire) == Ok(*h),
+                "{h} {wire:?}"
+            );
+        }
+    }
 }
 
 /// A store that decodes its own framing, and fails on Contact.
