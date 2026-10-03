@@ -3,7 +3,7 @@
 use sip_header::sip_uri::{Redaction, UserMask};
 use sip_header::{
     ContactList, HeaderParse, HeaderRedaction, HistoryInfo, ParseError, Redact, SipAuthValue,
-    SipGeolocation, SipHeaderAddr, SipHeaderAddrList, UriInfo,
+    SipGeolocation, SipHeaderAddr, SipHeaderAddrList, SipVia, UriInfo,
 };
 
 type R = Result<(), ParseError>;
@@ -87,7 +87,8 @@ fn masks_user_unless_shown<T: Redact + std::fmt::Display>(value: &T) -> String {
     assert!(!masked.contains(USER), "{masked}");
     let shown = HeaderRedaction::new(Redaction::default().user(UserMask::Visible))
         .show_instance()
-        .show_location();
+        .show_location()
+        .show_via_addresses();
     assert_eq!(
         value
             .redacted(&shown)
@@ -162,5 +163,46 @@ fn a_param_name_the_uri_policy_masks_is_masked_in_the_header() -> R {
             .to_string(),
         r#"Digest realm="example.com", +sip.instance="***""#
     );
+    Ok(())
+}
+
+const VIA: &str = "SIP/2.0/UDP 198.51.100.1:5060;branch=z9hG4bK1;received=203.0.113.10;rport=5061, SIP/2.0/TLS [2001:db8::1];maddr=203.0.113.1;received=2001:db8::2, SIP/2.0/TCP client.example.com;branch=z9hG4bK2";
+
+#[test]
+fn via_addresses_are_masked_by_default() -> R {
+    let via = SipVia::parse(VIA)?;
+    let masked = via
+        .redacted(&HeaderRedaction::default())
+        .to_string();
+    assert_eq!(
+        masked,
+        "SIP/2.0/UDP ***:5060;branch=z9hG4bK1;received=***;rport=5061, SIP/2.0/TLS ***;maddr=***;received=***, SIP/2.0/TCP ***;branch=z9hG4bK2"
+    );
+    for address in [
+        "198.51.100.1",
+        "203.0.113.10",
+        "2001:db8::1",
+        "203.0.113.1",
+        "2001:db8::2",
+        "client.example.com",
+    ] {
+        assert!(!masked.contains(address), "{address} {masked}");
+    }
+    for entry in via.entries() {
+        assert_eq!(
+            entry
+                .redacted(&HeaderRedaction::default().show_via_addresses())
+                .to_string(),
+            entry.to_string()
+        );
+    }
+    let how = HeaderRedaction::new(Redaction::default().params(["BRANCH"])).show_via_addresses();
+    assert_eq!(
+        via.entries()[0]
+            .redacted(&how)
+            .to_string(),
+        "SIP/2.0/UDP 198.51.100.1:5060;branch=***;received=203.0.113.10;rport=5061"
+    );
+    assert_eq!(masks_user_unless_shown(&via), masked);
     Ok(())
 }
