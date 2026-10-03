@@ -135,6 +135,29 @@ impl FromStr for MediaStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "serde")]
+    use crate::conference_info::assert_serde_wire_names;
+    use crate::conference_info::assert_wire_names;
+
+    const MEDIA_STATUSES: &[MediaStatus] = &[
+        MediaStatus::RecvOnly,
+        MediaStatus::SendOnly,
+        MediaStatus::SendRecv,
+        MediaStatus::Inactive,
+    ];
+    const _: fn(MediaStatus) = |v| match v {
+        MediaStatus::RecvOnly
+        | MediaStatus::SendOnly
+        | MediaStatus::SendRecv
+        | MediaStatus::Inactive => {}
+    };
+
+    #[test]
+    fn media_status_wire_names() {
+        assert_wire_names(MEDIA_STATUSES);
+        #[cfg(feature = "serde")]
+        assert_serde_wire_names(MEDIA_STATUSES);
+    }
 
     #[test]
     fn media_status_error_display_omits_input() {

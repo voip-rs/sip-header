@@ -423,6 +423,75 @@ impl SipDialogId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "serde")]
+    use crate::conference_info::assert_serde_wire_names;
+    use crate::conference_info::assert_wire_names;
+
+    const ENDPOINT_STATUSES: &[EndpointStatus] = &[
+        EndpointStatus::Pending,
+        EndpointStatus::DialingOut,
+        EndpointStatus::DialingIn,
+        EndpointStatus::Alerting,
+        EndpointStatus::OnHold,
+        EndpointStatus::Connected,
+        EndpointStatus::MutedViaFocus,
+        EndpointStatus::Disconnecting,
+        EndpointStatus::Disconnected,
+    ];
+    const _: fn(EndpointStatus) = |v| match v {
+        EndpointStatus::Pending
+        | EndpointStatus::DialingOut
+        | EndpointStatus::DialingIn
+        | EndpointStatus::Alerting
+        | EndpointStatus::OnHold
+        | EndpointStatus::Connected
+        | EndpointStatus::MutedViaFocus
+        | EndpointStatus::Disconnecting
+        | EndpointStatus::Disconnected => {}
+    };
+
+    const JOINING_METHODS: &[JoiningMethod] = &[
+        JoiningMethod::DialedIn,
+        JoiningMethod::DialedOut,
+        JoiningMethod::FocusOwner,
+    ];
+    const _: fn(JoiningMethod) = |v| match v {
+        JoiningMethod::DialedIn | JoiningMethod::DialedOut | JoiningMethod::FocusOwner => {}
+    };
+
+    const DISCONNECTION_METHODS: &[DisconnectionMethod] = &[
+        DisconnectionMethod::Departed,
+        DisconnectionMethod::Booted,
+        DisconnectionMethod::Failed,
+        DisconnectionMethod::Busy,
+    ];
+    const _: fn(DisconnectionMethod) = |v| match v {
+        DisconnectionMethod::Departed
+        | DisconnectionMethod::Booted
+        | DisconnectionMethod::Failed
+        | DisconnectionMethod::Busy => {}
+    };
+
+    #[test]
+    fn endpoint_status_wire_names() {
+        assert_wire_names(ENDPOINT_STATUSES);
+        #[cfg(feature = "serde")]
+        assert_serde_wire_names(ENDPOINT_STATUSES);
+    }
+
+    #[test]
+    fn joining_method_wire_names() {
+        assert_wire_names(JOINING_METHODS);
+        #[cfg(feature = "serde")]
+        assert_serde_wire_names(JOINING_METHODS);
+    }
+
+    #[test]
+    fn disconnection_method_wire_names() {
+        assert_wire_names(DISCONNECTION_METHODS);
+        #[cfg(feature = "serde")]
+        assert_serde_wire_names(DISCONNECTION_METHODS);
+    }
 
     #[test]
     fn enum_error_display_omits_input() {

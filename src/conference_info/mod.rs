@@ -50,6 +50,37 @@ pub use types::{
 };
 pub use user::{User, UserRoles, Users};
 
+#[cfg(test)]
+fn assert_wire_names<T>(all: &[T])
+where
+    T: Copy + std::fmt::Debug + PartialEq + std::fmt::Display + std::str::FromStr,
+    T::Err: std::fmt::Debug,
+{
+    let mut seen = std::collections::HashSet::new();
+    for &v in all {
+        let wire = v.to_string();
+        assert_eq!(
+            wire.parse::<T>()
+                .unwrap(),
+            v
+        );
+        assert!(seen.insert(wire), "{v:?} shares its Display string");
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+fn assert_serde_wire_names<T>(all: &[T])
+where
+    T: Copy + std::fmt::Debug + PartialEq + std::fmt::Display,
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    for &v in all {
+        let json = serde_json::to_value(v).unwrap();
+        assert_eq!(json, serde_json::Value::String(v.to_string()));
+        assert_eq!(serde_json::from_value::<T>(json).unwrap(), v);
+    }
+}
+
 /// Root element of an RFC 4575 conference-info document.
 ///
 /// The `entity` URI identifies the conference. The `state` attribute

@@ -115,6 +115,21 @@ impl ExecutionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "serde")]
+    use crate::conference_info::assert_serde_wire_names;
+    use crate::conference_info::assert_wire_names;
+
+    const STATES: &[State] = &[State::Full, State::Partial, State::Deleted];
+    const _: fn(State) = |v| match v {
+        State::Full | State::Partial | State::Deleted => {}
+    };
+
+    #[test]
+    fn state_wire_names() {
+        assert_wire_names(STATES);
+        #[cfg(feature = "serde")]
+        assert_serde_wire_names(STATES);
+    }
 
     #[test]
     fn state_invalid() {
