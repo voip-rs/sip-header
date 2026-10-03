@@ -89,7 +89,8 @@ test checks `SipHeader::ALL` filtered by `registry()` against
 
 **When IANA registers new SIP headers:**
 
-1. Add the header name to `crates/sip-header-catalog/iana-sip-headers.txt` (alphabetical order)
+1. Add the header name to `crates/sip-header-catalog/iana-sip-headers.txt` (alphabetical order),
+   with the registry's compact form as a second column when it has one
 2. Add the variant to `SipHeader` in `crates/sip-header-catalog/src/lib.rs`
 3. Classify it in `is_list()` and `may_repeat()`, citing its ABNF from the
    RFC text, never memory. Headers defined only in 3GPP TS 24.229 are
