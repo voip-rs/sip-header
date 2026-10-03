@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn row_error_display_names_the_layer() {
-        let row = RowError::malformed().in_entry(3);
+        let row = RowError::malformed().in_row(3);
         let e = ParseError::from(row.clone());
         assert_eq!(e.to_string(), "row error");
         assert_eq!(

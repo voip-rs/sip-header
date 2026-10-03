@@ -12,8 +12,8 @@ use crate::SipHeader;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum RowErrorKind {
-    /// More entries than the store allows.
-    TooManyEntries,
+    /// More rows than the store allows.
+    TooManyRows,
     /// The store could not decode its own framing of the rows.
     Malformed,
 }
@@ -22,7 +22,7 @@ impl RowErrorKind {
     /// Stable kebab-case name, for logs and machine consumers.
     pub fn as_str(self) -> &'static str {
         match self {
-            RowErrorKind::TooManyEntries => "too-many-entries",
+            RowErrorKind::TooManyRows => "too-many-rows",
             RowErrorKind::Malformed => "malformed",
         }
     }
@@ -36,34 +36,34 @@ impl fmt::Display for RowErrorKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Detail {
-    TooManyEntries { count: usize, limit: usize },
+    TooManyRows { count: usize, limit: usize },
     Malformed,
 }
 
 /// A store that decodes its own framing failed to produce a header's rows.
 ///
-/// Names the entry at fault and the counts involved, never header text.
+/// Names the row at fault and the counts involved, never header text.
 ///
 /// ```
 /// use sip_header_catalog::{RowError, RowErrorKind};
 ///
-/// let e = RowError::too_many_entries(4001, 4000);
-/// assert_eq!(e.kind(), RowErrorKind::TooManyEntries);
-/// assert_eq!(e.to_string(), "too-many-entries: 4001, limit 4000");
-/// assert_eq!(RowError::malformed().in_entry(3).to_string(), "malformed in entry 3");
+/// let e = RowError::too_many_rows(4001, 4000);
+/// assert_eq!(e.kind(), RowErrorKind::TooManyRows);
+/// assert_eq!(e.to_string(), "too-many-rows: 4001, limit 4000");
+/// assert_eq!(RowError::malformed().in_row(3).to_string(), "malformed in row 3");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RowError {
     detail: Detail,
-    entry: Option<usize>,
+    row: Option<usize>,
 }
 
 impl RowError {
-    /// The store holds `count` entries where it allows at most `limit`.
-    pub fn too_many_entries(count: usize, limit: usize) -> Self {
+    /// The store holds `count` rows where it allows at most `limit`.
+    pub fn too_many_rows(count: usize, limit: usize) -> Self {
         RowError {
-            detail: Detail::TooManyEntries { count, limit },
-            entry: None,
+            detail: Detail::TooManyRows { count, limit },
+            row: None,
         }
     }
 
@@ -71,14 +71,14 @@ impl RowError {
     pub fn malformed() -> Self {
         RowError {
             detail: Detail::Malformed,
-            entry: None,
+            row: None,
         }
     }
 
-    /// The same error, at entry index `entry`.
-    pub fn in_entry(self, entry: usize) -> Self {
+    /// The same error, at row index `row`.
+    pub fn in_row(self, row: usize) -> Self {
         RowError {
-            entry: Some(entry),
+            row: Some(row),
             ..self
         }
     }
@@ -86,28 +86,28 @@ impl RowError {
     /// What broke.
     pub fn kind(&self) -> RowErrorKind {
         match self.detail {
-            Detail::TooManyEntries { .. } => RowErrorKind::TooManyEntries,
+            Detail::TooManyRows { .. } => RowErrorKind::TooManyRows,
             Detail::Malformed => RowErrorKind::Malformed,
         }
     }
 
-    /// Index of the entry at fault, when the store names one.
-    pub fn entry(&self) -> Option<usize> {
-        self.entry
+    /// Index of the row at fault, when the store names one.
+    pub fn row(&self) -> Option<usize> {
+        self.row
     }
 
-    /// Entries the store holds, for [`RowErrorKind::TooManyEntries`].
+    /// Rows the store holds, for [`RowErrorKind::TooManyRows`].
     pub fn count(&self) -> Option<usize> {
         match self.detail {
-            Detail::TooManyEntries { count, .. } => Some(count),
+            Detail::TooManyRows { count, .. } => Some(count),
             Detail::Malformed => None,
         }
     }
 
-    /// Entries the store allows, for [`RowErrorKind::TooManyEntries`].
+    /// Rows the store allows, for [`RowErrorKind::TooManyRows`].
     pub fn limit(&self) -> Option<usize> {
         match self.detail {
-            Detail::TooManyEntries { limit, .. } => Some(limit),
+            Detail::TooManyRows { limit, .. } => Some(limit),
             Detail::Malformed => None,
         }
     }
@@ -119,11 +119,11 @@ impl fmt::Display for RowError {
             self.kind()
                 .as_str(),
         )?;
-        if let Detail::TooManyEntries { count, limit } = self.detail {
+        if let Detail::TooManyRows { count, limit } = self.detail {
             write!(f, ": {count}, limit {limit}")?;
         }
-        if let Some(entry) = self.entry {
-            write!(f, " in entry {entry}")?;
+        if let Some(row) = self.row {
+            write!(f, " in row {row}")?;
         }
         Ok(())
     }

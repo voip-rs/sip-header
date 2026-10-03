@@ -70,17 +70,17 @@ fn uri_fault_names_the_layer_and_keeps_the_cause() {
 }
 
 fn row_error() -> RowError {
-    RowError::too_many_entries(4001, 4000)
+    RowError::too_many_rows(4001, 4000)
 }
 
 #[test]
 fn row_error_is_kept_as_the_source() {
     let e = row_error();
     assert_eq!(
-        (e.kind(), e.count(), e.limit(), e.entry()),
-        (RowErrorKind::TooManyEntries, Some(4001), Some(4000), None)
+        (e.kind(), e.count(), e.limit(), e.row()),
+        (RowErrorKind::TooManyRows, Some(4001), Some(4000), None)
     );
-    assert_eq!(e.to_string(), "too-many-entries: 4001, limit 4000");
+    assert_eq!(e.to_string(), "too-many-rows: 4001, limit 4000");
     let parsed = ParseError::from(e.clone());
     assert_eq!(parsed, ParseError::Row(e.clone()));
     assert_eq!(parsed.to_string(), "row error");
