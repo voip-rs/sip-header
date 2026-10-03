@@ -31,6 +31,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::serde_parts::{leaf, Expected};
 use crate::HeaderParse;
 
 /// The text an adapter writes for a value.
@@ -46,8 +47,16 @@ fn parse<T: HeaderParse, E: serde::de::Error>(text: &str) -> Result<T, E> {
     T::parse(text).map_err(E::custom)
 }
 
-fn deserialize<'de, T: HeaderParse, D: Deserializer<'de>>(deserializer: D) -> Result<T, D::Error> {
-    parse(&String::deserialize(deserializer)?)
+fn deserialize<'de, T: HeaderParse, D: Deserializer<'de>>(
+    deserializer: D,
+    what: &str,
+) -> Result<T, D::Error> {
+    parse(&leaf(
+        deserializer,
+        what,
+        String::TEXT,
+        String::deserialize,
+    )?)
 }
 
 struct AsText<'a, T>(&'a T);
@@ -70,28 +79,34 @@ fn serialize_option<T: Text, S: Serializer>(
 
 fn deserialize_option<'de, T: HeaderParse, D: Deserializer<'de>>(
     deserializer: D,
+    what: &str,
 ) -> Result<Option<T>, D::Error> {
-    Option::<String>::deserialize(deserializer)?
-        .map(|text| parse(&text))
-        .transpose()
+    leaf(
+        deserializer,
+        what,
+        Option::<String>::TEXT,
+        Option::<String>::deserialize,
+    )?
+    .map(|text| parse(&text))
+    .transpose()
 }
 
 macro_rules! adapter {
-    ($($(#[$doc:meta])* $name:ident => $ty:ty, $text:ident;)*) => {$(
-        adapter!(@text $ty, $text);
+    ($($(#[$doc:meta])* $name:ident => $ty:ident, $text:ident;)*) => {$(
+        adapter!(@text crate::$ty, $text);
 
         $(#[$doc])*
         pub mod $name {
             use serde::{Deserializer, Serializer};
 
             /// Write the value as its wire text.
-            pub fn serialize<S: Serializer>(value: &$ty, serializer: S) -> Result<S::Ok, S::Error> {
+            pub fn serialize<S: Serializer>(value: &crate::$ty, serializer: S) -> Result<S::Ok, S::Error> {
                 super::serialize(value, serializer)
             }
 
             /// Read the value with the lenient parser.
-            pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<$ty, D::Error> {
-                super::deserialize(deserializer)
+            pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<crate::$ty, D::Error> {
+                super::deserialize(deserializer, stringify!($ty))
             }
 
             /// The same adapter for an `Option` field, `None` as null.
@@ -100,7 +115,7 @@ macro_rules! adapter {
 
                 /// Write the value as its wire text, or null.
                 pub fn serialize<S: Serializer>(
-                    value: &Option<$ty>,
+                    value: &Option<crate::$ty>,
                     serializer: S,
                 ) -> Result<S::Ok, S::Error> {
                     super::super::serialize_option(value, serializer)
@@ -109,8 +124,8 @@ macro_rules! adapter {
                 /// Read the value with the lenient parser, null as `None`.
                 pub fn deserialize<'de, D: Deserializer<'de>>(
                     deserializer: D,
-                ) -> Result<Option<$ty>, D::Error> {
-                    super::super::deserialize_option(deserializer)
+                ) -> Result<Option<crate::$ty>, D::Error> {
+                    super::super::deserialize_option(deserializer, stringify!($ty))
                 }
             }
         }
@@ -134,41 +149,41 @@ macro_rules! adapter {
 
 adapter! {
     /// [`SipHeaderAddr`](crate::SipHeaderAddr) as text.
-    header_addr => crate::SipHeaderAddr, display;
+    header_addr => SipHeaderAddr, display;
     /// [`SipHeaderAddrList`](crate::SipHeaderAddrList) as text.
-    addr_list => crate::SipHeaderAddrList, display;
+    addr_list => SipHeaderAddrList, display;
     /// [`ContactList`](crate::ContactList) as text.
-    contact => crate::ContactList, display;
+    contact => ContactList, display;
     /// [`SipVia`](crate::SipVia) as text.
-    via => crate::SipVia, display;
+    via => SipVia, display;
     /// [`SipWarning`](crate::SipWarning) as text.
-    warning => crate::SipWarning, display;
+    warning => SipWarning, display;
     /// [`SipAuthValue`](crate::SipAuthValue) as text.
-    auth => crate::SipAuthValue, display;
+    auth => SipAuthValue, display;
     /// [`SipSecurity`](crate::SipSecurity) as text.
-    security => crate::SipSecurity, display;
+    security => SipSecurity, display;
     /// [`SipAccept`](crate::SipAccept) as text.
-    accept => crate::SipAccept, display;
+    accept => SipAccept, display;
     /// [`SipAcceptEncoding`](crate::SipAcceptEncoding) as text.
-    accept_encoding => crate::SipAcceptEncoding, display;
+    accept_encoding => SipAcceptEncoding, display;
     /// [`SipAcceptLanguage`](crate::SipAcceptLanguage) as text.
-    accept_language => crate::SipAcceptLanguage, display;
+    accept_language => SipAcceptLanguage, display;
     /// [`UriInfo`](crate::UriInfo) as text.
-    uri_info => crate::UriInfo, display;
+    uri_info => UriInfo, display;
     /// [`HistoryInfo`](crate::HistoryInfo) as text.
-    history_info => crate::HistoryInfo, display;
+    history_info => HistoryInfo, display;
     /// [`SipGeolocation`](crate::SipGeolocation) as text.
-    geolocation => crate::SipGeolocation, display;
+    geolocation => SipGeolocation, display;
     /// [`SipReplaces`](crate::SipReplaces) as text, header framing.
-    replaces => crate::SipReplaces, header_framing;
+    replaces => SipReplaces, header_framing;
     /// [`SipJoin`](crate::SipJoin) as text, header framing.
-    join => crate::SipJoin, header_framing;
+    join => SipJoin, header_framing;
     /// [`SipReason`](crate::SipReason) as text.
-    reason => crate::SipReason, display;
+    reason => SipReason, display;
     /// [`SipReasonList`](crate::SipReasonList) as text.
-    reason_list => crate::SipReasonList, display;
+    reason_list => SipReasonList, display;
     /// [`SipTargetDialog`](crate::SipTargetDialog) as text, header framing.
-    target_dialog => crate::SipTargetDialog, header_framing;
+    target_dialog => SipTargetDialog, header_framing;
 }
 
 #[cfg(test)]
