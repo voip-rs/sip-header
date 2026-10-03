@@ -414,16 +414,38 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_warn_code() {
-        for input in [
+    fn entry_without_a_three_digit_code_is_skipped() {
+        let kept = r#"399 example.org "kept""#;
+        for bad in [
             r#"30 example.com "Short code""#,
             r#"3001 example.com "Long code""#,
             r#"abc example.com "Non-numeric""#,
+            r#"３01 example.com "Wide digit""#,
         ] {
+            let raw = format!("{kept}, {bad}");
+            let (warning, seen) = crate::list::testing::lenient::<SipWarning>(&raw);
             assert_eq!(
-                SipWarning::parse(input),
-                Err(fault(Field::Code, FaultCode::InvalidNumber, Some(0))),
-                "{input}"
+                warning.entries(),
+                SipWarning::parse(kept)
+                    .unwrap()
+                    .entries(),
+                "{bad}"
+            );
+            assert_eq!(
+                seen,
+                vec![(
+                    Field::Code,
+                    WarningCode::SkippedEntry,
+                    sip_uri::WarningKind::Lost,
+                    Some(kept.len() + 2),
+                    Some(1)
+                )],
+                "{bad}"
+            );
+            assert_eq!(
+                SipWarning::parse(bad),
+                Err(ParseError::empty(Field::Value)),
+                "{bad}"
             );
         }
     }

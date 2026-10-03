@@ -468,14 +468,6 @@ mod serde_round_trip {
         rejects::<SipSecurity>(json!([]));
         rejects::<UriInfo>(json!([]));
         rejects::<HistoryInfo>(json!([]));
-        rejects::<SipViaEntry>(json!({
-            "protocol": "SIP",
-            "version": "2.0",
-            "transport": "UDP",
-            "host": {"ipv4": "198.51.100.1"},
-            "port": null,
-            "params": [["rport", "secret", false]],
-        }));
         rejects::<SipAuthValue>(json!({
             "scheme": "Bearer",
             "params": [["realm", "secret", false]],

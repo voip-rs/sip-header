@@ -620,6 +620,8 @@ mod serde_shape {
             "SIP/2.0/UDP 198.51.100.1;rport;rport=5060",
             "SIP/2.0/UDP 198.51.100.1;rport=05060",
             r#"SIP/2.0/UDP 198.51.100.1;rport="5060""#,
+            "SIP/2.0/UDP 198.51.100.1;rport=garbage",
+            "SIP/2.0/UDP 198.51.100.1;rport;rport=garbage",
         ] {
             reads_back(&sip_header::SipVia::parse(input).unwrap());
         }

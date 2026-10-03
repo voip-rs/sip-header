@@ -697,28 +697,83 @@ mod tests {
     }
 
     #[test]
-    fn test_rport_invalid_value_is_error() {
-        let input = "SIP/2.0/UDP 198.51.100.1:5060;rport=garbage";
-        assert_eq!(
-            SipVia::parse(input),
-            Err(ParseError::malformed(
-                Field::Param,
-                FaultCode::InvalidNumber,
-                input.find("garbage")
-            )
-            .in_entry(0))
-        );
+    fn rport_that_is_no_port_is_kept_as_a_parameter() {
+        for value in ["garbage", "70000", "-1"] {
+            let raw = format!("SIP/2.0/UDP 198.51.100.1:5060;rport={value};branch=z9hG4bK1");
+            let (via, seen) = lenient(&raw);
+            let entry = &via.entries()[0];
+            assert_eq!(entry.rport(), None, "{raw}");
+            assert_eq!(entry.param("rport"), Some(Some(value)), "{raw}");
+            assert_eq!(entry.branch(), Some("z9hG4bK1"), "{raw}");
+            let at = raw
+                .find("rport=")
+                .map(|i| i + "rport=".len());
+            assert_eq!(
+                entry
+                    .params()
+                    .value_span("rport")
+                    .map(|s| s.get(&raw)),
+                Some(Ok(value)),
+                "{raw}"
+            );
+            assert_eq!(
+                seen,
+                vec![(
+                    Field::Param,
+                    WarningCode::InvalidRport,
+                    WarningKind::Recovered,
+                    at,
+                    Some(0)
+                )],
+                "{raw}"
+            );
+            assert_eq!(SipVia::parse(&via.to_string()), Ok(via), "{raw}");
+        }
     }
 
     #[test]
-    fn bad_port_position_is_relative_to_entry() {
-        let bad = "SIP/2.0/UDP 198.51.100.1:99999";
+    fn sent_by_port_that_is_no_port_is_dropped() {
+        for port in ["99999", "", "5o60", "50 60"] {
+            let bad = format!("SIP/2.0/UDP 198.51.100.1:{port};branch=z9hG4bK1");
+            let (via, seen) = lenient(&bad);
+            let entry = &via.entries()[0];
+            assert_eq!(entry.port(), None, "{bad}");
+            assert_eq!(entry.branch(), Some("z9hG4bK1"), "{bad}");
+            assert_eq!(
+                entry
+                    .span()
+                    .map(|s| s.get(&bad)),
+                Some(Ok(bad.as_str()))
+            );
+            assert_eq!(
+                seen,
+                vec![(
+                    Field::SentBy,
+                    WarningCode::InvalidPort,
+                    WarningKind::Lost,
+                    Some("SIP/2.0/UDP 198.51.100.1:".len()),
+                    Some(0)
+                )],
+                "{bad}"
+            );
+            assert_eq!(SipVia::parse_strict(&via.to_string()), Ok(via), "{bad}");
+        }
+        let bad = "SIP/2.0/UDP [2001:db8::1]:99999";
+        let parsed = SipVia::from_entries_with_warnings(["SIP/2.0/UDP 203.0.113.5", bad]).unwrap();
         assert_eq!(
-            SipVia::from_entries(["SIP/2.0/UDP 203.0.113.5", bad]),
-            Err(
-                ParseError::malformed(Field::SentBy, FaultCode::InvalidNumber, bad.find("99999"))
-                    .in_row(1)
-                    .in_entry(1)
+            parsed
+                .value
+                .len(),
+            2
+        );
+        let w = parsed.warnings[0];
+        assert_eq!(
+            (w.code, w.position, w.row, w.entry),
+            (
+                WarningCode::InvalidPort,
+                bad.find("99999"),
+                Some(1),
+                Some(1)
             )
         );
     }
@@ -1023,9 +1078,7 @@ mod tests {
     fn error_display_omits_input() {
         for raw in [
             "SIP/2.0/UDP secret.example.com extra",
-            "SIP/2.0/UDP secret.example.com:99999",
             "SIP/2.0/UDP [2001:db8::1]secret",
-            "SIP/2.0/UDP example.com;rport=secret",
             "secret",
         ] {
             let err = SipVia::parse(raw).unwrap_err();
