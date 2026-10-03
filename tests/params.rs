@@ -158,6 +158,25 @@ fn history_info_index_setter() {
 }
 
 #[test]
+fn history_info_guard_reserves_index_only() {
+    let mut entry = HistoryInfoEntry::new(addr(), "1").unwrap();
+    let mut g = entry.params_mut();
+    assert_eq!(g.set("tag", Some("t1")), Ok(()));
+    assert!(is_misplaced_param(g.set("index", Some("2"))));
+    assert!(is_misplaced_param(g.remove("Index")));
+    drop(g);
+    assert_eq!(entry.index(), Some("1"));
+    assert_eq!(
+        entry
+            .params()
+            .get("tag"),
+        Some(Some("t1"))
+    );
+    let mut g = entry.params_mut();
+    assert_eq!(g.remove("tag"), Ok(1));
+}
+
+#[test]
 fn values_are_bare_only_when_a_token_or_host() {
     let a = addr()
         .with_param("received", Some("2001:db8::1"))
