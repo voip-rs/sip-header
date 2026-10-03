@@ -37,7 +37,7 @@ Without the import the compiler names the method, not the trait: `UriInfo::parse
 | `parse`, `parse_with_warnings`, `parse_strict` | `HeaderParse` |
 | `from_entries`, `from_rows` and their siblings | `ListParse` |
 | `parse_uri_header` and its siblings | `UriHeaderParse` |
-| `replaces`, `reason` on an address | `AddrParts` |
+| `replaces`, `join`, `target_dialog`, `reason` and their `_with_warnings` on an address | `AddrParts` |
 | `sip_from`, `sip_to`, `via`, `contact`, `call_info`, `parse_header`, … on a store | `SipHeaderLookup` |
 | `sip_header`, `sip_header_str`, `sip_header_rows` | `SipHeaderRowsExt` |
 | `extract_from` | `SipHeaderExtract` |

@@ -8,12 +8,14 @@ use sip_uri::{UriParse, UriRedact};
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
+use crate::join::SipJoin;
 use crate::list::CommaList;
 use crate::params::{any_value, HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::reason::SipReason;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::replaces::SipReplaces;
 use crate::span::{relocated, Located, Relocation, Span};
+use crate::target_dialog::SipTargetDialog;
 use crate::traits::{sealed, HeaderParse, UriHeaderParse};
 
 /// SIP `name-addr` (RFC 3261 §25.1) with header-level parameters.
@@ -371,22 +373,41 @@ impl SipHeaderAddr {
 }
 
 /// Parsing the headers an address carries inside its URI.
+///
+/// Each reader returns `None` when the URI is not a SIP/SIPS URI or does not
+/// carry that header, and parses its value through [`UriHeaderParse`].
 pub trait AddrParts: Sized + sealed::Sealed {
-    /// Parse a `Replaces` URI header (`<sip:…?Replaces=…>`), if present,
-    /// through [`UriHeaderParse`].
-    ///
-    /// Returns `None` when the URI is not a SIP/SIPS URI or carries no
-    /// `Replaces` header; `Some(Err)` when the value doesn't conform to
-    /// RFC 3891 §6.1.
-    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>>;
+    /// The RFC 3891 `Replaces` URI header (`<sip:…?Replaces=…>`);
+    /// `Some(Err)` when the value doesn't conform to RFC 3891 §6.1.
+    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
+        lenient(self.replaces_with_warnings())
+    }
 
-    /// Parse the RFC 3326 Reason carried as the URI's `?Reason=` header,
-    /// through [`UriHeaderParse`].
-    ///
-    /// Returns `None` if no Reason is present.
+    /// Parse as [`replaces`](Self::replaces) does, reporting accepted grammar
+    /// breaches beside the value.
+    fn replaces_with_warnings(&self) -> Option<Result<Parsed<SipReplaces>, ParseError>>;
+
+    /// The RFC 3911 `Join` URI header.
+    fn join(&self) -> Option<Result<SipJoin, ParseError>> {
+        lenient(self.join_with_warnings())
+    }
+
+    /// Parse as [`join`](Self::join) does, reporting accepted grammar
+    /// breaches beside the value.
+    fn join_with_warnings(&self) -> Option<Result<Parsed<SipJoin>, ParseError>>;
+
+    /// The RFC 4538 `Target-Dialog` URI header.
+    fn target_dialog(&self) -> Option<Result<SipTargetDialog, ParseError>> {
+        lenient(self.target_dialog_with_warnings())
+    }
+
+    /// Parse as [`target_dialog`](Self::target_dialog) does, reporting
+    /// accepted grammar breaches beside the value.
+    fn target_dialog_with_warnings(&self) -> Option<Result<Parsed<SipTargetDialog>, ParseError>>;
+
+    /// The RFC 3326 Reason carried as the URI's `?Reason=` header.
     fn reason(&self) -> Option<Result<SipReason, ParseError>> {
-        self.reason_with_warnings()
-            .map(|r| r.map(|parsed| parsed.value))
+        lenient(self.reason_with_warnings())
     }
 
     /// Parse as [`reason`](Self::reason) does, reporting accepted grammar
@@ -394,10 +415,25 @@ pub trait AddrParts: Sized + sealed::Sealed {
     fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>>;
 }
 
+/// The value of an [`AddrParts`] reader, its warnings dropped.
+fn lenient<T>(parsed: Option<Result<Parsed<T>, ParseError>>) -> Option<Result<T, ParseError>> {
+    parsed.map(|r| r.map(|p| p.value))
+}
+
 impl AddrParts for SipHeaderAddr {
-    fn replaces(&self) -> Option<Result<SipReplaces, ParseError>> {
+    fn replaces_with_warnings(&self) -> Option<Result<Parsed<SipReplaces>, ParseError>> {
         self.uri_header("Replaces")
-            .map(SipReplaces::parse_uri_header)
+            .map(SipReplaces::parse_uri_header_with_warnings)
+    }
+
+    fn join_with_warnings(&self) -> Option<Result<Parsed<SipJoin>, ParseError>> {
+        self.uri_header("Join")
+            .map(SipJoin::parse_uri_header_with_warnings)
+    }
+
+    fn target_dialog_with_warnings(&self) -> Option<Result<Parsed<SipTargetDialog>, ParseError>> {
+        self.uri_header("Target-Dialog")
+            .map(SipTargetDialog::parse_uri_header_with_warnings)
     }
 
     fn reason_with_warnings(&self) -> Option<Result<Parsed<SipReason>, ParseError>> {
