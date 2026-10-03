@@ -125,7 +125,6 @@ sip_header_catalog::define_header_enum! {
     /// Serialized as the variant name.
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub enum Kind {
-        /// `call-id`.
         CallId => "call-id",
     }
 }

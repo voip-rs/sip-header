@@ -70,9 +70,7 @@ pub trait HeaderName:
 ///     error_type: ParseMyEnumError => "unknown my value",
 ///     /// Doc comment for the enum.
 ///     pub enum MyEnum {
-///         /// `foo-wire`.
 ///         Foo => "foo-wire",
-///         /// `bar-wire`.
 ///         Bar => "bar-wire",
 ///     }
 /// }
@@ -90,7 +88,6 @@ pub trait HeaderName:
 ///     /// Serialized as the variant name.
 ///     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 ///     pub enum Kind {
-///         /// `call-id`.
 ///         CallId => "call-id",
 ///     }
 /// }

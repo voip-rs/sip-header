@@ -72,7 +72,8 @@ impl Span {
     /// the row this span names.
     ///
     /// Errors with [`SpanError::OutOfRange`] when the range falls outside
-    /// `row` or inside a character.
+    /// `row` or inside a character, which the string or row the value was
+    /// parsed from never causes.
     pub fn get<'r>(&self, row: &'r str) -> Result<&'r str, SpanError> {
         row.get(self.range())
             .ok_or(SpanError::OutOfRange)
@@ -84,7 +85,8 @@ impl Span {
     /// Errors with [`SpanError::NoRow`] for a span without a row index,
     /// read with [`get`](Self::get) on the string parsed instead;
     /// [`SpanError::MissingRow`] when `rows` stops before its row; and as
-    /// `get` does on that row.
+    /// `get` does on that row. On the rows the value was built from, only
+    /// a span from one string, [`SpanError::NoRow`], errs.
     pub fn slice<'r>(&self, rows: &[&'r str]) -> Result<&'r str, SpanError> {
         let row = self
             .row
