@@ -76,7 +76,7 @@ Without angle brackets, every parameter after the URI is a header parameter (RFC
 
 ## Received text is reached by span, not stored
 
-A parsed value's URI, host and parameter values carry a span, a row index and byte range into what the caller handed in, and an error names its span instead of the bytes. The value keeps its canonical form, so equality and serde ignore spans, and a builder that changes the value clears them. A span covers the row as held, folds and dropped control characters included. Reading a span says why it found no text, so a caller masking received text never takes an unplaceable span for nothing to mask. Provenance stays in this parser crate: a catalog type holds a canonical value or received text, never both, and indexes, never byte positions.
+A parsed value's URI, host and parameter values carry a span, a row index and byte range into what the caller handed in, and an error or a warning names the span of the text it concerns instead of the bytes, so a dropped part can still be masked. The value keeps its canonical form, so equality and serde ignore spans, and a builder that changes the value clears them. A span covers the row as held, folds and dropped control characters included. Reading a span says why it found no text, so a caller masking received text never takes an unplaceable span for nothing to mask. Provenance stays in this parser crate: a catalog type holds a canonical value or received text, never both, and indexes, never byte positions.
 
 ## Only the header catalog is a stable crate
 
