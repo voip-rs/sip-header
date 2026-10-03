@@ -342,6 +342,96 @@ struct GatedSerdeNeedsTheCatalogFeature;
 #[cfg(doctest)]
 struct EveryVariantIsDocumented;
 
+/// Only `define_header_enum!` implements [`HeaderName`]; a hand-written
+/// impl does not compile.
+///
+/// ```compile_fail
+/// use sip_header_catalog::HeaderName;
+///
+/// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// struct Hand;
+///
+/// impl std::fmt::Display for Hand {
+///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+///         f.write_str("hand")
+///     }
+/// }
+///
+/// impl AsRef<str> for Hand {
+///     fn as_ref(&self) -> &str {
+///         "hand"
+///     }
+/// }
+///
+/// impl std::str::FromStr for Hand {
+///     type Err = std::fmt::Error;
+///     fn from_str(_: &str) -> Result<Self, Self::Err> {
+///         Ok(Hand)
+///     }
+/// }
+///
+/// impl HeaderName for Hand {
+///     type ParseError = std::fmt::Error;
+///     const ALL: &'static [Self] = &[Hand];
+///     fn as_str(&self) -> &'static str {
+///         "hand"
+///     }
+/// }
+/// ```
+///
+/// Every invocation form still implements it from another crate.
+///
+/// ```
+/// use sip_header_catalog::HeaderName;
+///
+/// #[derive(Debug, Clone, PartialEq, Eq)]
+/// pub struct ParseBareError(pub String);
+///
+/// impl std::fmt::Display for ParseBareError {
+///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+///         f.write_str("unknown bare value")
+///     }
+/// }
+///
+/// impl std::error::Error for ParseBareError {}
+///
+/// sip_header_catalog::define_header_enum! {
+///     error_type: ParseBareError,
+///     /// Bare error form.
+///     pub enum Bare {
+///         One => "one",
+///     }
+/// }
+///
+/// sip_header_catalog::define_header_enum! {
+///     tests_mod: msg_tests,
+///     error_type: ParseMsgError => "unknown msg value",
+///     /// Message error form.
+///     pub enum Msg {
+///         Two => "two",
+///     }
+/// }
+///
+/// sip_header_catalog::define_header_enum! {
+///     serde(cfg(feature = "serde")),
+///     error_type: ParseGatedError => "unknown gated value",
+///     /// Gated serde form.
+///     pub enum Gated {
+///         Three => "three",
+///     }
+/// }
+///
+/// fn names<T: HeaderName>() -> Vec<&'static str> {
+///     T::ALL.iter().map(HeaderName::as_str).collect()
+/// }
+///
+/// assert_eq!(names::<Bare>(), ["one"]);
+/// assert_eq!(names::<Msg>(), ["two"]);
+/// assert_eq!(names::<Gated>(), ["three"]);
+/// ```
+#[cfg(doctest)]
+struct OnlyTheMacroImplementsHeaderName;
+
 #[cfg(test)]
 mod tests {
     use crate::HeaderName;
