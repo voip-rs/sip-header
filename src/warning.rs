@@ -150,11 +150,12 @@ impl SipWarningEntryParts {
     }
 }
 
-/// Parse one `warning-value`, positions relative to `entry`.
+/// Parse one `warning-value`, positions relative to `entry`; `None`, with
+/// [`WarningCode::SkippedEntry`], when its code is not `3DIGIT`.
 fn parse_warning_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<SipWarningEntry, ParseError> {
+) -> Result<Option<SipWarningEntry>, ParseError> {
     let s = entry.trim();
     if s.is_empty() {
         return Err(ParseError::malformed(
@@ -173,17 +174,23 @@ fn parse_warning_entry(
         .ok_or_else(|| ParseError::malformed(Field::Agent, FaultCode::Missing, None))?;
 
     let code_str = &s[..space_pos];
-    if code_str.len() != WARN_CODE_DIGITS
-        || !code_str
-            .chars()
-            .all(|c| c.is_ascii_digit())
-    {
-        return Err(at(Field::Code, FaultCode::InvalidNumber, code_str));
-    }
-
-    let code = code_str
-        .parse::<u16>()
-        .map_err(|_| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
+    let code = Some(code_str)
+        .filter(|c| {
+            c.len() == WARN_CODE_DIGITS
+                && c.bytes()
+                    .all(|b| b.is_ascii_digit())
+        })
+        .and_then(|c| {
+            c.parse::<u16>()
+                .ok()
+        });
+    let Some(code) = code else {
+        warnings.push(
+            ParseWarning::new(Field::Code, WarningCode::SkippedEntry)
+                .at(crate::offset_in(entry, code_str)),
+        );
+        return Ok(None);
+    };
     if code < WARN_CODE_MIN {
         warnings.push(
             ParseWarning::new(Field::Code, WarningCode::WarnCodeLeadingZero)
@@ -221,11 +228,11 @@ fn parse_warning_entry(
 
     let text = parse_quoted_string(entry, &after_code[quote_pos..], warnings)?;
 
-    Ok(SipWarningEntry {
+    Ok(Some(SipWarningEntry {
         code,
         agent: agent.into_owned(),
         text,
-    })
+    }))
 }
 
 /// RFC 3261 §25.1 `hostport = host [ ":" port ]`, host as sip-uri reads it.
@@ -317,7 +324,7 @@ impl CommaList for SipWarning {
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipWarningEntry>, ParseError> {
-        parse_warning_entry(entry, warnings).map(Some)
+        parse_warning_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipWarningEntry>) -> Result<Self, ParseError> {

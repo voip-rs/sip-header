@@ -1,7 +1,8 @@
 //! SIP Via header parser (RFC 3261 §20.42).
 //!
 //! An entry whose sent-by has no host is dropped with
-//! [`SkippedEntry`](crate::WarningCode::SkippedEntry).
+//! [`SkippedEntry`](crate::WarningCode::SkippedEntry), a sent-by port that is
+//! no port with [`InvalidPort`](crate::WarningCode::InvalidPort).
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -236,7 +237,8 @@ impl SipViaEntry {
 
     /// Returns the first `rport` parameter.
     ///
-    /// - `None` if the parameter is absent
+    /// - `None` if the parameter is absent, or its value is no port
+    ///   ([`InvalidRport`](crate::WarningCode::InvalidRport))
     /// - `Some(None)` if present without a value
     /// - `Some(Some(port))` if present with a value
     pub fn rport(&self) -> Option<Option<u16>> {
@@ -311,12 +313,7 @@ impl SipViaEntryParts {
         let params = p.params;
         let rport = params
             .get("rport")
-            .map(|v| {
-                v.map(str::parse::<u16>)
-                    .transpose()
-            })
-            .transpose()
-            .map_err(|_| ParseError::malformed(Field::Param, FaultCode::InvalidNumber, None))?;
+            .and_then(rport_of);
         let via = SipViaEntry {
             port: p.port,
             params,
@@ -357,8 +354,7 @@ fn parse_via_entry(
 
     let (protocol_name, protocol_version, transport, sent_by) =
         parse_sent_protocol(entry, main_part, warnings)?;
-    let (host, port) = parse_host_port(entry, sent_by, warnings)?;
-    let Some((host, host_span)) = host else {
+    let Some((host, host_span, port)) = parse_host_port(entry, sent_by, warnings)? else {
         warnings.push(
             ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
                 .at(crate::offset_in(entry, trimmed)),
@@ -373,37 +369,54 @@ fn parse_via_entry(
         host_span: Some(host_span),
         ..SipViaEntry::unchecked(protocol_name, protocol_version, transport, host)
     };
+    let mut rport_seen = false;
     for p in crate::parse_params(params_part) {
-        if via
-            .rport
-            .is_none()
+        via.params
+            .push_raw(entry, &p, warnings);
+        if !rport_seen
             && p.name()
                 .eq_ignore_ascii_case("rport")
         {
-            via.rport = Some(read_rport(entry, &p)?);
+            rport_seen = true;
+            via.rport = read_rport(entry, &p, warnings);
         }
-        via.params
-            .push_raw(entry, &p, warnings);
     }
     Ok(Some(via))
 }
 
-/// The first `rport`, a flag or a port number (RFC 3581).
-fn read_rport(entry: &str, p: &RawParam<'_>) -> Result<Option<u16>, ParseError> {
-    let Some(u) = p.unquoted() else {
-        return Ok(None);
-    };
-    u.value
-        .parse::<u16>()
-        .map(Some)
-        .map_err(|_| {
-            ParseError::malformed(
-                Field::Param,
-                FaultCode::InvalidNumber,
-                p.value
-                    .map(|v| crate::offset_in(entry, v)),
-            )
-        })
+/// `rport` read from its value (RFC 3581): `Some(None)` for a flag, `None`
+/// for a value that is no port.
+fn rport_of(value: Option<&str>) -> Option<Option<u16>> {
+    match value {
+        None => Some(None),
+        Some(v) => port_number(v).map(Some),
+    }
+}
+
+/// The first `rport`, raising [`WarningCode::InvalidRport`] on a value
+/// that is no port.
+fn read_rport(
+    entry: &str,
+    p: &RawParam<'_>,
+    warnings: &mut Vec<ParseWarning>,
+) -> Option<Option<u16>> {
+    let value = p.unquoted();
+    let rport = rport_of(
+        value
+            .as_ref()
+            .map(|u| {
+                u.value
+                    .as_str()
+            }),
+    );
+    if rport.is_none() {
+        let mut w = ParseWarning::new(Field::Param, WarningCode::InvalidRport);
+        if let Some(v) = p.value {
+            w = w.at(crate::offset_in(entry, v));
+        }
+        warnings.push(w);
+    }
+    rport
 }
 
 /// Split `sent-protocol LWS sent-by` into its parts, allowing SWS around
@@ -472,12 +485,13 @@ impl CommaList for SipVia {
 
 list_parse!(SipVia);
 
-/// A `sent-by` host with its span, and its port.
-type SentBy = (Option<(Host, Span)>, Option<u16>);
+/// A `sent-by` host with its span, and its port; `None` without a host.
+type SentBy = Option<(Host, Span, Option<u16>)>;
 
 /// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon; the
 /// host is read by sip-uri's host grammar, with its warnings forwarded, and
-/// returned with its span in `entry`.
+/// returned with its span in `entry`. A port that is no port is dropped
+/// with [`WarningCode::InvalidPort`].
 fn parse_host_port(
     entry: &str,
     sent_by: &str,
@@ -512,19 +526,37 @@ fn parse_host_port(
     if let Some(i) = host.find(char::is_whitespace) {
         return Err(at(FaultCode::InvalidChar, &host[i..]));
     }
-    let port = port
-        .map(|p| {
-            let p = p.trim_start();
-            p.parse::<u16>()
-                .map_err(|_| at(FaultCode::InvalidNumber, p))
-        })
-        .transpose()?;
     if host.is_empty() {
-        return Ok((None, port));
+        return Ok(None);
     }
     let at = crate::offset_in(entry, host);
     let span = Span::new(at..at + host.len());
-    Ok((Some((read_host(host, at, warnings)?, span)), port))
+    let host = read_host(host, at, warnings)?;
+    let port = port.and_then(|p| {
+        let p = p.trim_start();
+        let port = port_number(p);
+        if port.is_none() {
+            warnings.push(
+                ParseWarning::new(Field::SentBy, WarningCode::InvalidPort)
+                    .at(crate::offset_in(entry, p)),
+            );
+        }
+        port
+    });
+    Ok(Some((host, span, port)))
+}
+
+/// RFC 3261 §25.1 `port = 1*DIGIT`, when it fits a port number.
+fn port_number(text: &str) -> Option<u16> {
+    if text.is_empty()
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    text.parse()
+        .ok()
 }
 
 /// Read `host`, `offset` bytes into the caller's input, by sip-uri's host
@@ -698,7 +730,7 @@ mod tests {
 
     #[test]
     fn rport_that_is_no_port_is_kept_as_a_parameter() {
-        for value in ["garbage", "70000", "-1"] {
+        for value in ["garbage", "70000", "-1", "+5"] {
             let raw = format!("SIP/2.0/UDP 198.51.100.1:5060;rport={value};branch=z9hG4bK1");
             let (via, seen) = lenient(&raw);
             let entry = &via.entries()[0];
@@ -733,7 +765,7 @@ mod tests {
 
     #[test]
     fn sent_by_port_that_is_no_port_is_dropped() {
-        for port in ["99999", "", "5o60", "50 60"] {
+        for port in ["99999", "", "5o60", "50 60", "+5060"] {
             let bad = format!("SIP/2.0/UDP 198.51.100.1:{port};branch=z9hG4bK1");
             let (via, seen) = lenient(&bad);
             let entry = &via.entries()[0];

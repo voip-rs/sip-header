@@ -311,6 +311,13 @@ pub enum WarningCode {
     /// SP between each that RFC 3261 §25.1 `Request-Line = Method SP
     /// Request-URI SP SIP-Version CRLF` allows; read as a separator.
     RequestLineWhitespace,
+    /// A Via `rport` value outside RFC 3581 `response-port = "rport"
+    /// [EQUAL 1*DIGIT]` or above the highest port; kept as a parameter,
+    /// and [`SipViaEntry::rport`](crate::SipViaEntry::rport) reads it as absent.
+    InvalidRport,
+    /// A Via `sent-by` port outside RFC 3261 §25.1 `port = 1*DIGIT` or above
+    /// the highest port; dropped.
+    InvalidPort,
 }
 
 impl WarningCode {
@@ -323,7 +330,8 @@ impl WarningCode {
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
             | WarningCode::ControlChar
-            | WarningCode::StrayDelimiter => WarningKind::Lost,
+            | WarningCode::StrayDelimiter
+            | WarningCode::InvalidPort => WarningKind::Lost,
             _ => WarningKind::Recovered,
         }
     }
@@ -355,6 +363,8 @@ impl WarningCode {
             WarningCode::StrayDelimiter => "stray-delimiter",
             WarningCode::TrailingComma => "trailing-comma",
             WarningCode::RequestLineWhitespace => "request-line-whitespace",
+            WarningCode::InvalidRport => "invalid-rport",
+            WarningCode::InvalidPort => "invalid-port",
         }
     }
 }
@@ -414,6 +424,8 @@ mod tests {
             WarningCode::StrayDelimiter,
             WarningCode::TrailingComma,
             WarningCode::RequestLineWhitespace,
+            WarningCode::InvalidRport,
+            WarningCode::InvalidPort,
         ];
         for code in &all {
             match code {
@@ -437,7 +449,9 @@ mod tests {
                 | WarningCode::WarnCodeLeadingZero
                 | WarningCode::StrayDelimiter
                 | WarningCode::TrailingComma
-                | WarningCode::RequestLineWhitespace => {}
+                | WarningCode::RequestLineWhitespace
+                | WarningCode::InvalidRport
+                | WarningCode::InvalidPort => {}
             }
         }
         all

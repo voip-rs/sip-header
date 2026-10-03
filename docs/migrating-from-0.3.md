@@ -148,7 +148,7 @@ assert!(a.equivalent(&b));
 | `SipCallId<'a>` borrowing its input | owned `SipCallId`, `AsRef<str>` |
 | `UriInfoEntry { data, metadata }` | `new(Uri)`, `uri()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
 | `SipGeolocation::parse` infallible, `refs()`, `url()` as `&str` | `Err` when no entry yields a URI; `SipGeolocationEntry` with `uri()` and `cid()`; `url()` as `&Uri` |
-| `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry` |
+| `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`, a sent-by port that is no port with `InvalidPort`; an `rport` that is no port stays a parameter, `rport()` `None`, with `InvalidRport` |
 | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, `cause() -> Option<SipReasonCause>` keeping the digits (`as_u16()`, `AsRef<str>`); `cause` and `text` are reserved parameters, held in `params()` |
 | `join()` returning `SipReplaces` | `SipJoin`, which has no `early-only` |
 | `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68` and credential parameters |
@@ -156,7 +156,7 @@ assert!(a.equivalent(&b));
 
 Lists are opaque too: `iter()`, `entries()`, `push`, `remove` and `retain`. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
 
-A blank entry beside real ones is dropped with `EmptyEntry`, in every list; `Err` comes only when no entry remains where the grammar needs one. A comma ending a list is ignored with `TrailingComma`.
+A blank entry beside real ones is dropped with `EmptyEntry`, in every list, and a Warning entry whose code is not three digits with `SkippedEntry`; `Err` comes only when no entry remains where the grammar needs one. A comma ending a list is ignored with `TrailingComma`.
 
 ## Lookup stores implement `SipHeaderRows`
 
