@@ -322,10 +322,12 @@ impl<'a> SipHeaderField<'a> {
     }
 
     /// Every row, in wire order.
-    pub fn rows(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
-        self.rows
-            .iter()
-            .map(AsRef::as_ref)
+    pub fn rows(&self) -> SipHeaderFieldRows<'_> {
+        SipHeaderFieldRows {
+            rows: self
+                .rows
+                .iter(),
+        }
     }
 
     /// The same header, owning its text.
@@ -340,6 +342,40 @@ impl<'a> SipHeaderField<'a> {
         }
     }
 }
+
+/// The rows of a [`SipHeaderField`], in wire order;
+/// [`SipHeaderField::rows`] returns it.
+#[derive(Debug, Clone)]
+pub struct SipHeaderFieldRows<'f> {
+    rows: std::slice::Iter<'f, Cow<'f, str>>,
+}
+
+impl<'f> Iterator for SipHeaderFieldRows<'f> {
+    type Item = &'f str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next()
+            .map(AsRef::as_ref)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.rows
+            .size_hint()
+    }
+}
+
+impl DoubleEndedIterator for SipHeaderFieldRows<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next_back()
+            .map(AsRef::as_ref)
+    }
+}
+
+impl ExactSizeIterator for SipHeaderFieldRows<'_> {}
+
+impl FusedIterator for SipHeaderFieldRows<'_> {}
 
 impl SipHeaderRows for SipHeaderField<'_> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {

@@ -21,7 +21,10 @@ mod serde_name;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
-pub use fields::{SipHeaderField, SipHeaderFields, SipHeaderFieldsIntoIter, SipHeaderFieldsIter};
+pub use fields::{
+    SipHeaderField, SipHeaderFieldRows, SipHeaderFields, SipHeaderFieldsIntoIter,
+    SipHeaderFieldsIter,
+};
 pub use macros::HeaderName;
 pub use rows::{RowError, RowErrorKind, SipHeaderRows, SipHeaderRowsExt};
 
