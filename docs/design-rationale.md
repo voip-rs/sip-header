@@ -80,7 +80,7 @@ A parsed value's URI, host and parameter values carry a span, a row index and by
 
 ## Only the header catalog is a stable crate
 
-The header-name catalog and the raw row trait are a 1.x crate of their own, because a consumer that puts a header store or header names in its public API would otherwise take a major version with every parser minor. Value types stay in sip-header with their parsers: their shapes are still being settled against real traffic, and a frozen value crate would freeze each open question with it. What every header shares, a name and one row of wire text per occurrence, is frozen in the catalog as a holder that implements the row trait, so a consumer can hand headers across its API and let the caller type them with its own sip-header.
+The header-name catalog and the raw row trait are a crate of their own with a major version, because header names and one row per occurrence are not expected to change: crates exchange them across their public APIs without sharing a parser version, and a consumer would otherwise take a major version with every parser minor. Value types stay in sip-header with their parsers: their shapes are still being settled against real traffic, and a frozen value crate would freeze each open question with it. What every header shares, a name and one row of wire text per occurrence, is frozen in the catalog as a holder that implements the row trait, so a consumer can hand headers across its API and let the caller type them with its own sip-header.
 
 ## A header holder stores received text unchecked
 
@@ -110,9 +110,9 @@ A value's serde mirror and the conversions to and from it are private functions,
 
 Headers from expired drafts that remain deployed are ordinary catalog entries, with an accessor reporting which registry they come from. A cargo feature would change what parses for every crate in a build as soon as one crate enabled it, and a header later registered by IANA changes only that accessor's answer.
 
-## Catalog serde uses the wire name
+## Catalog serde and ordering use the wire name
 
-A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type. An invocation may ask under a cfg of its own, so a crate whose serde is optional gets it exactly when its own feature is on.
+A header name serializes as its canonical wire spelling and deserializes from any spelling the parser accepts, so stored data survives a variant rename and matches what a human writes in a config file. It sorts by that spelling too, so a sorted map or log keeps its order when variants are added or moved. Enums built with the catalog's macro get the same serde only when their invocation asks for it, since a feature enabled elsewhere in a build must not add impls to a caller's type. An invocation may ask under a cfg of its own, so a crate whose serde is optional gets it exactly when its own feature is on.
 
 ## Error Display never carries the rejected bytes
 
