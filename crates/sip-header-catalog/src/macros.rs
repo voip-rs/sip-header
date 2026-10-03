@@ -32,7 +32,8 @@ pub trait HeaderName:
 /// # Generated items
 ///
 /// - The enum, deriving `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` and
-///   `Hash`, and nothing else.
+///   `Hash`, and nothing else. Each variant's doc ends with a paragraph
+///   naming its wire name, so an undocumented variant passes `missing_docs`.
 /// - Inherent `ALL` and `as_str(&self)`, and a [`HeaderName`] impl mirroring
 ///   them.
 /// - `Display` and `AsRef<str>`, both the wire name.
@@ -58,8 +59,8 @@ pub trait HeaderName:
 /// `tests_mod:` and the serde arm come before `error_type:`, in either
 /// order. The order of `ALL` and the discriminant values are unspecified.
 /// Attributes on a variant apply to that variant only, so a `#[cfg]` on a
-/// variant is not supported. Variant doc comments pass through, and the
-/// caller's `missing_docs` lint applies to the variants.
+/// variant is not supported. Variant doc comments pass through, ahead of
+/// the wire name paragraph.
 ///
 /// # Example
 ///
@@ -167,6 +168,8 @@ macro_rules! define_header_enum {
         $vis enum $Name {
             $(
                 $(#[$var_meta])*
+                #[doc = ""]
+                #[doc = ::core::concat!("Wire name: `", $wire, "`.")]
                 $variant,
             )+
         }

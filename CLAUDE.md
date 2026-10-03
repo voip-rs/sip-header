@@ -173,9 +173,9 @@ own rust-version.
 All public items must have doc comments. Brief one-liners are fine for
 self-evident items.
 
-Doc comments on `SipHeader` variants: include the canonical wire name
-in backticks and the RFC reference for well-known headers. For obscure
-headers, just the wire name suffices.
+Doc comments on `SipHeader` variants: `define_header_enum!` writes each
+variant's wire name; a variant's own doc adds the RFC reference for
+well-known headers.
 
 **No hardcoded counts in prose.** Don't write "134 headers" in markdown
 or comments. Use CI-generated badges or just omit the count.
