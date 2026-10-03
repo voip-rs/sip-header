@@ -21,7 +21,7 @@ mod serde_name;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
-pub use fields::{SipHeaderField, SipHeaderFields};
+pub use fields::{SipHeaderField, SipHeaderFields, SipHeaderFieldsIntoIter, SipHeaderFieldsIter};
 pub use macros::HeaderName;
 pub use rows::{RowError, RowErrorKind, SipHeaderRows, SipHeaderRowsExt};
 
@@ -47,7 +47,9 @@ define_header_enum! {
     /// serializes as its canonical name and deserializes from any spelling
     /// `parse_name` accepts.
     ///
-    /// The order of `ALL` and the discriminant values are unspecified.
+    /// The order of `ALL` and the discriminant values are unspecified. `Ord`
+    /// compares the canonical wire names byte by byte, as [`as_str`](Self::as_str)
+    /// returns them.
     pub enum SipHeader {
         /// `Accept` (RFC 3261).
         Accept => "Accept",
@@ -582,6 +584,20 @@ impl SipHeader {
     }
 }
 
+/// By canonical wire name, byte by byte, never by discriminant.
+impl Ord for SipHeader {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_str()
+            .cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for SipHeader {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Occurrence {
     Single,
@@ -636,6 +652,12 @@ mod tests {
                     "{a} {b}"
                 );
                 assert_eq!(a.partial_cmp(b), Some(a.cmp(b)));
+                assert_eq!(
+                    a.cmp(b)
+                        .is_eq(),
+                    a == b,
+                    "{a} {b}"
+                );
             }
         }
     }

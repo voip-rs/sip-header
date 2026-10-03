@@ -1,6 +1,7 @@
 //! Holders of header names and rows as received.
 
 use std::borrow::Cow;
+use std::iter::FusedIterator;
 
 use crate::{RowError, SipHeader, SipHeaderRows};
 
@@ -61,10 +62,12 @@ impl<'a> SipHeaderFields<'a> {
     }
 
     /// Every row as `(name as sent, value)`, in wire order.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, &str)> + '_ {
-        self.rows
-            .iter()
-            .map(|(name, value)| (name.as_ref(), value.as_ref()))
+    pub fn iter(&self) -> SipHeaderFieldsIter<'_> {
+        SipHeaderFieldsIter {
+            rows: self
+                .rows
+                .iter(),
+        }
     }
 
     /// Number of rows.
@@ -130,6 +133,120 @@ impl<'a> From<Vec<(&'a str, &'a str)>> for SipHeaderFields<'a> {
         }
     }
 }
+
+/// Appends each row, as [`push`](SipHeaderFields::push) does.
+impl<'a, N, V> Extend<(N, V)> for SipHeaderFields<'a>
+where
+    N: Into<Cow<'a, str>>,
+    V: Into<Cow<'a, str>>,
+{
+    fn extend<I: IntoIterator<Item = (N, V)>>(&mut self, iter: I) {
+        for (name, value) in iter {
+            self.push(name, value);
+        }
+    }
+}
+
+/// Holds the rows in iteration order, as [`push`](SipHeaderFields::push)
+/// appends them.
+impl<'a, N, V> FromIterator<(N, V)> for SipHeaderFields<'a>
+where
+    N: Into<Cow<'a, str>>,
+    V: Into<Cow<'a, str>>,
+{
+    fn from_iter<I: IntoIterator<Item = (N, V)>>(iter: I) -> Self {
+        let mut fields = SipHeaderFields::new();
+        fields.extend(iter);
+        fields
+    }
+}
+
+impl<'a> IntoIterator for SipHeaderFields<'a> {
+    type Item = (Cow<'a, str>, Cow<'a, str>);
+    type IntoIter = SipHeaderFieldsIntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        SipHeaderFieldsIntoIter {
+            rows: self
+                .rows
+                .into_iter(),
+        }
+    }
+}
+
+impl<'f> IntoIterator for &'f SipHeaderFields<'_> {
+    type Item = (&'f str, &'f str);
+    type IntoIter = SipHeaderFieldsIter<'f>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// The rows of a [`SipHeaderFields`] as `(name as sent, value)`, in wire
+/// order; [`SipHeaderFields::iter`] returns it.
+#[derive(Debug, Clone)]
+pub struct SipHeaderFieldsIter<'f> {
+    rows: std::slice::Iter<'f, (Cow<'f, str>, Cow<'f, str>)>,
+}
+
+impl<'f> Iterator for SipHeaderFieldsIter<'f> {
+    type Item = (&'f str, &'f str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next()
+            .map(|(name, value)| (name.as_ref(), value.as_ref()))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.rows
+            .size_hint()
+    }
+}
+
+impl DoubleEndedIterator for SipHeaderFieldsIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next_back()
+            .map(|(name, value)| (name.as_ref(), value.as_ref()))
+    }
+}
+
+impl ExactSizeIterator for SipHeaderFieldsIter<'_> {}
+
+impl FusedIterator for SipHeaderFieldsIter<'_> {}
+
+/// The rows of a [`SipHeaderFields`], owned by the iterator, in wire order.
+#[derive(Debug, Clone)]
+pub struct SipHeaderFieldsIntoIter<'a> {
+    rows: std::vec::IntoIter<(Cow<'a, str>, Cow<'a, str>)>,
+}
+
+impl<'a> Iterator for SipHeaderFieldsIntoIter<'a> {
+    type Item = (Cow<'a, str>, Cow<'a, str>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.rows
+            .size_hint()
+    }
+}
+
+impl DoubleEndedIterator for SipHeaderFieldsIntoIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.rows
+            .next_back()
+    }
+}
+
+impl ExactSizeIterator for SipHeaderFieldsIntoIter<'_> {}
+
+impl FusedIterator for SipHeaderFieldsIntoIter<'_> {}
 
 impl SipHeaderRows for SipHeaderFields<'_> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {

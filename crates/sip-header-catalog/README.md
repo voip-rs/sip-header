@@ -66,7 +66,7 @@ assert_eq!(msg.sip_header(SipHeader::Via), Ok(Some("SIP/2.0/UDP 198.51.100.1")))
 assert_eq!(msg.sip_header(SipHeader::CallId), Ok(None));
 ```
 
-`HashMap<String, String>` and `HashMap<String, Vec<String>>` are stores, over any hasher. A map keeps no wire order, so their rows come in key order: the canonical key, the compact key, then every other key the name matches. `&T`, `&mut T`, `Box<T>`, `Rc<T>` and `Arc<T>` forward to the store they hold.
+`HashMap` (over any hasher) and `BTreeMap` keyed by `String` or `&str`, with `String` or `Vec<String>` values, are stores. A map keeps no wire order, so their rows come in key order: the canonical key, the compact key, then every other key the name matches. `&T`, `&mut T`, `Box<T>`, `Rc<T>` and `Arc<T>` forward to the store they hold.
 
 ```rust
 use std::collections::HashMap;

@@ -1,6 +1,7 @@
 //! The raw row lookup a header store implements.
 
-use std::collections::HashMap;
+use std::borrow::Borrow;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::BuildHasher;
 use std::rc::Rc;
@@ -228,8 +229,9 @@ impl MapValue for Vec<String> {
 const MAX_UTF8_CHAR_LEN: usize = 4;
 
 /// Rows of every key the name matches, in the order the impls document.
-fn map_rows<'a, V: MapValue, S: BuildHasher>(
-    map: &'a HashMap<String, V, S>,
+fn map_rows<'a, V: MapValue + 'a>(
+    get: impl Fn(&str) -> Option<&'a V>,
+    entries: impl Iterator<Item = (&'a str, &'a V)>,
     name: &str,
 ) -> Vec<&'a str> {
     let header = SipHeader::parse_name(name).ok();
@@ -244,9 +246,8 @@ fn map_rows<'a, V: MapValue, S: BuildHasher>(
         Some(h) => h.matches(key),
         None => key.eq_ignore_ascii_case(name),
     };
-    let mut others: Vec<(&String, &V)> = map
-        .iter()
-        .filter(|(key, _)| !exact.contains(&Some(key.as_str())) && matches(key))
+    let mut others: Vec<(&str, &V)> = entries
+        .filter(|(key, _)| !exact.contains(&Some(*key)) && matches(key))
         .collect();
     others.sort_unstable_by_key(|(key, _)| (key.len() == 1, *key));
 
@@ -254,7 +255,7 @@ fn map_rows<'a, V: MapValue, S: BuildHasher>(
     for value in exact
         .into_iter()
         .flatten()
-        .filter_map(|key| map.get(key))
+        .filter_map(get)
         .chain(
             others
                 .into_iter()
@@ -266,20 +267,34 @@ fn map_rows<'a, V: MapValue, S: BuildHasher>(
     rows
 }
 
-/// Rows come in key order, not wire order, which the map does not keep: the
-/// canonical key, the compact key, then every other key the name matches,
-/// full names before compact ones, each group in byte order.
-impl<S: BuildHasher> SipHeaderRows for HashMap<String, String, S> {
-    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
-        Ok(map_rows(self, name))
-    }
+macro_rules! map_stores {
+    ($([$($gen:tt)*] $map:ty),+ $(,)?) => {
+        $(
+            /// Rows come in key order, not wire order, which the map does not
+            /// keep: the canonical key, the compact key, then every other key
+            /// the name matches, full names before compact ones, each group in
+            /// byte order.
+            impl<$($gen)*> SipHeaderRows for $map {
+                fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
+                    Ok(map_rows(
+                        |key| self.get(key),
+                        self.iter()
+                            .map(|(key, value)| (<_ as Borrow<str>>::borrow(key), value)),
+                        name,
+                    ))
+                }
+            }
+        )+
+    };
 }
 
-/// Rows come in key order, not wire order, which the map does not keep: the
-/// canonical key, the compact key, then every other key the name matches,
-/// full names before compact ones, each group in byte order.
-impl<S: BuildHasher> SipHeaderRows for HashMap<String, Vec<String>, S> {
-    fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
-        Ok(map_rows(self, name))
-    }
-}
+map_stores!(
+    [S: BuildHasher] HashMap<String, String, S>,
+    [S: BuildHasher] HashMap<String, Vec<String>, S>,
+    ['k, S: BuildHasher] HashMap<&'k str, String, S>,
+    ['k, S: BuildHasher] HashMap<&'k str, Vec<String>, S>,
+    [] BTreeMap<String, String>,
+    [] BTreeMap<String, Vec<String>>,
+    ['k] BTreeMap<&'k str, String>,
+    ['k] BTreeMap<&'k str, Vec<String>>,
+);
