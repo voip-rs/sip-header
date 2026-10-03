@@ -311,6 +311,41 @@ macro_rules! __define_header_enum_serde {
 #[doc = "```"]
 struct GatedSerdeNeedsTheCatalogFeature;
 
+/// The caller's `missing_docs` lint sees an undocumented variant.
+///
+/// ```compile_fail
+/// /// Names.
+/// #[deny(missing_docs)]
+/// pub mod names {
+///     sip_header_catalog::define_header_enum! {
+///         error_type: ParseNameError => "unknown name",
+///         /// Names.
+///         pub enum Name {
+///             Undocumented => "undocumented",
+///         }
+///     }
+/// }
+/// fn main() {}
+/// ```
+///
+/// ```
+/// /// Names.
+/// #[deny(missing_docs)]
+/// pub mod names {
+///     sip_header_catalog::define_header_enum! {
+///         error_type: ParseNameError => "unknown name",
+///         /// Names.
+///         pub enum Name {
+///             /// `documented`.
+///             Documented => "documented",
+///         }
+///     }
+/// }
+/// fn main() {}
+/// ```
+#[cfg(doctest)]
+struct VariantDocsReachTheCallersLint;
+
 #[cfg(test)]
 mod tests {
     use crate::HeaderName;
@@ -392,6 +427,29 @@ mod tests {
         pub(crate) enum GatedFeatureEnum {
             /// `Feature-Wire`.
             Feature => "Feature-Wire",
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    define_header_enum! {
+        serde,
+        tests_mod: serde_first_enum_generated,
+        error_type: ParseSerdeFirstEnumError => "unknown serde-first value",
+        /// `serde,` before `tests_mod:`.
+        pub(crate) enum SerdeFirstEnum {
+            /// `First-Wire`.
+            First => "First-Wire",
+        }
+    }
+
+    define_header_enum! {
+        serde(cfg(feature = "serde")),
+        tests_mod: gated_first_enum_generated,
+        error_type: ParseGatedFirstEnumError => "unknown gated-first value",
+        /// `serde(cfg(..)),` before `tests_mod:`.
+        pub(crate) enum GatedFirstEnum {
+            /// `Gated-First-Wire`.
+            GatedFirst => "Gated-First-Wire",
         }
     }
 
@@ -479,6 +537,8 @@ mod tests {
             assert!(Probe::<GatedOnEnum>::SERIALIZE);
             assert!(Probe::<GatedFeatureEnum>::SERIALIZE);
             assert!(!Probe::<GatedOffEnum>::SERIALIZE);
+            assert!(Probe::<SerdeFirstEnum>::SERIALIZE);
+            assert!(Probe::<GatedFirstEnum>::SERIALIZE);
         };
 
         #[test]
