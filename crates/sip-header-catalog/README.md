@@ -105,7 +105,7 @@ assert_eq!(
 fields.map_values(|name, value| {
     if SipHeader::From.matches(name) { Cow::Borrowed("<sip:***@example.com>;tag=a") } else { value }
 });
-fields.remove("Via");
+assert_eq!(fields.remove("Via"), 2);
 assert_eq!(fields.len(), 2);
 let owned: SipHeaderFields<'static> = fields.into_owned();
 assert_eq!(owned.sip_header(SipHeader::From), Ok(Some("<sip:***@example.com>;tag=a")));

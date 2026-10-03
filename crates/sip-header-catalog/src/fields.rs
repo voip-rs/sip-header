@@ -41,7 +41,7 @@ fn owned(text: Cow<'_, str>) -> Cow<'static, str> {
 /// fields.map_values(|name, value| {
 ///     if SipHeader::ContentLength.matches(name) { Cow::Borrowed("0") } else { value }
 /// });
-/// fields.remove("Via");
+/// assert_eq!(fields.remove("Via"), 2);
 /// assert_eq!(fields.iter().collect::<Vec<_>>(), [("l", "0")]);
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -94,10 +94,12 @@ impl<'a> SipHeaderFields<'a> {
     }
 
     /// Remove every row whose name `name` matches, as
-    /// [`SipHeader::name_matches`] does.
-    pub fn remove(&mut self, name: &str) {
+    /// [`SipHeader::name_matches`] does, returning how many were removed.
+    pub fn remove(&mut self, name: &str) -> usize {
+        let before = self.len();
         self.rows
             .retain(|(wire, _)| !SipHeader::name_matches(name, wire));
+        before - self.len()
     }
 
     /// The same rows, owning their text.
