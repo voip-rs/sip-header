@@ -626,6 +626,21 @@ mod tests {
     }
 
     #[test]
+    fn ord_is_wire_name_order() {
+        for a in SipHeader::ALL {
+            for b in SipHeader::ALL {
+                assert_eq!(
+                    a.cmp(b),
+                    a.as_str()
+                        .cmp(b.as_str()),
+                    "{a} {b}"
+                );
+                assert_eq!(a.partial_cmp(b), Some(a.cmp(b)));
+            }
+        }
+    }
+
+    #[test]
     fn from_str_unknown() {
         assert!("X-Custom"
             .parse::<SipHeader>()

@@ -1,5 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasherDefault;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -215,6 +215,58 @@ fn hashmap_single_value_and_custom_hasher() {
         v.sip_header(SipHeader::Route),
         Ok(Some("<sip:a@example.com>"))
     );
+}
+
+const PAIRS: &[(&str, &str)] = &[
+    ("V", "C"),
+    ("via", "lower"),
+    ("VIA", "upper"),
+    ("v", "c"),
+    ("Via", "exact"),
+    ("i", "compact"),
+    ("Call-ID", "canonical"),
+    ("x-custom", "one"),
+    ("X-Custom", "two"),
+];
+
+fn collect<'a, K: From<&'a str>, V: From<&'a str>, M: FromIterator<(K, V)>>() -> M {
+    PAIRS
+        .iter()
+        .map(|(k, v)| (K::from(*k), V::from(*v)))
+        .collect()
+}
+
+fn vec_valued<'a, K: From<&'a str>, M: FromIterator<(K, Vec<String>)>>() -> M {
+    PAIRS
+        .iter()
+        .map(|(k, v)| (K::from(*k), vec![v.to_string()]))
+        .collect()
+}
+
+fn answers_as<M: SipHeaderRows>(store: &M, reference: &HashMap<String, String>) {
+    let names = SipHeader::ALL
+        .iter()
+        .map(SipHeader::as_str)
+        .chain(["X-Custom", "x-custom", "X-Other"]);
+    for name in names {
+        assert_eq!(
+            store.sip_header_rows_str(name),
+            reference.sip_header_rows_str(name),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn every_map_store_answers_as_the_string_keyed_hashmap() {
+    let reference: HashMap<String, String> = collect();
+    answers_as(&collect::<String, String, BTreeMap<_, _>>(), &reference);
+    answers_as(&collect::<&str, String, HashMap<_, _>>(), &reference);
+    answers_as(&collect::<&str, String, BTreeMap<_, _>>(), &reference);
+    answers_as(&vec_valued::<String, HashMap<_, _>>(), &reference);
+    answers_as(&vec_valued::<String, BTreeMap<_, _>>(), &reference);
+    answers_as(&vec_valued::<&str, HashMap<_, _>>(), &reference);
+    answers_as(&vec_valued::<&str, BTreeMap<_, _>>(), &reference);
 }
 
 #[test]

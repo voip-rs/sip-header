@@ -77,6 +77,53 @@ fn owned_borrowed_and_pushed_fields_compare_by_content() {
 }
 
 #[test]
+fn collecting_and_extending_push_each_row_in_order() {
+    let source = interleaved();
+    let mut pushed = SipHeaderFields::new();
+    pushed.push("Max-Forwards", "70");
+    for (name, value) in source.iter() {
+        pushed.push(name.to_string(), value.to_string());
+    }
+    let mut extended = SipHeaderFields::from(vec![("Max-Forwards", "70")]);
+    extended.extend(
+        source
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string())),
+    );
+    assert_eq!(extended, pushed);
+    assert_eq!(
+        source
+            .iter()
+            .collect::<SipHeaderFields>(),
+        source
+    );
+}
+
+#[test]
+fn into_iter_yields_the_rows_in_wire_order() {
+    let source = interleaved();
+    let by_ref: Vec<(&str, &str)> = (&source)
+        .into_iter()
+        .collect();
+    assert_eq!(
+        by_ref,
+        source
+            .iter()
+            .collect::<Vec<_>>()
+    );
+    let owned = source
+        .clone()
+        .into_iter();
+    assert_eq!(owned.len(), source.len());
+    let rows: Vec<(Cow<str>, Cow<str>)> = owned.collect();
+    assert_eq!(
+        rows.into_iter()
+            .collect::<SipHeaderFields>(),
+        source
+    );
+}
+
+#[test]
 fn equality_is_order_sensitive() {
     let a = SipHeaderFields::from(vec![("Via", "a"), ("Via", "b")]);
     let b = SipHeaderFields::from(vec![("Via", "b"), ("Via", "a")]);
