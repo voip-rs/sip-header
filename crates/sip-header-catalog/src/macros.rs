@@ -55,9 +55,11 @@ pub trait HeaderName:
 ///   insensitivity, `Display` and unknown input over `ALL` (needs
 ///   `PartialEq` on the error).
 ///
-/// The order of `ALL` and the discriminant values are unspecified.
+/// `tests_mod:` and the serde arm come before `error_type:`, in either
+/// order. The order of `ALL` and the discriminant values are unspecified.
 /// Attributes on a variant apply to that variant only, so a `#[cfg]` on a
-/// variant is not supported.
+/// variant is not supported. Variant doc comments pass through, and the
+/// caller's `missing_docs` lint applies to the variants.
 ///
 /// # Example
 ///
@@ -98,6 +100,7 @@ pub trait HeaderName:
 #[macro_export]
 macro_rules! define_header_enum {
     (@serde_of
+        $(tests_mod: $tests_mod:ident,)?
         error_type: $Err:ident $(=> $err_msg:literal)?,
         $(#[$enum_meta:meta])*
         $vis:vis enum $Name:ident { $($body:tt)* }
@@ -161,7 +164,6 @@ macro_rules! define_header_enum {
             ::core::hash::Hash,
         )]
         #[non_exhaustive]
-        #[allow(missing_docs)]
         $vis enum $Name {
             $(
                 $(#[$var_meta])*
