@@ -757,10 +757,26 @@ mod tests {
         }
     }
 
-    /// Every parameter's value span reads back, scrubbed and unquoted, as
-    /// the value `get` returns; a flag has none.
+    /// Every occurrence's value span reads back, scrubbed and unquoted, as
+    /// its value, and `value_span` as the value `get` returns; a flag has none.
     fn param_spans(rows: &[&str], params: &crate::HeaderParams) -> Result<(), TestCaseError> {
         for (name, _) in params.iter() {
+            let values: Vec<&str> = params
+                .iter()
+                .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+                .filter_map(|(_, v)| v)
+                .collect();
+            let spans: Vec<Span> = params
+                .value_spans(&name.to_ascii_uppercase())
+                .collect();
+            prop_assert_eq!(spans.len(), values.len(), "{} {}", name, params);
+            for (span, value) in spans
+                .into_iter()
+                .zip(values)
+            {
+                let text = scrubbed(rows, span)?;
+                prop_assert_eq!(unquoted(&text), value, "{:?}", text);
+            }
             let span = params.value_span(name);
             let Some(value) = params
                 .get(name)
@@ -779,6 +795,14 @@ mod tests {
     fn no_value_spans(params: &crate::HeaderParams) -> Result<(), TestCaseError> {
         for (name, _) in params.iter() {
             prop_assert_eq!(params.value_span(name), None, "{}", name);
+            prop_assert_eq!(
+                params
+                    .value_spans(name)
+                    .next(),
+                None,
+                "{}",
+                name
+            );
         }
         Ok(())
     }
