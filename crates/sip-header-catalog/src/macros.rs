@@ -414,6 +414,19 @@ mod tests {
             .collect()
     }
 
+    fn parse_boxed<T: HeaderName>(s: &str) -> Result<T, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(s.parse::<T>()?)
+    }
+
+    #[test]
+    fn header_name_parse_error_boxes_as_send_sync() {
+        for v in TestEnum::ALL {
+            assert_eq!(parse_boxed::<TestEnum>(v.as_str()).ok(), Some(*v));
+        }
+        let e = parse_boxed::<OldEnum>("no-such-value").unwrap_err();
+        assert!(e.is::<ParseOldEnumError>());
+    }
+
     #[test]
     fn header_name_trait_mirrors_the_inherent_items() {
         assert_eq!(wire_names::<TestEnum>(), ["Foo-Wire", "Bar-Wire"]);
