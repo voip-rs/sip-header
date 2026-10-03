@@ -757,8 +757,8 @@ mod tests {
         }
     }
 
-    /// Every occurrence's value span reads back, scrubbed and unquoted, as
-    /// its value, and `value_span` as the value `get` returns; a flag has none.
+    /// Every valued occurrence yields one span that reads back, scrubbed and
+    /// unquoted, as its value, and `value_span` as the value `get` returns.
     fn param_spans(rows: &[&str], params: &crate::HeaderParams) -> Result<(), TestCaseError> {
         for (name, _) in params.iter() {
             let values: Vec<&str> = params
@@ -766,7 +766,7 @@ mod tests {
                 .filter(|(n, _)| n.eq_ignore_ascii_case(name))
                 .filter_map(|(_, v)| v)
                 .collect();
-            let spans: Vec<Span> = params
+            let spans: Vec<Option<Span>> = params
                 .value_spans(&name.to_ascii_uppercase())
                 .collect();
             prop_assert_eq!(spans.len(), values.len(), "{} {}", name, params);
@@ -774,7 +774,8 @@ mod tests {
                 .into_iter()
                 .zip(values)
             {
-                let text = scrubbed(rows, span)?;
+                prop_assert!(span.is_some(), "{name} {params}");
+                let text = scrubbed(rows, span.unwrap_or(Span::new(0..0)))?;
                 prop_assert_eq!(unquoted(&text), value, "{:?}", text);
             }
             let span = params.value_span(name);
@@ -792,16 +793,25 @@ mod tests {
         Ok(())
     }
 
+    /// A built or changed value yields one `None` per valued occurrence.
     fn no_value_spans(params: &crate::HeaderParams) -> Result<(), TestCaseError> {
         for (name, _) in params.iter() {
             prop_assert_eq!(params.value_span(name), None, "{}", name);
-            prop_assert_eq!(
+            let valued = params
+                .iter()
+                .filter(|(n, v)| n.eq_ignore_ascii_case(name) && v.is_some())
+                .count();
+            let spans: Vec<Option<Span>> = params
+                .value_spans(name)
+                .collect();
+            prop_assert_eq!(spans.len(), valued, "{} {}", name, params);
+            prop_assert!(
+                spans
+                    .iter()
+                    .all(Option::is_none),
+                "{} {}",
+                name,
                 params
-                    .value_spans(name)
-                    .next(),
-                None,
-                "{}",
-                name
             );
         }
         Ok(())

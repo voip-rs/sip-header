@@ -197,7 +197,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 
 ## Received text is reached by span
 
-`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, and `SipViaEntry` carries `span()` and `host_span()`: a row index and byte range into what you parsed. `HeaderParams::value_span(name)` covers a parameter value as received, quotes included, on every type that holds parameters. Slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`; either returns a `SpanError` saying why it found no text. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde.
+`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, and `SipViaEntry` carries `span()` and `host_span()`: a row index and byte range into what you parsed. `HeaderParams::value_span(name)` covers a parameter value as received, quotes included, on every type that holds parameters, and `value_spans(name)` covers every occurrence of a repeated name. Slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`; either returns a `SpanError` saying why it found no text. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde.
 
 ## Redaction is a policy you build once
 

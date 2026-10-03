@@ -301,7 +301,8 @@ impl Drop for ParamsMut<'_> {
 /// bare when it is a `token` or a host and quoted otherwise.
 ///
 /// A parsed value's [`value_span`](Self::value_span) covers the value as
-/// received; any change to the parameters clears every value span.
+/// received, and [`value_spans`](Self::value_spans) every occurrence's; any
+/// change to the parameters clears every value span.
 ///
 /// # Equality
 ///
@@ -366,6 +367,11 @@ impl Param {
             quoted,
             span: None,
         }
+    }
+
+    fn is_named(&self, name: &str) -> bool {
+        self.name
+            .eq_ignore_ascii_case(name)
     }
 
     fn write<W: fmt::Write + ?Sized>(&self, w: &mut W) -> fmt::Result {
@@ -447,6 +453,18 @@ impl HeaderParams {
     pub fn value_span(&self, name: &str) -> Option<Span> {
         self.find(name)
             .and_then(|p| p.span)
+    }
+
+    /// Where the value of every valued parameter named `name` was read
+    /// from, in held order, a flag excluded; `None` for a value that cannot
+    /// be placed, so mask the whole value.
+    pub fn value_spans<'a>(&'a self, name: &'a str) -> impl Iterator<Item = Option<Span>> + 'a {
+        self.named(name)
+            .filter(|p| {
+                p.value
+                    .is_some()
+            })
+            .map(|p| p.span)
     }
 
     /// Drop every value span, as any change to the value does.
@@ -541,10 +559,13 @@ impl HeaderParams {
     fn find(&self, name: &str) -> Option<&Param> {
         self.0
             .iter()
-            .find(|p| {
-                p.name
-                    .eq_ignore_ascii_case(name)
-            })
+            .find(|p| p.is_named(name))
+    }
+
+    fn named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Param> + 'a {
+        self.0
+            .iter()
+            .filter(move |p| p.is_named(name))
     }
 
     /// Append without checks.
