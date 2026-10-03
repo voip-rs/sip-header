@@ -218,6 +218,27 @@ fn remove_drops_every_spelling_of_a_name() {
     assert_eq!(fields.len(), 1);
 }
 
+#[test]
+fn remove_counts_the_rows_it_drops() {
+    for name in [
+        "Via",
+        "x-CUSTOM",
+        "Content-Length",
+        "Call-ID",
+        "Not-Present",
+    ] {
+        let mut fields = interleaved();
+        let matched = fields
+            .sip_header_rows_str(name)
+            .unwrap()
+            .len();
+        let before = fields.len();
+        assert_eq!(fields.remove(name), matched, "{name}");
+        assert_eq!(fields.len(), before - matched, "{name}");
+        assert_eq!(fields.remove(name), 0, "{name}");
+    }
+}
+
 fn keep(fields: SipHeaderFields<'static>) -> SipHeaderFields<'static> {
     fields
 }
