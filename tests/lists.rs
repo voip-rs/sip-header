@@ -343,3 +343,100 @@ fn token_list_from_entries_takes_each_entry_whole() {
     );
     assert!(TokenList::from_entries(SipHeader::Via, ["timer"]).is_err());
 }
+
+/// A list of two entries, both overwritten through `get_mut` and `iter_mut`.
+macro_rules! entries_mut {
+    ($Type:ty, $wire:expr) => {{
+        let mut l = <$Type>::parse($wire).unwrap();
+        let first = l.entries()[0].clone();
+        assert!(l
+            .get_mut(2)
+            .is_none());
+        *l.get_mut(1)
+            .unwrap() = first.clone();
+        assert_eq!(l.entries()[1], first);
+        let second = <$Type>::parse($wire)
+            .unwrap()
+            .entries()[1]
+            .clone();
+        for e in l.iter_mut() {
+            *e = second.clone();
+        }
+        assert!(l
+            .iter()
+            .all(|e| *e == second));
+    }};
+}
+
+#[test]
+fn list_entries_are_mutable_in_place() {
+    entries_mut!(
+        SipHeaderAddrList,
+        "<sip:a@example.com>, <sip:b@example.com>"
+    );
+    entries_mut!(SipVia, "SIP/2.0/UDP 198.51.100.1, SIP/2.0/TCP example.com");
+    entries_mut!(SipWarning, r#"399 example.com "a", 301 example.org "b""#);
+    entries_mut!(SipReasonList, "Q.850;cause=16, SIP;cause=200");
+    entries_mut!(SipSecurity, "digest;q=0.1, tls");
+    entries_mut!(UriInfo, "<https://example.com/a>, <urn:example:call:1>");
+    entries_mut!(
+        SipGeolocation,
+        "<cid:a@example.com>, <https://example.com/l>"
+    );
+    entries_mut!(
+        HistoryInfo,
+        "<sip:a@example.com>;index=1, <sip:b@example.com>;index=1.1"
+    );
+    entries_mut!(SipAccept, "application/sdp, text/plain");
+    entries_mut!(SipAcceptEncoding, "gzip, identity");
+    entries_mut!(SipAcceptLanguage, "fr-ca, en");
+}
+
+#[test]
+fn contact_list_addresses_are_mutable_and_iterable() {
+    let mut l = ContactList::parse("<sip:a@example.com>, <sip:b@example.com>").unwrap();
+    let first = l.addrs()[0].clone();
+    assert!(l
+        .get_mut(2)
+        .is_none());
+    l.get_mut(1)
+        .unwrap()
+        .params_mut()
+        .push("expires", Some("60"))
+        .unwrap();
+    assert_eq!(l.addrs()[1].param("expires"), Some(Some("60")));
+    for a in l.iter_mut() {
+        *a = first.clone();
+    }
+    assert_eq!(
+        (&l).into_iter()
+            .collect::<Vec<_>>(),
+        [&first, &first]
+    );
+    assert_eq!(
+        l.into_iter()
+            .collect::<Vec<_>>(),
+        [first.clone(), first]
+    );
+
+    let mut star = ContactList::wildcard();
+    assert!(star
+        .get_mut(0)
+        .is_none());
+    assert_eq!(
+        star.iter_mut()
+            .count(),
+        0
+    );
+    assert_eq!(
+        (&star)
+            .into_iter()
+            .count(),
+        0
+    );
+    assert_eq!(
+        star.into_iter()
+            .count(),
+        0
+    );
+}
