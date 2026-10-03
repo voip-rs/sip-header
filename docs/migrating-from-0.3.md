@@ -101,6 +101,8 @@ addr.with_param("lr", None)?
 addr.with_param(key, value.as_deref())?
 ```
 
+`SipAuthValue::with_param` is the exception: its value is `impl AsRef<str>`, not `Option<&str>`, since an `auth-param` always has one (RFC 3261 §25.1).
+
 ## Parameters are one type
 
 Every value holds its parameters in an opaque `HeaderParams`: `params()` returns it, with `iter()`, `get()` and `is_quoted()`. Values are stored unescaped, each with whether it arrived quoted, and Display re-quotes exactly those plus any value that needs quotes.
@@ -108,7 +110,7 @@ Every value holds its parameters in an opaque `HeaderParams`: `params()` returns
 - `param()` returns `Option<Option<&str>>` everywhere; `Some(None)` is a flag.
 - Header parameters are never percent-decoded, so `param_raw()` is gone.
 - `with_param` replaces the same name in place; `with_quoted_param` forces quotes.
-- A key the type sets itself is refused by every generic operation: use `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only` or `HistoryInfoEntry::with_index`.
+- A key the type sets itself is refused by every generic operation: use `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `SipReason::with_cause`, `SipReason::with_text` or `HistoryInfoEntry::with_index`.
 - A repeated parameter from the wire is kept with a `DuplicateParam` warning, and `get()` returns the first. Adding a name a built value already holds is refused, since strict parsing refuses the repeat.
 
 To change several parameters, take the owner's guard:
@@ -214,7 +216,7 @@ log::info!("from {}", addr.redacted(&how));
 
 ## Serde
 
-Value types serialize as their parts and deserialize through the same checks a parse makes, so a deserialized value is one a parse could have produced. Parameters are written as held, `[[name, value, quoted]]` in order, reserved keys such as `tag` and `rport` among them. Unknown fields are refused. A `TokenList` is `{"header", "tokens"}`, its header by wire name, since its case rule and emptiness come from the header. `SipHeader` serializes as its wire name (`"Call-ID"`), and deserialization accepts any spelling `parse_name` does. The `serde_str` adapters carry the wire text instead, for every value type but `TokenList`, whose text alone does not name its header.
+Value types serialize as their parts and deserialize through the same checks a parse makes, so a deserialized value is one a parse could have produced. Parameters are written as held, `[[name, value, quoted]]` in order, reserved keys such as `tag` and `rport` among them. Unknown fields are refused. A `TokenList` is `{"header", "tokens"}`, its header by wire name, since its case rule and emptiness come from the header. `SipHeader` serializes as its wire name (`"Call-ID"`), and deserialization accepts any spelling `parse_name` does. The `serde_str` adapters carry a header's wire text instead; `TokenList` has none, since its text alone does not name its header.
 
 ## Changes that still compile
 

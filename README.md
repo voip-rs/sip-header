@@ -230,7 +230,7 @@ Every type is at the crate root. The public modules carry what the root does not
 | Feature | Dependencies | Description |
 |---|---|---|
 | `message` | — | Raw SIP message extraction (`extract_header`, `extract_body`, `SipMessageHeaders`, …); on by default |
-| `serde` | serde | `SipHeader` as its canonical wire name; structured serde on the value types; `serde_str` adapters for the wire text |
+| `serde` | serde | `SipHeader` as its canonical wire name; every header value type as its parts, read back through the checks a parse makes (Call-ID, a Reason cause and a wildcard Contact as strings); `serde_str` adapters for the wire text. Warnings, spans, errors, `QValue` and the catalog's holders have no serde |
 | `conference-info` | quick-xml, serde | RFC 4575 XML parsing |
 
 ## Ecosystem
