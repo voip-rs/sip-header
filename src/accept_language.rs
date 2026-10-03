@@ -1,7 +1,8 @@
 //! SIP Accept-Language header parser (RFC 3261 §20.3).
 //!
 //! An empty value, or entries that are all blank, is the empty list
-//! (RFC 3261 §25.1); a blank entry beside a real one is an error.
+//! (RFC 3261 §25.1); a blank entry beside a real one is dropped with
+//! [`EmptyEntry`](crate::WarningCode::EmptyEntry).
 
 use std::fmt;
 
