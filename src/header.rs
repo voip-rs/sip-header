@@ -110,7 +110,7 @@ typed_header! { list:
     HistoryInfo => [HistoryInfo];
     SipHeaderAddrList => [
         PAssertedIdentity, PPreferredIdentity, Route, RecordRoute, Path, ServiceRoute,
-        Diversion, RemotePartyId,
+        Diversion, RemotePartyId, PRefusedUriList, PermissionMissing,
     ];
     ContactList => [Contact];
     SipVia => [Via];
@@ -124,7 +124,9 @@ typed_header! { list:
 }
 
 typed_header! { single:
-    SipHeaderAddr => [From, To, ReferTo, ReferredBy];
+    SipHeaderAddr => [
+        From, To, ReferTo, ReferredBy, ReplyTo, PCalledPartyId, PServedUser, PDcsTracePartyId,
+    ];
     SipCallId => [CallId];
     SipReplaces => [Replaces];
     SipJoin => [Join];

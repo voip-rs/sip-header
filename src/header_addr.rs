@@ -602,7 +602,8 @@ pub(crate) fn parse_list_addr(
 
 /// A comma list of `(name-addr / addr-spec) *(SEMI param)` entries, as
 /// Route, Record-Route, Path, Service-Route, P-Asserted-Identity,
-/// P-Preferred-Identity and Diversion carry; each grammar needs one entry.
+/// P-Preferred-Identity, Diversion, P-Refused-URI-List and Permission-Missing
+/// carry; each grammar needs one entry.
 ///
 /// Parsed through [`HeaderParse`](crate::HeaderParse) and
 /// [`ListParse`](crate::ListParse).
