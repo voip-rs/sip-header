@@ -7,13 +7,14 @@ use std::ops::Range;
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, Field, HeaderEquivalence, HeaderParse, HeaderRedaction,
-    HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Redact,
-    SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
-    SipAcceptLanguageEntry, SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeader,
-    SipHeaderAddr, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason,
-    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
-    SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
+    ContactList, DialogFraming, Fault, FaultCode, Field, HeaderEquivalence, HeaderParams,
+    HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError,
+    ParseWarning, Parsed, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
+    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId,
+    SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause,
+    SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
     UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
@@ -1695,4 +1696,335 @@ fn a_bracket_or_comma_inside_a_token_is_dropped() {
         .value
         .to_string();
     assert_eq!(UriInfo::parse(&wire), Ok(parsed.value), "{wire}");
+}
+
+/// Base rows for the headers whose value types the corpus does not cover.
+const MORE_BASES: &[(&str, &str)] = &[
+    ("call-id", "a84b4c76e66710@example.com"),
+    ("call-id", "f81d4fae-7dec-11d0-a765@[2001:db8::1]"),
+    ("tokens", "INVITE, 100rel, timer"),
+    ("tokens", "a84b4c76e66710@example.com, en-ca"),
+];
+
+/// One row of a header: a base row of the accessor's kinds with snippets
+/// injected, or a blank, under one spelling of the name.
+#[derive(Debug, Clone)]
+struct RowSpec {
+    base: usize,
+    snippets: Vec<(f64, String)>,
+    blank: Option<&'static str>,
+    spelling: usize,
+}
+
+fn row_spec() -> impl Strategy<Value = RowSpec> {
+    (
+        any::<usize>(),
+        prop::collection::vec(
+            (0.0..=1.0f64, prop_oneof![injected(), Just("é".to_string())]),
+            0..3,
+        ),
+        prop::option::weighted(0.2, prop::sample::select(&["", "  "][..])),
+        any::<usize>(),
+    )
+        .prop_map(|(base, snippets, blank, spelling)| RowSpec {
+            base,
+            snippets,
+            blank,
+            spelling,
+        })
+}
+
+/// A store holding a row of `header` per spec, each under a canonical,
+/// lowercased, uppercased or compact name, between rows of another header.
+fn lookup_store(header: SipHeader, kinds: &[&str], specs: &[RowSpec]) -> SipHeaderFields<'static> {
+    let bases: Vec<&str> = CORPUS
+        .iter()
+        .chain(MORE_BASES)
+        .filter(|(kind, _)| kinds.contains(kind))
+        .map(|(_, base)| *base)
+        .collect();
+    let name = header.as_str();
+    let mut names = vec![
+        name.to_string(),
+        name.to_ascii_lowercase(),
+        name.to_ascii_uppercase(),
+    ];
+    names.extend(
+        header
+            .compact_form()
+            .map(String::from),
+    );
+    let other = || ("Subject".to_string(), "x".to_string());
+    let mut lines = vec![other()];
+    for spec in specs {
+        let value = match spec.blank {
+            Some(blank) => blank.to_string(),
+            None => inject(bases[spec.base % bases.len()], &spec.snippets),
+        };
+        lines.push((names[spec.spelling % names.len()].clone(), value));
+        lines.push(other());
+    }
+    SipHeaderFields::from(lines)
+}
+
+type Accessor<T> = fn(&SipHeaderFields<'_>) -> Result<Option<T>, ParseError>;
+
+type AccessorCheck = fn(&SipHeaderFields<'_>, SipHeader) -> Result<(), TestCaseError>;
+
+fn held<'f>(fields: &'f SipHeaderFields<'_>, header: SipHeader) -> Vec<&'f str> {
+    fields
+        .sip_header_rows(header)
+        .expect("a holder reports no row error")
+}
+
+/// The accessor reads `None` from a store without the header.
+fn absent_is_none<T: std::fmt::Debug + PartialEq>(read: Accessor<T>) -> Result<(), TestCaseError> {
+    let other = SipHeaderFields::from(vec![("Subject", "x")]);
+    prop_assert_eq!(read(&other), Ok(None));
+    Ok(())
+}
+
+/// `parse_header` prints as `expected` and the accessor as its value, each
+/// expected print passed through `placed`.
+fn reads_as<T: TypedHeader + std::fmt::Debug + PartialEq>(
+    fields: &SipHeaderFields<'_>,
+    header: SipHeader,
+    read: Accessor<T>,
+    expected: Result<Parsed<T>, ParseError>,
+    placed: impl Fn(String) -> String,
+) -> Result<(), TestCaseError> {
+    let parsed = fields
+        .parse_header::<T>(header)
+        .map(|p| p.expect("the rows are present"));
+    prop_assert_eq!(format!("{parsed:?}"), placed(format!("{expected:?}")));
+    let value = expected.map(|p| Some(p.value));
+    prop_assert_eq!(format!("{:?}", read(fields)), placed(format!("{value:?}")));
+    absent_is_none(read)
+}
+
+fn list<L>(
+    fields: &SipHeaderFields<'_>,
+    header: SipHeader,
+    read: Accessor<L>,
+) -> Result<(), TestCaseError>
+where
+    L: ListParse + TypedHeader + std::fmt::Debug + PartialEq,
+{
+    let rows = held(fields, header);
+    let expected = if header.is_list() {
+        L::from_rows_with_warnings(rows)
+    } else {
+        L::from_entries_with_warnings(rows)
+    };
+    reads_as(fields, header, read, expected, |s| s)
+}
+
+fn tokens(
+    fields: &SipHeaderFields<'_>,
+    header: SipHeader,
+    read: Accessor<TokenList>,
+) -> Result<(), TestCaseError> {
+    let expected = TokenList::from_rows_with_warnings(header, held(fields, header));
+    reads_as(fields, header, read, expected, |s| s)
+}
+
+/// One row parses as that string does, its warnings and spans placed in
+/// row 0; a second row is a duplicate.
+fn single<T>(
+    fields: &SipHeaderFields<'_>,
+    header: SipHeader,
+    read: Accessor<T>,
+) -> Result<(), TestCaseError>
+where
+    T: HeaderParse + TypedHeader + std::fmt::Debug + PartialEq,
+{
+    match held(fields, header)[..] {
+        [row] => reads_as(fields, header, read, T::parse_with_warnings(row), |s| {
+            s.replace("row: None", "row: Some(0)")
+        }),
+        _ => {
+            let duplicate = ParseError::Malformed(Fault::new(Field::Value, FaultCode::Duplicate));
+            reads_as(fields, header, read, Err(duplicate), |s| s)
+        }
+    }
+}
+
+type Placed = Option<(Option<usize>, Range<usize>)>;
+
+fn placed(span: Option<Span>) -> Placed {
+    span.map(|s| (s.row(), s.range()))
+}
+
+fn param_spans(params: &HeaderParams) -> Vec<Placed> {
+    params
+        .iter()
+        .flat_map(|(name, _)| params.value_spans(name))
+        .map(placed)
+        .collect()
+}
+
+/// Each non-blank row parses as that string does, placed in its own row
+/// and entry; a blank row is an empty entry.
+fn auth(
+    fields: &SipHeaderFields<'_>,
+    header: SipHeader,
+    read: Accessor<Vec<SipAuthValue>>,
+) -> Result<(), TestCaseError> {
+    let rows = held(fields, header);
+    let parsed = fields
+        .parse_header::<Vec<SipAuthValue>>(header)
+        .map(|p| p.expect("the rows are present"));
+    prop_assert_eq!(
+        read(fields),
+        parsed
+            .clone()
+            .map(|p| Some(p.value))
+    );
+    absent_is_none(read)?;
+    let in_row = |i: usize, s: String| {
+        s.replace("row: None", &format!("row: Some({i})"))
+            .replace("entry: None", &format!("entry: Some({i})"))
+    };
+    let mut values = Vec::new();
+    let mut warnings = Vec::new();
+    for (i, row) in rows
+        .iter()
+        .enumerate()
+    {
+        if row
+            .trim()
+            .is_empty()
+        {
+            warnings.push((i, None));
+            continue;
+        }
+        match SipAuthValue::parse_with_warnings(row) {
+            Ok(p) => {
+                values.push((i, p.value));
+                warnings.extend(
+                    p.warnings
+                        .into_iter()
+                        .map(|w| (i, Some(w))),
+                );
+            }
+            Err(e) => {
+                let got = parsed.err();
+                prop_assert_eq!(format!("{got:?}"), in_row(i, format!("{:?}", Some(e))));
+                return Ok(());
+            }
+        }
+    }
+    if values.is_empty() {
+        let empty = ParseError::Malformed(Fault::new(Field::Value, FaultCode::Empty));
+        prop_assert_eq!(parsed, Err(empty));
+        return Ok(());
+    }
+    let parsed = parsed.map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
+    prop_assert_eq!(
+        parsed
+            .value
+            .len(),
+        values.len()
+    );
+    for (got, (i, want)) in parsed
+        .value
+        .iter()
+        .zip(&values)
+    {
+        prop_assert_eq!(got, want);
+        let want_spans: Vec<Placed> = param_spans(want.params())
+            .into_iter()
+            .map(|p| p.map(|(_, range)| (Some(*i), range)))
+            .collect();
+        prop_assert_eq!(param_spans(got.params()), want_spans);
+    }
+    prop_assert_eq!(
+        parsed
+            .warnings
+            .len(),
+        warnings.len()
+    );
+    for (got, (i, want)) in parsed
+        .warnings
+        .iter()
+        .zip(&warnings)
+    {
+        prop_assert_eq!((got.row, got.entry), (Some(*i), Some(*i)));
+        match want {
+            None => prop_assert_eq!(got.code, WarningCode::EmptyEntry),
+            Some(want) => {
+                let mut want = *want;
+                (want.row, want.entry) = (Some(*i), Some(*i));
+                prop_assert_eq!(got, &want);
+                prop_assert_eq!(
+                    placed(got.span()),
+                    placed(want.span()).map(|(_, range)| (Some(*i), range))
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every `SipHeaderLookup` accessor, with its header, the corpus kinds its
+/// rows come from and the path its rows must read as.
+macro_rules! every_accessor {
+    ($($path:expr => $($read:ident $header:ident $kinds:expr),+;)+) => {
+        const ACCESSORS: &[(SipHeader, &[&str], AccessorCheck)] = &[
+            $($((SipHeader::$header, $kinds, |f, h| $path(f, h, |f| f.$read())),)+)+
+        ];
+    };
+}
+
+const ADDRS: &[&str] = &["addr", "contact"];
+
+every_accessor! {
+    single::<SipHeaderAddr> =>
+        sip_from From &["addr"], sip_to To &["addr"],
+        refer_to ReferTo &["addr"], referred_by ReferredBy &["addr"];
+    single::<SipCallId> => call_id CallId &["call-id"];
+    single::<SipReplaces> => replaces Replaces &["replaces"];
+    single::<SipJoin> => join Join &["join"];
+    single::<SipTargetDialog> => target_dialog TargetDialog &["target-dialog"];
+    list::<SipReasonList> => reason Reason &["reason"];
+    list::<UriInfo> =>
+        call_info CallInfo &["uri-info"], alert_info AlertInfo &["uri-info"],
+        error_info ErrorInfo &["uri-info"];
+    list::<HistoryInfo> => history_info HistoryInfo &["history-info"];
+    list::<SipHeaderAddrList> =>
+        p_asserted_identity PAssertedIdentity ADDRS, p_preferred_identity PPreferredIdentity ADDRS,
+        route Route ADDRS, record_route RecordRoute ADDRS, path Path ADDRS,
+        service_route ServiceRoute ADDRS, diversion Diversion ADDRS,
+        remote_party_id RemotePartyId ADDRS;
+    list::<ContactList> => contact Contact ADDRS;
+    tokens =>
+        allow Allow &["tokens"], supported Supported &["tokens"], require Require &["tokens"],
+        proxy_require ProxyRequire &["tokens"], unsupported Unsupported &["tokens"],
+        allow_events AllowEvents &["tokens"], content_encoding ContentEncoding &["tokens"],
+        content_language ContentLanguage &["tokens"], in_reply_to InReplyTo &["tokens"];
+    list::<SipVia> => via Via &["via"];
+    auth =>
+        authorization Authorization &["auth"], proxy_authorization ProxyAuthorization &["auth"],
+        www_authenticate WwwAuthenticate &["auth"], proxy_authenticate ProxyAuthenticate &["auth"];
+    list::<SipWarning> => warning Warning &["warning"];
+    list::<SipSecurity> =>
+        security_client SecurityClient &["security"], security_server SecurityServer &["security"],
+        security_verify SecurityVerify &["security"];
+    list::<SipAccept> => accept Accept &["accept"];
+    list::<SipAcceptEncoding> => accept_encoding AcceptEncoding &["accept-encoding"];
+    list::<SipAcceptLanguage> => accept_language AcceptLanguage &["accept-language"];
+    list::<SipGeolocation> => geolocation Geolocation &["geolocation"];
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn every_lookup_accessor_reads_as_parsing_its_rows(
+        specs in prop::collection::vec(row_spec(), 1..4),
+    ) {
+        for &(header, kinds, check) in ACCESSORS {
+            check(&lookup_store(header, kinds, &specs), header)?;
+        }
+    }
 }
