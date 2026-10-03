@@ -518,6 +518,14 @@ mod serde_round_trip {
     }
 
     fn leaks<T: Serialize + DeserializeOwned>(value: &T) -> Vec<String> {
+        leaks_below(value, |_| true)
+    }
+
+    /// [`leaks`] at the pointers `probe` accepts.
+    fn leaks_below<T: Serialize + DeserializeOwned>(
+        value: &T,
+        probe: impl Fn(&str) -> bool,
+    ) -> Vec<String> {
         let json = serde_json::to_value(value).unwrap();
         let mut at = Vec::new();
         pointers(&json, String::new(), &mut at);
@@ -533,8 +541,10 @@ mod serde_round_trip {
         for pointer in at
             .iter()
             .filter(|p| {
-                !p.split('/')
-                    .any(|s| SIP_URI_KEYS.contains(&s))
+                probe(p)
+                    && !p
+                        .split('/')
+                        .any(|s| SIP_URI_KEYS.contains(&s))
             })
         {
             // An array read as a struct fills fields in declaration order, which
@@ -632,6 +642,72 @@ mod serde_round_trip {
         found.extend(leaks(&DialogFraming::UriHeader));
         found.extend(leaks(addr().params()));
         found.extend(leaks(&SipHeader::CallId));
+        assert!(found.is_empty(), "{}", found.join("\n"));
+        Ok(())
+    }
+
+    macro_rules! adapted {
+        ($found:ident: $($ty:ty = $value:expr, $plain:literal, $option:literal;)*) => {$({
+            #[derive(Serialize, serde::Deserialize)]
+            struct Holder {
+                #[serde(with = $plain)]
+                plain: $ty,
+                #[serde(with = $option)]
+                option: Option<$ty>,
+            }
+            let value = $value;
+            let holder = Holder {
+                plain: value.clone(),
+                option: Some(value),
+            };
+            $found.extend(leaks_below(&holder, |p| !p.is_empty()));
+        })*};
+    }
+
+    #[test]
+    fn serde_str_errors_never_quote_the_value() -> R {
+        let mut found = Vec::new();
+        adapted! { found:
+            SipHeaderAddr = addr(),
+                "sip_header::serde_str::header_addr", "sip_header::serde_str::header_addr::option";
+            SipHeaderAddrList = SipHeaderAddrList::parse("<sip:a@example.com>")?,
+                "sip_header::serde_str::addr_list", "sip_header::serde_str::addr_list::option";
+            ContactList = ContactList::new(vec![addr()])?,
+                "sip_header::serde_str::contact", "sip_header::serde_str::contact::option";
+            SipVia = via(), "sip_header::serde_str::via", "sip_header::serde_str::via::option";
+            SipWarning = SipWarning::parse(r#"399 example.com "x""#)?,
+                "sip_header::serde_str::warning", "sip_header::serde_str::warning::option";
+            SipAuthValue = SipAuthValue::from_token68("Bearer", "abc")?,
+                "sip_header::serde_str::auth", "sip_header::serde_str::auth::option";
+            SipSecurity = SipSecurity::parse("digest;q=0.1")?,
+                "sip_header::serde_str::security", "sip_header::serde_str::security::option";
+            SipAccept = SipAccept::parse("application/sdp")?,
+                "sip_header::serde_str::accept", "sip_header::serde_str::accept::option";
+            SipAcceptEncoding = SipAcceptEncoding::parse("gzip")?,
+                "sip_header::serde_str::accept_encoding",
+                "sip_header::serde_str::accept_encoding::option";
+            SipAcceptLanguage = SipAcceptLanguage::parse("fr")?,
+                "sip_header::serde_str::accept_language",
+                "sip_header::serde_str::accept_language::option";
+            UriInfo = UriInfo::parse("<https://example.com/i.png>")?,
+                "sip_header::serde_str::uri_info", "sip_header::serde_str::uri_info::option";
+            HistoryInfo = HistoryInfo::parse("<sip:a@example.com>;index=1")?,
+                "sip_header::serde_str::history_info",
+                "sip_header::serde_str::history_info::option";
+            SipGeolocation = SipGeolocation::parse("<cid:loc@example.com>")?,
+                "sip_header::serde_str::geolocation", "sip_header::serde_str::geolocation::option";
+            SipReplaces = replaces(),
+                "sip_header::serde_str::replaces", "sip_header::serde_str::replaces::option";
+            SipJoin = SipJoin::parse("a@example.com;to-tag=t;from-tag=f")?,
+                "sip_header::serde_str::join", "sip_header::serde_str::join::option";
+            SipReason = SipReason::parse("SIP;cause=200")?,
+                "sip_header::serde_str::reason", "sip_header::serde_str::reason::option";
+            SipReasonList = SipReasonList::parse("SIP;cause=200")?,
+                "sip_header::serde_str::reason_list", "sip_header::serde_str::reason_list::option";
+            SipTargetDialog = SipTargetDialog::parse("a@example.com;local-tag=l;remote-tag=r")?,
+                "sip_header::serde_str::target_dialog",
+                "sip_header::serde_str::target_dialog::option";
+        }
         assert!(found.is_empty(), "{}", found.join("\n"));
         Ok(())
     }
