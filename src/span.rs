@@ -977,7 +977,150 @@ mod tests {
         spans_read_back(&format!("\0{}", base.replacen("Alice", "Ali<ce", 1)), base).unwrap();
     }
 
+    /// Rows of valid entries per row, and where the malformed one goes:
+    /// its row, its place in that row, and the separators and padding used.
+    type Layout = (Vec<usize>, f64, f64, &'static str, &'static str);
+
+    fn layout() -> impl Strategy<Value = Layout> {
+        (
+            prop::collection::vec(1..3usize, 1..4),
+            0.0..1.0f64,
+            0.0..=1.0f64,
+            prop::sample::select(&[",", ", ", " ,\t", ",\r\n ", " , "][..]),
+            prop::sample::select(&["", " ", "\t", "\r\n "][..]),
+        )
+    }
+
+    /// `bad` among copies of `good` as `layout` places it yields one
+    /// SkippedEntry, in its row and entry, whose span slices to `bad`.
+    fn skipped_entry_span<L: ListParse>(
+        good: &str,
+        bad: &str,
+        layout: &Layout,
+    ) -> Result<(), TestCaseError> {
+        let (counts, row_at, entry_at, sep, pad) = layout;
+        let bad_row = (*row_at * counts.len() as f64) as usize;
+        let bad_at = (*entry_at * counts[bad_row] as f64) as usize;
+        let padded = format!("{pad}{bad}{pad}");
+        let rows: Vec<String> = counts
+            .iter()
+            .enumerate()
+            .map(|(r, &n)| {
+                let mut entries = vec![good; n];
+                if r == bad_row {
+                    entries.insert(bad_at, &padded);
+                }
+                entries.join(sep)
+            })
+            .collect();
+        let rows: Vec<&str> = rows
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let index = counts[..bad_row]
+            .iter()
+            .sum::<usize>()
+            + bad_at;
+        let parsed = L::from_rows_with_warnings(
+            rows.iter()
+                .copied(),
+        );
+        prop_assert!(parsed.is_ok(), "{:?} {:?}", rows, parsed.err());
+        let warnings = parsed
+            .map(|p| p.warnings)
+            .unwrap_or_default();
+        let skipped: Vec<&crate::ParseWarning> = warnings
+            .iter()
+            .filter(|w| w.code == WarningCode::SkippedEntry)
+            .collect();
+        prop_assert_eq!(skipped.len(), 1, "{:?} {:?}", rows, warnings);
+        let w = skipped[0];
+        prop_assert_eq!((w.row, w.entry), (Some(bad_row), Some(index)), "{:?}", rows);
+        let span = w.span();
+        prop_assert!(span.is_some(), "{:?}", rows);
+        let span = span.unwrap_or(Span::new(0..0));
+        prop_assert_eq!(span.row(), Some(bad_row));
+        prop_assert_eq!(span.slice(&rows), Ok(bad), "{:?}", rows);
+        if let [row] = rows[..] {
+            let one = L::parse_with_warnings(row);
+            let span = one
+                .iter()
+                .flat_map(|p| &p.warnings)
+                .find(|w| w.code == WarningCode::SkippedEntry)
+                .and_then(crate::ParseWarning::span);
+            prop_assert_eq!(span.map(|s| (s.row(), s.get(row))), Some((None, Ok(bad))));
+        }
+        Ok(())
+    }
+
+    fn skipped_entry_spans(layout: &Layout) -> Result<(), TestCaseError> {
+        use crate::{SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipReasonList, SipSecurity};
+        skipped_entry_span::<SipHeaderAddrList>("<sip:a@example.com>", "<>", layout)?;
+        skipped_entry_span::<ContactList>("<sip:a@example.com>;q=0.5", "<>", layout)?;
+        skipped_entry_span::<HistoryInfo>("<sip:a@example.com>;index=1", "<>;index=2", layout)?;
+        skipped_entry_span::<UriInfo>("<urn:example:1>", "<>;purpose=icon", layout)?;
+        skipped_entry_span::<SipGeolocation>("<cid:a@example.com>", "<>", layout)?;
+        skipped_entry_span::<SipVia>(
+            "SIP/2.0/UDP example.com;branch=z9hG4bK1",
+            "SIP/2.0/UDP :5060;branch=z9hG4bK2",
+            layout,
+        )?;
+        skipped_entry_span::<SipWarning>(
+            r#"399 example.com "a, b""#,
+            r#"39x example.org "c; d""#,
+            layout,
+        )?;
+        skipped_entry_span::<SipReasonList>("SIP;cause=200", ";cause=1", layout)?;
+        skipped_entry_span::<SipAccept>("application/sdp", "application/;q=1", layout)?;
+        skipped_entry_span::<SipAcceptEncoding>("gzip", ";q=1", layout)?;
+        skipped_entry_span::<SipAcceptLanguage>("en", ";q=1", layout)?;
+        skipped_entry_span::<SipSecurity>("tls;q=0.1", ";q=1", layout)?;
+        Ok(())
+    }
+
+    /// After a valid entry, an entry dropping `junk` under `code` yields
+    /// that warning with a span slicing the row to `junk`.
+    fn dropped_span<L: HeaderParse>(
+        code: WarningCode,
+        good: &str,
+        bad: &str,
+        junk: &str,
+    ) -> Result<(), TestCaseError> {
+        let row = format!("{good}, {}", bad.replace("{}", junk));
+        let parsed = L::parse_with_warnings(&row);
+        let span = parsed
+            .iter()
+            .flat_map(|p| &p.warnings)
+            .find(|w| w.code == code)
+            .map(crate::ParseWarning::span);
+        prop_assert_eq!(
+            span.map(|s| s.map(|s| (s.row(), s.get(&row)))),
+            Some(Some((None, Ok(junk)))),
+            "{:?}",
+            row
+        );
+        Ok(())
+    }
+
     proptest! {
+        #[test]
+        fn a_skipped_entry_spans_the_entry_as_received(layout in layout()) {
+            skipped_entry_spans(&layout)?;
+        }
+
+        #[test]
+        fn a_dropped_part_spans_the_text_dropped(
+            word in "[a-z][a-z0-9]{0,5}",
+            port in prop_oneof!["[a-z]{1,4}", "[7-9][0-9]{4,6}"],
+        ) {
+            let good = "<sip:a@example.com>";
+            dropped_span::<SipHeaderAddrList>(WarningCode::TrailingContent, good, "<sip:b@example.com> {};tag=1", &word)?;
+            dropped_span::<SipGeolocation>(WarningCode::TrailingContent, "<cid:a@example.com>", "<cid:b@example.com> {}", &word)?;
+            dropped_span::<SipWarning>(WarningCode::TrailingContent, r#"399 example.com "a""#, r#"399 example.org "b" {}"#, &word)?;
+            dropped_span::<SipVia>(WarningCode::InvalidPort, "SIP/2.0/UDP example.com", "SIP/2.0/UDP example.org:{};branch=z9hG4bK1", &port)?;
+            dropped_span::<crate::SipReasonList>(WarningCode::InvalidCause, "SIP;cause=200", "Q.850;cause={};text=\"x\"", &word)?;
+        }
+
         #[test]
         fn span_text_reads_back_as_its_value(a in row(), b in row()) {
             spans_read_back(&a, &b)?;
