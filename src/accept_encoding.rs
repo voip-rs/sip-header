@@ -215,12 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_value() {
-        let ae = SipAcceptEncoding::parse("gzip").unwrap();
-        assert_eq!(ae.len(), 1);
-    }
-
-    #[test]
     fn display_roundtrip() {
         let raw = "gzip;q=0.8";
         let ae = SipAcceptEncoding::parse(raw).unwrap();

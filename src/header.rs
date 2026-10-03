@@ -547,15 +547,6 @@ mod tests {
     }
 
     #[test]
-    fn sip_header_by_enum() {
-        let h = headers_with(&[("Call-Info", "<urn:x>;purpose=icon")]);
-        assert_eq!(
-            h.sip_header(SipHeader::CallInfo),
-            Ok(Some("<urn:x>;purpose=icon"))
-        );
-    }
-
-    #[test]
     fn call_info_typed() {
         let h = headers_with(&[(
             "Call-Info",

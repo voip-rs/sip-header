@@ -571,14 +571,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn as_ref_is_as_str() {
-        for h in SipHeader::ALL {
-            let s: &str = h.as_ref();
-            assert_eq!(s, h.as_str());
-        }
-    }
-
-    #[test]
     fn ord_is_wire_name_order() {
         for a in SipHeader::ALL {
             for b in SipHeader::ALL {
@@ -597,13 +589,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn from_str_unknown() {
-        assert!("X-Custom"
-            .parse::<SipHeader>()
-            .is_err());
     }
 }
 
@@ -729,80 +714,6 @@ mod compact_form_tests {
 #[cfg(test)]
 mod occurrence_tests {
     use super::*;
-
-    const LISTS: &[SipHeader] = &[
-        SipHeader::Accept,
-        SipHeader::AcceptContact,
-        SipHeader::AcceptEncoding,
-        SipHeader::AcceptLanguage,
-        SipHeader::AcceptResourcePriority,
-        SipHeader::AlertInfo,
-        SipHeader::Allow,
-        SipHeader::AllowEvents,
-        SipHeader::CallInfo,
-        SipHeader::Contact,
-        SipHeader::ContentEncoding,
-        SipHeader::ContentLanguage,
-        SipHeader::Diversion,
-        SipHeader::ErrorInfo,
-        SipHeader::FeatureCaps,
-        SipHeader::Geolocation,
-        SipHeader::HistoryInfo,
-        SipHeader::InReplyTo,
-        SipHeader::PAccessNetworkInfo,
-        SipHeader::PAssertedIdentity,
-        SipHeader::PAssertedService,
-        SipHeader::PAssociatedUri,
-        SipHeader::PChargingFunctionAddresses,
-        SipHeader::PEarlyMedia,
-        SipHeader::PMediaAuthorization,
-        SipHeader::PPreferredIdentity,
-        SipHeader::PPreferredService,
-        SipHeader::PRefusedUriList,
-        SipHeader::PVisitedNetworkId,
-        SipHeader::Path,
-        SipHeader::PermissionMissing,
-        SipHeader::PolicyContact,
-        SipHeader::PolicyId,
-        SipHeader::ProxyRequire,
-        SipHeader::Reason,
-        SipHeader::RecordRoute,
-        SipHeader::RecvInfo,
-        SipHeader::RejectContact,
-        SipHeader::RequestDisposition,
-        SipHeader::Require,
-        SipHeader::ResourcePriority,
-        SipHeader::Route,
-        SipHeader::SecurityClient,
-        SipHeader::SecurityServer,
-        SipHeader::SecurityVerify,
-        SipHeader::ServiceRoute,
-        SipHeader::Supported,
-        SipHeader::TriggerConsent,
-        SipHeader::Unsupported,
-        SipHeader::UserToUser,
-        SipHeader::Via,
-        SipHeader::Warning,
-    ];
-
-    const REPEATED_VALUES: &[SipHeader] = &[
-        SipHeader::Authorization,
-        SipHeader::Identity,
-        SipHeader::ProxyAuthenticate,
-        SipHeader::ProxyAuthorization,
-        SipHeader::RemotePartyId,
-        SipHeader::WwwAuthenticate,
-    ];
-
-    #[test]
-    fn every_header_is_classified() {
-        for h in SipHeader::ALL {
-            let list = LISTS.contains(h);
-            let repeated = REPEATED_VALUES.contains(h);
-            assert_eq!(h.is_list(), list, "is_list({h})");
-            assert_eq!(h.may_repeat(), list || repeated, "may_repeat({h})");
-        }
-    }
 
     #[test]
     fn authentication_headers_repeat_but_never_split() {

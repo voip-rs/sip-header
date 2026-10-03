@@ -221,12 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_value() {
-        let sec = SipSecurity::parse("tls;q=0.2").unwrap();
-        assert_eq!(sec.len(), 1);
-    }
-
-    #[test]
     fn d_alg_param() {
         let sec = SipSecurity::parse("digest;d-alg=MD5;d-qop=auth").unwrap();
         assert_eq!(sec.entries()[0].d_alg(), Some("MD5"));

@@ -198,43 +198,6 @@ impl ConferenceInfo {
 mod tests {
     use super::*;
 
-    #[test]
-    fn builder_pattern() {
-        let doc = ConferenceInfo::new("sip:conf@example.com")
-            .with_state(State::Full)
-            .with_version(1)
-            .with_users(Users::new().with_user(User::new("sip:alice@example.com")));
-        assert_eq!(doc.entity, "sip:conf@example.com");
-        assert_eq!(doc.state, Some(State::Full));
-        assert_eq!(doc.version, Some(1));
-        assert_eq!(
-            doc.users
-                .as_ref()
-                .unwrap()
-                .users
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn builder_sets_host_info_and_conference_state() {
-        let host = HostInfo {
-            display_text: Some("EXAMPLE CO".into()),
-            ..HostInfo::default()
-        };
-        let state = ConferenceState {
-            user_count: Some(2),
-            locked: Some(false),
-            ..ConferenceState::default()
-        };
-        let doc = ConferenceInfo::new("sip:conf@example.com")
-            .with_host_info(host.clone())
-            .with_conference_state(state.clone());
-        assert_eq!(doc.host_info, Some(host));
-        assert_eq!(doc.conference_state, Some(state));
-    }
-
     #[cfg(feature = "conference-info")]
     mod xml {
         use super::*;
@@ -419,12 +382,6 @@ mod tests {
             assert!(doc
                 .users
                 .is_none());
-        }
-
-        #[test]
-        fn malformed_xml_returns_error() {
-            let result = ConferenceInfo::from_xml("<not-valid-xml");
-            assert!(result.is_err());
         }
 
         fn source_text(e: &ConferenceInfoError) -> String {

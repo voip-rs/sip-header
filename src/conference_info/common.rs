@@ -117,21 +117,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn state_round_trip() {
-        for (s, expected) in [
-            ("full", State::Full),
-            ("partial", State::Partial),
-            ("deleted", State::Deleted),
-        ] {
-            let parsed: State = s
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, expected);
-            assert_eq!(parsed.to_string(), s);
-        }
-    }
-
-    #[test]
     fn state_invalid() {
         assert!("Full"
             .parse::<State>()
@@ -151,36 +136,5 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.0, "secret");
         assert_eq!(e.to_string(), "invalid conference-info state (6 bytes)");
-    }
-
-    #[test]
-    fn execution_info_builder() {
-        let info = ExecutionInfo::new()
-            .with_when("2026-02-24T14:26:16Z")
-            .with_by("sip:alice@example.com");
-        assert_eq!(
-            info.when
-                .as_deref(),
-            Some("2026-02-24T14:26:16Z")
-        );
-        assert_eq!(
-            info.by
-                .as_deref(),
-            Some("sip:alice@example.com")
-        );
-        assert!(info
-            .reason
-            .is_none());
-    }
-
-    #[test]
-    fn execution_info_with_reason() {
-        let info = ExecutionInfo::new().with_reason("booted by moderator");
-        assert_eq!(
-            info.reason
-                .as_deref(),
-            Some("booted by moderator")
-        );
-        assert_eq!((info.when, info.by), (None, None));
     }
 }

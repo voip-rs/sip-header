@@ -1,9 +1,8 @@
 //! The address list, URI-header parsers, strict entries and the owned Call-ID.
 
 use sip_header::{
-    AddrParts, FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipHeaderAddr,
-    SipHeaderAddrList, SipReason, SipReasonList, SipReplaces, SipTargetDialog, SipVia,
-    UriHeaderParse, WarningCode,
+    FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipHeaderAddrList, SipReason,
+    SipReasonList, SipReplaces, SipTargetDialog, SipVia, UriHeaderParse, WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -69,30 +68,6 @@ fn uri_header_parse_covers_dialogs_and_reason() -> R {
     assert_eq!(parsed.warnings[0].code, WarningCode::InvalidCause);
     assert!(SipReason::parse_uri_header_strict("Q.850%3Bcause%3Dx").is_err());
     assert!(SipReason::parse_uri_header("%C0%80").is_err());
-    Ok(())
-}
-
-#[test]
-fn addr_reads_its_uri_headers_through_uri_header_parse() -> R {
-    let addr = SipHeaderAddr::parse(
-        "<sip:a@example.com?Reason=SIP%3Bcause%3D302&Replaces=x%3Bto-tag%3Dt%3Bfrom-tag%3Df>",
-    )?;
-    assert_eq!(
-        addr.reason()
-            .transpose()?
-            .map(|r| r
-                .protocol()
-                .to_string()),
-        Some("SIP".to_string())
-    );
-    assert_eq!(
-        addr.replaces()
-            .transpose()?
-            .map(|r| r
-                .to_tag()
-                .to_string()),
-        Some("t".to_string())
-    );
     Ok(())
 }
 

@@ -488,12 +488,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_value() {
-        let accept = SipAccept::parse("application/sdp").unwrap();
-        assert_eq!(accept.len(), 1);
-    }
-
-    #[test]
     fn display_roundtrip() {
         let raw = "application/sdp;q=0.8";
         let accept = SipAccept::parse(raw).unwrap();

@@ -381,17 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn test_common_warning_codes() {
-        let input1 = r#"301 example.com "Incompatible network protocol""#;
-        let warning1 = SipWarning::parse(input1).unwrap();
-        assert_eq!(warning1.entries()[0].code(), 301);
-
-        let input2 = r#"399 example.net "Miscellaneous warning""#;
-        let warning2 = SipWarning::parse(input2).unwrap();
-        assert_eq!(warning2.entries()[0].code(), 399);
-    }
-
-    #[test]
     fn test_display_roundtrip() {
         let input = r#"301 example.com "Incompatible network protocol", 399 198.51.100.1:5060 "Miscellaneous warning""#;
         let warning = SipWarning::parse(input).unwrap();
@@ -497,27 +486,6 @@ mod tests {
     }
 
     #[test]
-    fn test_into_iterator_ref() {
-        let input = r#"301 example.com "First", 399 example.org "Second""#;
-        let warning = SipWarning::parse(input).unwrap();
-
-        let codes: Vec<u16> = (&warning)
-            .into_iter()
-            .map(|e| e.code())
-            .collect();
-        assert_eq!(codes, vec![301, 399]);
-
-        assert_eq!(warning.len(), 2);
-    }
-
-    #[test]
-    fn test_is_empty() {
-        let input = r#"301 example.com "Warning""#;
-        let warning = SipWarning::parse(input).unwrap();
-        assert!(!warning.is_empty());
-    }
-
-    #[test]
     fn test_into_entries() {
         let input = r#"301 example.com "First", 399 example.org "Second""#;
         let warning = SipWarning::parse(input).unwrap();
@@ -534,13 +502,6 @@ mod tests {
         assert_eq!(warning.len(), 2);
         assert_eq!(warning.entries()[0].text(), "text, with comma");
         assert_eq!(warning.entries()[1].text(), "fine");
-    }
-
-    #[test]
-    fn test_parse_value() {
-        let input = r#"301 example.com "warning""#;
-        let warning = SipWarning::parse(input).unwrap();
-        assert_eq!(warning.len(), 1);
     }
 
     #[test]

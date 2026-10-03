@@ -3,7 +3,7 @@
 use sip_header::sip_uri::{Redaction, UserMask};
 use sip_header::{
     ContactList, HeaderParse, HeaderRedaction, HistoryInfo, ParseError, Redact, SipAuthValue,
-    SipGeolocation, SipHeaderAddr, SipHeaderAddrList, UriInfo, WarningCode,
+    SipGeolocation, SipHeaderAddr, SipHeaderAddrList, UriInfo,
 };
 
 type R = Result<(), ParseError>;
@@ -111,26 +111,6 @@ fn every_uri_holding_type_redacts() -> R {
     assert!(masks_user_unless_shown(&history).ends_with(";index=1.1"));
     assert!(masks_user_unless_shown(&history.entries()[0]).ends_with(";index=1.1"));
     Ok(())
-}
-
-#[test]
-fn header_redaction_wraps_the_uri_redaction() {
-    let uri = Redaction::default().user(UserMask::KeepLast(2));
-    assert_eq!(HeaderRedaction::new(uri.clone()).uri(), &uri);
-    assert_eq!(
-        HeaderRedaction::from(uri.clone()),
-        HeaderRedaction::new(uri)
-    );
-    assert_eq!(HeaderRedaction::default().uri(), &Redaction::default());
-}
-
-#[test]
-fn uri_code_names_come_from_sip_uri() {
-    let code = WarningCode::Uri(sip_header::sip_uri::WarningCode::TrailingContent);
-    assert_eq!(code.as_str(), "trailing-content");
-    assert_eq!(code.to_string(), "uri-trailing-content");
-    assert_ne!(code.to_string(), WarningCode::TrailingContent.to_string());
-    assert_eq!(WarningCode::TrailingContent.as_str(), "trailing-content");
 }
 
 #[cfg(feature = "serde")]

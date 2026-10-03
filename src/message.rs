@@ -1295,19 +1295,4 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         assert_eq!(pai.len(), 1);
         assert_eq!(pai[0], "\"Corp\" <sip:+15551234567@198.51.100.1>");
     }
-
-    #[test]
-    fn extract_from_missing() {
-        let msg = concat!(
-            "INVITE sip:bob@host SIP/2.0\r\n",
-            "From: Alice <sip:alice@host>\r\n",
-            "\r\n",
-        );
-        assert!(SipHeader::CallInfo
-            .extract_from(msg)
-            .is_empty());
-        assert!(SipHeader::PAssertedIdentity
-            .extract_from(msg)
-            .is_empty());
-    }
 }

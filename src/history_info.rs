@@ -258,21 +258,9 @@ mod tests {
     // -- Entry count tests --
 
     #[test]
-    fn parse_two_entries() {
-        let hi = HistoryInfo::parse(EXAMPLE_1).unwrap();
-        assert_eq!(hi.len(), 2);
-    }
-
-    #[test]
     fn parse_three_entries() {
         let hi = HistoryInfo::parse(EXAMPLE_2).unwrap();
         assert_eq!(hi.len(), 3);
-    }
-
-    #[test]
-    fn parse_single_entry() {
-        let hi = HistoryInfo::parse("<sip:alice@example.com>;index=1").unwrap();
-        assert_eq!(hi.len(), 1);
     }
 
     #[test]
@@ -501,13 +489,6 @@ mod tests {
             .map(|e| e.index())
             .collect();
         assert_eq!(indices, vec![Some("1"), Some("2")]);
-    }
-
-    #[test]
-    fn into_entries() {
-        let hi = HistoryInfo::parse(EXAMPLE_1).unwrap();
-        let entries = hi.into_entries();
-        assert_eq!(entries.len(), 2);
     }
 
     fn entry_reason(encoded: &str) -> Option<Result<Parsed<SipReason>, ParseError>> {

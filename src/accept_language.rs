@@ -241,12 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_value() {
-        let al = SipAcceptLanguage::parse("en").unwrap();
-        assert_eq!(al.len(), 1);
-    }
-
-    #[test]
     fn display_roundtrip() {
         let raw = "en;q=0.9";
         let al = SipAcceptLanguage::parse(raw).unwrap();

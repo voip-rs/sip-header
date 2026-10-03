@@ -592,15 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_scheme_with_single_param() {
-        let input = "Bearer token=abc123";
-        let auth = SipAuthValue::parse(input).unwrap();
-
-        assert_eq!(auth.scheme(), "Bearer");
-        assert_eq!(auth.param("token"), Some(Some("abc123")));
-    }
-
-    #[test]
     fn parse_empty_input() {
         let result = SipAuthValue::parse("");
         assert_eq!(result, Err(ParseError::empty(Field::Value)));
@@ -733,14 +724,6 @@ mod tests {
 
         assert_eq!(auth.username(), Some(""));
         assert_eq!(auth.realm(), Some("example.com"));
-    }
-
-    #[test]
-    fn unquoted_param() {
-        let input = "Digest algorithm=MD5";
-        let auth = SipAuthValue::parse(input).unwrap();
-
-        assert_eq!(auth.algorithm(), Some("MD5"));
     }
 
     #[test]

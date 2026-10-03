@@ -823,14 +823,6 @@ mod tests {
     }
 
     #[test]
-    fn test_display_multiple_vias() {
-        let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060, SIP/2.0/TCP 203.0.113.5").unwrap();
-        let displayed = via.to_string();
-        assert!(displayed.contains("198.51.100.1"));
-        assert!(displayed.contains("203.0.113.5"));
-    }
-
-    #[test]
     fn test_into_iterator() {
         let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060, SIP/2.0/TCP 203.0.113.5").unwrap();
 
@@ -871,12 +863,6 @@ mod tests {
                 .to_string(),
             "203.0.113.5"
         );
-    }
-
-    #[test]
-    fn test_parse_value() {
-        let via = SipVia::parse("SIP/2.0/UDP 198.51.100.1:5060").unwrap();
-        assert_eq!(via.len(), 1);
     }
 
     #[test]

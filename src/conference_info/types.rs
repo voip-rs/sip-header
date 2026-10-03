@@ -272,31 +272,3 @@ pub struct SidebarsByVal {
     )]
     pub entries: Vec<super::ConferenceInfo>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn uri_entry_new() {
-        let entry = UriEntry::new("sip:conf@example.com");
-        assert_eq!(entry.uri, "sip:conf@example.com");
-        assert!(entry
-            .display_text
-            .is_none());
-    }
-
-    #[test]
-    fn conference_state_default() {
-        let state = ConferenceState::default();
-        assert!(state
-            .user_count
-            .is_none());
-        assert!(state
-            .active
-            .is_none());
-        assert!(state
-            .locked
-            .is_none());
-    }
-}

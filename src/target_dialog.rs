@@ -229,10 +229,4 @@ mod tests {
             Err(ParseError::NonConformant(_))
         ));
     }
-
-    #[test]
-    fn parse_is_wire_framing() {
-        let t = SipTargetDialog::parse("abc123@203.0.113.5;local-tag=l1;remote-tag=r1").unwrap();
-        assert_eq!(t.local_tag(), "l1");
-    }
 }

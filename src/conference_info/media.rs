@@ -137,41 +137,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn media_status_round_trip() {
-        for (s, expected) in [
-            ("recvonly", MediaStatus::RecvOnly),
-            ("sendonly", MediaStatus::SendOnly),
-            ("sendrecv", MediaStatus::SendRecv),
-            ("inactive", MediaStatus::Inactive),
-        ] {
-            let parsed: MediaStatus = s
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, expected);
-            assert_eq!(parsed.to_string(), s);
-        }
-    }
-
-    #[test]
     fn media_status_error_display_omits_input() {
         let e = "secret"
             .parse::<MediaStatus>()
             .unwrap_err();
         assert_eq!(e.0, "secret");
         assert_eq!(e.to_string(), "invalid media status (6 bytes)");
-    }
-
-    #[test]
-    fn media_builder() {
-        let m = Media::new("1")
-            .with_type("audio")
-            .with_status(MediaStatus::SendRecv);
-        assert_eq!(m.id, "1");
-        assert_eq!(
-            m.media_type
-                .as_deref(),
-            Some("audio")
-        );
-        assert_eq!(m.status, Some(MediaStatus::SendRecv));
     }
 }

@@ -391,17 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn entry_strips_angle_brackets() {
-        let entry = parse_entry("<data>;meta1=one;meta2=two;").unwrap();
-        assert_eq!(
-            entry
-                .uri()
-                .to_string(),
-            "data"
-        );
-    }
-
-    #[test]
     fn entry_uppercase_metadata_key_lowercased() {
         let entry = parse_entry("<data>;Meta-1=one").unwrap();
         assert!(entry

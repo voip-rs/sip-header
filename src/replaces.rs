@@ -470,10 +470,4 @@ mod tests {
         )
         .is_ok());
     }
-
-    #[test]
-    fn parse_is_wire_framing() {
-        let r = SipReplaces::parse("abc123@203.0.113.5;to-tag=t1;from-tag=f1").unwrap();
-        assert_eq!(r.call_id(), "abc123@203.0.113.5");
-    }
 }

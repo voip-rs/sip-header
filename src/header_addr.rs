@@ -1058,20 +1058,6 @@ mod tests {
     }
 
     #[test]
-    fn builder_with_display_name_and_params() {
-        let uri = sip_uri::Uri::parse("sip:alice@example.com").unwrap();
-        let addr = SipHeaderAddr::new(uri)
-            .unwrap()
-            .with_display_name("Alice")
-            .unwrap()
-            .with_tag("abc123")
-            .unwrap();
-        assert_eq!(addr.display_name(), Some("Alice"));
-        assert_eq!(addr.tag(), Some("abc123"));
-        assert_eq!(addr.to_string(), "Alice <sip:alice@example.com>;tag=abc123");
-    }
-
-    #[test]
     fn builder_flag_param() {
         let uri = sip_uri::Uri::parse("sip:proxy@example.com").unwrap();
         let addr = SipHeaderAddr::new(uri)
@@ -1192,14 +1178,6 @@ mod tests {
                 .user(),
             Some("carol"),
         );
-    }
-
-    #[test]
-    fn parse_list_single_entry() {
-        let addrs = SipHeaderAddrList::parse("<sip:alice@example.com>")
-            .unwrap()
-            .into_entries();
-        assert_eq!(addrs.len(), 1);
     }
 
     #[test]

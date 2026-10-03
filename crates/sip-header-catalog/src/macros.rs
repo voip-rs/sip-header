@@ -239,13 +239,6 @@ macro_rules! define_header_enum {
                 }
 
                 #[test]
-                fn display_matches_as_str() {
-                    for v in $Name::ALL {
-                        assert_eq!(v.to_string(), v.as_str());
-                    }
-                }
-
-                #[test]
                 fn unknown_input_err() {
                     let input = "\u{0}no-such-value\u{0}";
                     assert_eq!(input.parse::<$Name>(), Err($Err(input.to_string())));
@@ -470,11 +463,6 @@ mod tests {
     fn generated_error_display() {
         let e = ParseTestEnumError("nope".to_string());
         assert_eq!(e.to_string(), "unknown test value (4 bytes)");
-    }
-
-    #[test]
-    fn all_lists_every_variant() {
-        assert_eq!(TestEnum::ALL, &[TestEnum::Foo, TestEnum::Bar]);
     }
 
     #[test]

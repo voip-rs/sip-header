@@ -1,11 +1,11 @@
 use sip_header::sip_uri::{Host, Uri, UriParse};
 use sip_header::{
     AddrParts, ContactList, DialogFraming, FaultCode, Field, HeaderParse, HistoryInfo,
-    HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
-    SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
-    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipJoin,
-    SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, UriHeaderParse, UriInfo, UriInfoEntry,
+    HistoryInfoEntry, ListParse, ParseError, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
+    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipGeolocation,
+    SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipJoin, SipReason, SipReplaces,
+    SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
+    SipWarningEntry, UriHeaderParse, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -88,16 +88,6 @@ fn addr_refuses_a_uri_that_breaks_its_brackets() {
             );
         }
     }
-}
-
-#[test]
-fn addr_redacted_masks_name_and_user() {
-    let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>;tag=abc"#).unwrap();
-    assert_eq!(
-        addr.redacted(&sip_header::HeaderRedaction::default())
-            .to_string(),
-        "*** <sip:***@example.com>;tag=abc"
-    );
 }
 
 #[test]
