@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::iter::FusedIterator;
 
-use crate::{RowError, SipHeader, SipHeaderRows};
+use crate::{NameMatcher, RowError, SipHeader, SipHeaderRows};
 
 fn owned(text: Cow<'_, str>) -> Cow<'static, str> {
     Cow::Owned(text.into_owned())
@@ -97,8 +97,9 @@ impl<'a> SipHeaderFields<'a> {
     /// [`SipHeader::name_matches`] does, returning how many were removed.
     pub fn remove(&mut self, name: &str) -> usize {
         let before = self.len();
+        let matcher = NameMatcher::new(name);
         self.rows
-            .retain(|(wire, _)| !SipHeader::name_matches(name, wire));
+            .retain(|(wire, _)| !matcher.matches(wire));
         before - self.len()
     }
 
@@ -252,9 +253,10 @@ impl FusedIterator for SipHeaderFieldsIntoIter<'_> {}
 
 impl SipHeaderRows for SipHeaderFields<'_> {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
+        let matcher = NameMatcher::new(name);
         Ok(self
             .iter()
-            .filter(|(wire, _)| SipHeader::name_matches(name, wire))
+            .filter(|(wire, _)| matcher.matches(wire))
             .map(|(_, value)| value)
             .collect())
     }

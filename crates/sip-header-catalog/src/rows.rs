@@ -7,7 +7,7 @@ use std::hash::BuildHasher;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::SipHeader;
+use crate::{NameMatcher, SipHeader};
 
 /// What a store's framing of a header's rows broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -142,21 +142,23 @@ impl std::error::Error for RowError {}
 /// accessor's job, never the store's.
 ///
 /// - A store keyed by wire name matches the name case-insensitively and
-///   through its compact form, as [`SipHeader::name_matches`] does, and
-///   returns every spelling's rows interleaved in wire order.
+///   through its compact form, and returns every spelling's rows
+///   interleaved in wire order. [`NameMatcher`] resolves the name once per
+///   lookup and tests each row's name against it.
 /// - A store keyed another way translates the name to its own key and
 ///   looks it up directly.
 /// - A store that decodes its own framing reports a failure as
 ///   [`RowError`] rather than returning undecoded text.
 ///
 /// ```
-/// use sip_header_catalog::{RowError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
+/// use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
 ///
 /// struct Wire(Vec<(&'static str, &'static str)>);
 ///
 /// impl SipHeaderRows for Wire {
 ///     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
-///         Ok(self.0.iter().filter(|(k, _)| SipHeader::name_matches(name, k)).map(|(_, v)| *v).collect())
+///         let matcher = NameMatcher::new(name);
+///         Ok(self.0.iter().filter(|(k, _)| matcher.matches(k)).map(|(_, v)| *v).collect())
 ///     }
 /// }
 ///
@@ -234,20 +236,16 @@ fn map_rows<'a, V: MapValue + 'a>(
     entries: impl Iterator<Item = (&'a str, &'a V)>,
     name: &str,
 ) -> Vec<&'a str> {
-    let header = SipHeader::parse_name(name).ok();
-    let canonical = header.map_or(name, |h| h.as_str());
+    let matcher = NameMatcher::new(name);
     let mut compact_buf = [0u8; MAX_UTF8_CHAR_LEN];
-    let compact = header
+    let compact = matcher
+        .header
         .and_then(|h| h.compact_form())
         .map(|c| &*c.encode_utf8(&mut compact_buf));
-    let exact = [Some(canonical), compact];
+    let exact = [Some(matcher.name), compact];
 
-    let matches = |key: &str| match header {
-        Some(h) => h.matches(key),
-        None => key.eq_ignore_ascii_case(name),
-    };
     let mut others: Vec<(&str, &V)> = entries
-        .filter(|(key, _)| !exact.contains(&Some(*key)) && matches(key))
+        .filter(|(key, _)| !exact.contains(&Some(*key)) && matcher.matches(key))
         .collect();
     others.sort_unstable_by_key(|(key, _)| (key.len() == 1, *key));
 

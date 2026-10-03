@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use sip_header_catalog::{RowError, SipHeader, SipHeaderFields, SipHeaderRows};
+use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
@@ -226,9 +226,10 @@ fn append_folded(value: &mut Cow<'_, str>, line: &str) {
 ///
 /// Returns an empty `Vec` if no header with the given name is found.
 pub fn extract_header(message: &str, name: &str) -> Vec<String> {
+    let matcher = NameMatcher::new(name);
     SipMessageHeaders::new(message)
         .iter()
-        .filter(|(wire, _)| SipHeader::name_matches(name, wire))
+        .filter(|(wire, _)| matcher.matches(wire))
         .map(|(_, value)| value.to_string())
         .collect()
 }

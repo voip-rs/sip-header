@@ -11,7 +11,7 @@ cargo add sip-header-catalog
 ## What it holds
 
 - `SipHeader`: every name in the [IANA SIP header field registry](https://www.iana.org/assignments/sip-parameters/sip-parameters.xhtml#sip-parameters-2) and deployed headers from expired drafts (Diversion, Remote-Party-ID), with canonical wire casing, RFC 3261 §7.3.3 compact forms, `registry()` saying which list a name comes from, and `is_list()` / `may_repeat()` from each header's ABNF.
-- `SipHeaderRows`, `SipHeaderRowsExt` and `RowError`: the raw row lookup.
+- `SipHeaderRows`, `SipHeaderRowsExt` and `RowError`: the raw row lookup, and `NameMatcher`, which a store keyed by wire name matches each row's name with.
 - `SipHeaderFields` and `SipHeaderField`: received header rows held as sent, as a store.
 - `define_header_enum!` and `HeaderName`: the same name-enum shape for a caller's own catalogs.
 
@@ -35,21 +35,22 @@ A store has one required method, `sip_header_rows_str`, and `SipHeaderRowsExt` d
 
 - Callers pass the canonical name (`"Call-ID"`, never `"i"`), or a name the catalog does not register.
 - A row is one header occurrence as the store holds it. Splitting a row into list entries is the accessor's job, never the store's.
-- A store keyed by wire name matches the name case-insensitively and through its compact form, as `SipHeader::name_matches` does, and returns every spelling's rows interleaved in wire order.
+- A store keyed by wire name matches the name case-insensitively and through its compact form, and returns every spelling's rows interleaved in wire order. `NameMatcher::new(name)` resolves the name once per lookup; its `matches` tests each row's name without re-resolving it.
 - A store keyed another way translates the name to its own key and looks it up directly.
 - A store that decodes its own framing reports a failure as `RowError` rather than returning undecoded text.
 
 ```rust
-use sip_header_catalog::{RowError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
+use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderRows, SipHeaderRowsExt};
 
 struct Message(Vec<(String, String)>);
 
 impl SipHeaderRows for Message {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> {
+        let matcher = NameMatcher::new(name);
         Ok(self
             .0
             .iter()
-            .filter(|(wire, _)| SipHeader::name_matches(name, wire))
+            .filter(|(wire, _)| matcher.matches(wire))
             .map(|(_, value)| value.as_str())
             .collect())
     }

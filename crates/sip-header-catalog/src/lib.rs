@@ -502,15 +502,15 @@ impl SipHeader {
     /// Whether `wire_name`, as a message spells it, names this header:
     /// case-insensitively, or as its compact form.
     pub fn matches(&self, wire_name: &str) -> bool {
-        wire_name.eq_ignore_ascii_case(self.as_str())
-            || matches!(wire_name.as_bytes(), [c] if Self::from_compact(char::from(*c)) == Some(*self))
+        NameMatcher::from(*self).matches(wire_name)
     }
 
     /// [`matches`](Self::matches) for a name the catalog may not register:
     /// an unregistered `name` matches `wire_name` case-insensitively only.
+    /// Matching many wire names against one `name` resolves it once through
+    /// [`NameMatcher`].
     pub fn name_matches(name: &str, wire_name: &str) -> bool {
-        name.eq_ignore_ascii_case(wire_name)
-            || Self::parse_name(name).is_ok_and(|h| h.matches(wire_name))
+        NameMatcher::new(name).matches(wire_name)
     }
 
     /// Parse a header name, including RFC 3261 §7.3.3 compact forms.
@@ -518,10 +518,69 @@ impl SipHeader {
     /// Tries compact form resolution for single-character input, then
     /// falls back to case-insensitive canonical name matching.
     pub fn parse_name(name: &str) -> Result<Self, ParseSipHeaderError> {
+        Self::lookup(name).ok_or_else(|| ParseSipHeaderError(name.to_string()))
+    }
+
+    fn lookup(name: &str) -> Option<Self> {
         match name.as_bytes() {
-            [c] => Self::from_compact(char::from(*c))
-                .ok_or_else(|| ParseSipHeaderError(name.to_string())),
-            _ => name.parse(),
+            [c] => Self::from_compact(char::from(*c)),
+            _ => Self::ALL
+                .iter()
+                .copied()
+                .find(|h| name.eq_ignore_ascii_case(h.as_str())),
+        }
+    }
+}
+
+/// A header name resolved once, for testing many wire names against it as
+/// [`SipHeader::name_matches`] does.
+///
+/// A registered name matches every spelling of its header, compact form
+/// included; an unregistered one matches case-insensitively only. A store
+/// keyed by wire name builds one per lookup and tests each row's name with
+/// [`matches`](Self::matches), so the query is never re-resolved per row.
+///
+/// ```
+/// use sip_header_catalog::{NameMatcher, SipHeader};
+///
+/// let via = NameMatcher::new("Via");
+/// assert!(via.matches("v") && via.matches("VIA") && !via.matches("f"));
+/// assert!(NameMatcher::from(SipHeader::From).matches("f"));
+/// let custom = NameMatcher::new("X-Custom");
+/// assert!(custom.matches("x-custom") && !custom.matches("x"));
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct NameMatcher<'a> {
+    name: &'a str,
+    header: Option<SipHeader>,
+}
+
+impl<'a> NameMatcher<'a> {
+    /// Resolve `name`, a canonical name, a compact form or a name the
+    /// catalog does not register.
+    pub fn new(name: &'a str) -> Self {
+        match SipHeader::lookup(name) {
+            Some(h) => h.into(),
+            None => NameMatcher { name, header: None },
+        }
+    }
+
+    /// Whether `wire_name`, as a message spells it, names the resolved
+    /// header.
+    pub fn matches(&self, wire_name: &str) -> bool {
+        wire_name.eq_ignore_ascii_case(self.name)
+            || matches!(
+                (self.header, wire_name.as_bytes()),
+                (Some(h), [c]) if SipHeader::from_compact(char::from(*c)) == Some(h)
+            )
+    }
+}
+
+impl From<SipHeader> for NameMatcher<'_> {
+    fn from(header: SipHeader) -> Self {
+        NameMatcher {
+            name: header.as_str(),
+            header: Some(header),
         }
     }
 }

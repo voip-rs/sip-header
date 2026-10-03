@@ -72,9 +72,9 @@ struct ReadmeDoctests;
 
 pub use sip_header_catalog;
 pub use sip_header_catalog::{
-    define_header_enum, HeaderName, ParseSipHeaderError, Registry, RowError, RowErrorKind,
-    SipHeader, SipHeaderField, SipHeaderFieldRows, SipHeaderFields, SipHeaderFieldsIntoIter,
-    SipHeaderFieldsIter, SipHeaderRows, SipHeaderRowsExt,
+    define_header_enum, HeaderName, NameMatcher, ParseSipHeaderError, Registry, RowError,
+    RowErrorKind, SipHeader, SipHeaderField, SipHeaderFieldRows, SipHeaderFields,
+    SipHeaderFieldsIntoIter, SipHeaderFieldsIter, SipHeaderRows, SipHeaderRowsExt,
 };
 pub use sip_uri;
 
