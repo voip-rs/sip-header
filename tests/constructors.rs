@@ -3,9 +3,9 @@ use sip_header::{
     AddrParts, ContactList, DialogFraming, FaultCode, Field, HeaderParse, HistoryInfo,
     HistoryInfoEntry, ListParse, ParseError, Redact, SipAccept, SipAcceptEncoding,
     SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
-    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipReason,
-    SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry,
-    SipWarning, SipWarningEntry, UriHeaderParse, UriInfo, UriInfoEntry,
+    SipAuthValue, SipGeolocation, SipGeolocationEntry, SipHeaderAddr, SipHeaderAddrList, SipJoin,
+    SipReason, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, UriHeaderParse, UriInfo, UriInfoEntry,
 };
 
 type R = Result<(), ParseError>;
@@ -478,4 +478,74 @@ fn dialog_ids_refuse_injected_structure() {
             "{tag:?}"
         );
     }
+}
+
+#[test]
+fn addr_parts_read_every_dialog_uri_header_with_warnings() -> R {
+    let addr = SipHeaderAddr::parse(concat!(
+        "<sip:bob@example.com",
+        "?Replaces=a%40example.com%3Bto-tag%3Dt%3Bfrom-tag%3Df%3Bx%3B",
+        "&Join=b%40example.com%3Bto-tag%3Dt%3Bfrom-tag%3Df",
+        "&Target-Dialog=c%40example.com%3Blocal-tag%3Dl%3Bremote-tag%3Dr>",
+    ))?;
+    let replaces = addr
+        .replaces_with_warnings()
+        .unwrap()?;
+    assert_eq!(
+        Some(replaces.value),
+        addr.replaces()
+            .transpose()?
+    );
+    assert_eq!(
+        replaces
+            .warnings
+            .iter()
+            .map(|w| w.code)
+            .collect::<Vec<_>>(),
+        [sip_header::WarningCode::EmptyEntry]
+    );
+    let join = addr
+        .join_with_warnings()
+        .unwrap()?;
+    assert!(join
+        .warnings
+        .is_empty());
+    assert_eq!(
+        Some(join.value),
+        addr.join()
+            .transpose()?
+    );
+    assert_eq!(
+        addr.join()
+            .unwrap()?,
+        SipJoin::parse_uri_header("b%40example.com%3Bto-tag%3Dt%3Bfrom-tag%3Df")?
+    );
+    let target = addr
+        .target_dialog_with_warnings()
+        .unwrap()?;
+    assert!(target
+        .warnings
+        .is_empty());
+    assert_eq!(
+        addr.target_dialog()
+            .unwrap()?,
+        SipTargetDialog::parse_uri_header("c%40example.com%3Blocal-tag%3Dl%3Bremote-tag%3Dr")?
+    );
+    assert_eq!(
+        Some(target.value),
+        addr.target_dialog()
+            .transpose()?
+    );
+
+    let bare = SipHeaderAddr::parse("<sip:bob@example.com>")?;
+    assert!(bare
+        .join()
+        .is_none());
+    assert!(bare
+        .target_dialog_with_warnings()
+        .is_none());
+    assert!(bare
+        .replaces_with_warnings()
+        .is_none());
+    Ok(())
 }
