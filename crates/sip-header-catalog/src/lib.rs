@@ -328,34 +328,34 @@ define_header_enum! {
 ///
 /// Includes forms from RFC 3261, RFC 3515, RFC 3841, RFC 3892, RFC 4028,
 /// RFC 4474, and RFC 6665.
-const COMPACT_FORMS: &[(u8, SipHeader)] = &[
-    (b'a', SipHeader::AcceptContact),
-    (b'b', SipHeader::ReferredBy),
-    (b'c', SipHeader::ContentType),
-    (b'd', SipHeader::RequestDisposition),
-    (b'e', SipHeader::ContentEncoding),
-    (b'f', SipHeader::From),
-    (b'i', SipHeader::CallId),
-    (b'j', SipHeader::RejectContact),
-    (b'k', SipHeader::Supported),
-    (b'l', SipHeader::ContentLength),
-    (b'm', SipHeader::Contact),
-    (b'n', SipHeader::IdentityInfo),
-    (b'o', SipHeader::Event),
-    (b'r', SipHeader::ReferTo),
-    (b's', SipHeader::Subject),
-    (b't', SipHeader::To),
-    (b'u', SipHeader::AllowEvents),
-    (b'v', SipHeader::Via),
-    (b'x', SipHeader::SessionExpires),
-    (b'y', SipHeader::Identity),
+const COMPACT_FORMS: &[(char, SipHeader)] = &[
+    ('a', SipHeader::AcceptContact),
+    ('b', SipHeader::ReferredBy),
+    ('c', SipHeader::ContentType),
+    ('d', SipHeader::RequestDisposition),
+    ('e', SipHeader::ContentEncoding),
+    ('f', SipHeader::From),
+    ('i', SipHeader::CallId),
+    ('j', SipHeader::RejectContact),
+    ('k', SipHeader::Supported),
+    ('l', SipHeader::ContentLength),
+    ('m', SipHeader::Contact),
+    ('n', SipHeader::IdentityInfo),
+    ('o', SipHeader::Event),
+    ('r', SipHeader::ReferTo),
+    ('s', SipHeader::Subject),
+    ('t', SipHeader::To),
+    ('u', SipHeader::AllowEvents),
+    ('v', SipHeader::Via),
+    ('x', SipHeader::SessionExpires),
+    ('y', SipHeader::Identity),
 ];
 
 impl SipHeader {
     /// Resolve a compact form letter to the corresponding header (RFC 3261 §7.3.3).
     ///
     /// Case-insensitive: both `'f'` and `'F'` resolve to [`SipHeader::From`].
-    pub fn from_compact(ch: u8) -> Option<Self> {
+    pub fn from_compact(ch: char) -> Option<Self> {
         let lower = ch.to_ascii_lowercase();
         COMPACT_FORMS
             .iter()
@@ -368,7 +368,7 @@ impl SipHeader {
         COMPACT_FORMS
             .iter()
             .find(|(_, h)| h == self)
-            .map(|(c, _)| *c as char)
+            .map(|(c, _)| *c)
     }
 
     /// Whether the header's grammar is a comma list, `x *(COMMA x)` (RFC 3261
@@ -559,7 +559,7 @@ impl SipHeader {
     /// case-insensitively, or as its compact form.
     pub fn matches(&self, wire_name: &str) -> bool {
         wire_name.eq_ignore_ascii_case(self.as_str())
-            || matches!(wire_name.as_bytes(), [c] if Self::from_compact(*c) == Some(*self))
+            || matches!(wire_name.as_bytes(), [c] if Self::from_compact(char::from(*c)) == Some(*self))
     }
 
     /// [`matches`](Self::matches) for a name the catalog may not register:
@@ -575,7 +575,8 @@ impl SipHeader {
     /// falls back to case-insensitive canonical name matching.
     pub fn parse_name(name: &str) -> Result<Self, ParseSipHeaderError> {
         match name.as_bytes() {
-            [c] => Self::from_compact(*c).ok_or_else(|| ParseSipHeaderError(name.to_string())),
+            [c] => Self::from_compact(char::from(*c))
+                .ok_or_else(|| ParseSipHeaderError(name.to_string())),
             _ => name.parse(),
         }
     }
@@ -638,19 +639,19 @@ mod compact_form_tests {
 
     #[test]
     fn from_compact_known() {
-        assert_eq!(SipHeader::from_compact(b'f'), Some(SipHeader::From));
-        assert_eq!(SipHeader::from_compact(b'F'), Some(SipHeader::From));
-        assert_eq!(SipHeader::from_compact(b'v'), Some(SipHeader::Via));
-        assert_eq!(SipHeader::from_compact(b'i'), Some(SipHeader::CallId));
-        assert_eq!(SipHeader::from_compact(b'm'), Some(SipHeader::Contact));
-        assert_eq!(SipHeader::from_compact(b't'), Some(SipHeader::To));
-        assert_eq!(SipHeader::from_compact(b'c'), Some(SipHeader::ContentType));
+        assert_eq!(SipHeader::from_compact('f'), Some(SipHeader::From));
+        assert_eq!(SipHeader::from_compact('F'), Some(SipHeader::From));
+        assert_eq!(SipHeader::from_compact('v'), Some(SipHeader::Via));
+        assert_eq!(SipHeader::from_compact('i'), Some(SipHeader::CallId));
+        assert_eq!(SipHeader::from_compact('m'), Some(SipHeader::Contact));
+        assert_eq!(SipHeader::from_compact('t'), Some(SipHeader::To));
+        assert_eq!(SipHeader::from_compact('c'), Some(SipHeader::ContentType));
     }
 
     #[test]
     fn from_compact_unknown() {
-        assert_eq!(SipHeader::from_compact(b'z'), None);
-        assert_eq!(SipHeader::from_compact(b'g'), None);
+        assert_eq!(SipHeader::from_compact('z'), None);
+        assert_eq!(SipHeader::from_compact('g'), None);
     }
 
     #[test]
@@ -737,7 +738,7 @@ mod compact_form_tests {
         ];
         for (ch, header) in expected {
             assert_eq!(
-                SipHeader::from_compact(ch as u8),
+                SipHeader::from_compact(ch),
                 Some(header),
                 "compact form '{ch}' failed"
             );

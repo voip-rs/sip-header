@@ -151,7 +151,7 @@ All IANA-registered compact forms (RFC 3261 §7.3.3) are supported:
 ```rust
 use sip_header::SipHeader;
 
-assert_eq!(SipHeader::from_compact(b'f'), Some(SipHeader::From));
+assert_eq!(SipHeader::from_compact('f'), Some(SipHeader::From));
 assert_eq!(SipHeader::From.compact_form(), Some('f'));
 assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
 ```
