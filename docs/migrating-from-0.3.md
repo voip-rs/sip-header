@@ -58,7 +58,7 @@ let parsed = SipHeaderAddr::parse_with_warnings(s)?;   // value + warnings
 let addr = SipHeaderAddr::parse_strict(s)?;             // refuses any breach
 ```
 
-A proxy often cannot refuse a call over a malformed header, yet the sender only gets fixed through a report naming the breach. `parse` keeps whatever value the input yields; `parse_with_warnings` returns it with the breaches found; `parse_strict` turns the first one into the error. A warning names the field, a code, a byte position and, for lists, the entry index. It never carries the text, which may be a caller's number.
+A proxy often cannot refuse a call over a malformed header, yet the sender only gets fixed through a report naming the breach. `parse` keeps whatever value the input yields; `parse_with_warnings` returns it with the breaches found; `parse_strict` turns the first one into the error. A warning names the field, a code, a byte position and, for lists, the entry index. It never carries the text, which may be a caller's number. `Parsed { value, warnings }` destructures, as sip-uri's does, and so does `ExtractedHeaders { headers, skipped }`.
 
 `Err` from `parse` now means there is no usable value: empty where the grammar needs content, or a structure the RFC tells a receiver to reject outright, such as a second Replaces.
 

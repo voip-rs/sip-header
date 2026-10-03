@@ -11,7 +11,6 @@ use crate::span::Relocation;
 /// Returned by the `parse_with_warnings` constructors; `value` is what
 /// [`HeaderParse::parse`](crate::HeaderParse::parse) returns for the same input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct Parsed<T> {
     /// The parsed value.
     pub value: T,
