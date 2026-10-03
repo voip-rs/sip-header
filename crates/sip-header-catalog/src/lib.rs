@@ -686,6 +686,32 @@ mod compact_form_tests {
     }
 
     #[test]
+    fn compact_form_round_trips_through_from_compact() {
+        for h in SipHeader::ALL {
+            let back = h
+                .compact_form()
+                .and_then(SipHeader::from_compact);
+            assert_eq!(
+                back,
+                h.compact_form()
+                    .map(|_| *h),
+                "{h}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_compact_resolves_exactly_the_compact_forms() {
+        for ch in (0..=0x2ff).filter_map(char::from_u32) {
+            let expected = SipHeader::ALL
+                .iter()
+                .copied()
+                .find(|h| h.compact_form() == Some(ch.to_ascii_lowercase()));
+            assert_eq!(SipHeader::from_compact(ch), expected, "{ch:?}");
+        }
+    }
+
+    #[test]
     fn all_compact_forms_resolve() {
         let expected = [
             ('a', SipHeader::AcceptContact),
