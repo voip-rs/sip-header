@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use sip_header::{
     ContactList, FaultCode, HeaderParse, HistoryInfo, ParseError, SipAccept, SipAcceptEncoding,
-    SipAcceptLanguage, SipGeolocation, SipHeaderAddrList, SipReasonList, SipSecurity, SipVia,
-    SipWarning, UriInfo,
+    SipAcceptLanguage, SipGeolocation, SipHeader, SipHeaderAddrList, SipHeaderLookup,
+    SipReasonList, SipSecurity, SipVia, SipWarning, TokenList, TypedHeader, UriInfo,
 };
 
 fn is_empty_fault<T: std::fmt::Debug>(r: Result<T, ParseError>) -> bool {
@@ -141,4 +143,198 @@ fn contact_list_mutation_keeps_wildcard_and_addresses_apart() {
     assert!(is_empty_fault(l.remove(0)));
     assert_eq!(l.addrs(), [second]);
     assert!(!l.is_wildcard());
+}
+
+fn token_headers() -> &'static [SipHeader] {
+    <TokenList as TypedHeader>::HEADERS
+}
+
+#[test]
+fn token_list_builds_and_mutates_by_its_grammar() -> Result<(), ParseError> {
+    let mut l = TokenList::new(SipHeader::Supported, ["timer", "100rel"])?;
+    assert_eq!(l, TokenList::parse(SipHeader::Supported, "timer, 100rel")?);
+    assert_eq!(l.header(), SipHeader::Supported);
+    assert!(l.contains("TIMER"));
+    assert_eq!((l.len(), l.is_empty()), (2, false));
+    l.push("path")?;
+    assert_eq!(l.to_string(), "timer, 100rel, path");
+    assert_eq!(l.remove(1), Ok(Some("100rel".to_string())));
+    assert_eq!(l.remove(5), Ok(None));
+    l.retain(|t| t != "timer")?;
+    assert_eq!(
+        l.iter()
+            .collect::<Vec<_>>(),
+        ["path"]
+    );
+    l.retain(|_| false)?;
+    assert!(l.is_empty());
+    assert!(TokenList::new(SipHeader::Allow, Vec::<&str>::new())?.is_empty());
+
+    assert!(is_empty_fault(TokenList::new(
+        SipHeader::Require,
+        Vec::<&str>::new()
+    )));
+    let mut r = TokenList::new(SipHeader::Require, ["timer", "100rel"])?;
+    assert!(is_empty_fault(r.retain(|_| false)));
+    assert_eq!(r.len(), 2);
+    assert_eq!(r.remove(0), Ok(Some("timer".to_string())));
+    assert!(is_empty_fault(r.remove(0)));
+    assert_eq!(
+        r.iter()
+            .collect::<Vec<_>>(),
+        ["100rel"]
+    );
+
+    assert_ne!(
+        TokenList::new(SipHeader::Supported, ["timer"])?,
+        TokenList::new(SipHeader::Require, ["timer"])?
+    );
+    assert!(matches!(
+        TokenList::new(SipHeader::Via, ["timer"]),
+        Err(ParseError::Malformed(f)) if f.code == FaultCode::WrongHeader
+    ));
+    Ok(())
+}
+
+#[test]
+fn token_list_builders_refuse_what_prints_differently() {
+    let candidates = [
+        "timer",
+        "INVITE",
+        "a@example.com",
+        "a b",
+        "a,b",
+        "a;b",
+        "a\"b",
+        "a<b",
+        "a>b",
+        "a@b@c",
+        "a\r\nb",
+        "a\0",
+        "",
+        " a",
+        "a=b",
+        "(a)",
+    ];
+    for &header in token_headers() {
+        for c in candidates {
+            let Ok(built) = TokenList::new(header, [c]) else {
+                continue;
+            };
+            assert_eq!(
+                TokenList::parse_strict(header, &built.to_string()),
+                Ok(built.clone()),
+                "{header} {c:?}"
+            );
+            let mut pushed = TokenList::new(header, ["x"]).unwrap();
+            pushed
+                .push(c)
+                .unwrap();
+            assert_eq!(
+                TokenList::parse_strict(header, &pushed.to_string()),
+                Ok(pushed),
+                "{header} {c:?}"
+            );
+        }
+        for framing in ["a,b", "a\"b", "a<b", "a>b", "a\r\nb", ""] {
+            assert!(
+                TokenList::new(header, [framing]).is_err(),
+                "{header} {framing:?}"
+            );
+            let mut l = TokenList::new(header, ["x"]).unwrap();
+            assert!(
+                l.push(framing)
+                    .is_err(),
+                "{header} {framing:?}"
+            );
+            assert_eq!(l.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn token_list_iterates_owned_and_borrowed() -> Result<(), ParseError> {
+    let l = TokenList::new(SipHeader::Allow, ["INVITE", "BYE"])?;
+    let borrowed: Vec<&str> = (&l)
+        .into_iter()
+        .collect();
+    assert_eq!(borrowed, ["INVITE", "BYE"]);
+    let owned: Vec<String> = l
+        .into_iter()
+        .collect();
+    assert_eq!(owned, ["INVITE", "BYE"]);
+    Ok(())
+}
+
+#[test]
+fn token_list_from_rows_is_the_accessor_path() {
+    let wire = ["INVITE, , ACK,", " BYE", "<OPTIONS>"];
+    let store_of = |header: SipHeader| {
+        HashMap::from([(
+            header
+                .as_str()
+                .to_string(),
+            wire.map(String::from)
+                .to_vec(),
+        )])
+    };
+    let store = store_of(SipHeader::Allow);
+    for &header in token_headers() {
+        let rows = store_of(header);
+        assert_eq!(
+            TokenList::from_rows_with_warnings(header, wire),
+            rows.parse_header::<TokenList>(header)
+                .map(Option::unwrap),
+            "{header}"
+        );
+    }
+    let parsed = TokenList::from_rows_with_warnings(SipHeader::Allow, wire).unwrap();
+    assert_eq!(
+        parsed
+            .value
+            .iter()
+            .collect::<Vec<_>>(),
+        ["INVITE", "ACK", "BYE", "OPTIONS"]
+    );
+    assert!(parsed
+        .warnings
+        .iter()
+        .any(|w| w.row == Some(2) && w.entry == Some(4)));
+    assert_eq!(
+        store
+            .parse_header::<TokenList>(SipHeader::Allow)
+            .unwrap()
+            .unwrap()
+            .value,
+        parsed.value
+    );
+    assert!(TokenList::from_rows_strict(SipHeader::Allow, wire).is_err());
+    assert!(TokenList::from_rows(SipHeader::Allow, wire).is_ok());
+}
+
+#[test]
+fn token_list_from_entries_takes_each_entry_whole() {
+    let parsed =
+        TokenList::from_entries_with_warnings(SipHeader::Supported, ["timer", "a,b"]).unwrap();
+    assert_eq!(
+        parsed
+            .value
+            .iter()
+            .collect::<Vec<_>>(),
+        ["timer", "ab"]
+    );
+    assert_eq!(
+        parsed
+            .warnings
+            .iter()
+            .map(|w| (w.row, w.entry, w.position))
+            .collect::<Vec<_>>(),
+        [(Some(1), Some(1), Some(1))]
+    );
+    assert!(TokenList::from_entries_strict(SipHeader::Supported, ["timer", "a,b"]).is_err());
+    assert_eq!(
+        TokenList::from_entries(SipHeader::Supported, ["timer", "path"]),
+        TokenList::new(SipHeader::Supported, ["timer", "path"])
+    );
+    assert!(TokenList::from_entries(SipHeader::Via, ["timer"]).is_err());
 }
