@@ -1260,7 +1260,7 @@ const SECRETS: &[&str] = &[
 #[test]
 fn debug_masks_credentials() {
     let digest = SipAuthValue::parse(&format!(
-        r#"Digest username="alice", realm="example.com", nonce="{}", response="{}", cnonce="{}", opaque="5ccc""#,
+        r#"Digest username="alice", realm="example.com", nonce="{}", response="{}", cnonce="{}", opaque="5ccc", uri="sip:example.org", algorithm=MD5"#,
         SECRETS[1], SECRETS[0], SECRETS[2]
     ))
     .unwrap();
@@ -1270,10 +1270,12 @@ fn debug_masks_credentials() {
         for secret in SECRETS {
             assert!(!debug.contains(secret), "{debug}");
         }
+        assert!(!debug.contains("alice"), "{debug}");
     }
     let debug = format!("{digest:?}");
-    assert!(debug.contains("example.com"), "{debug}");
-    assert!(debug.contains("5ccc"), "{debug}");
+    for shown in ["example.com", "5ccc", "sip:example.org", "MD5"] {
+        assert!(debug.contains(shown), "{debug}");
+    }
 }
 
 #[test]
