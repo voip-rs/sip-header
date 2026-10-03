@@ -773,7 +773,7 @@ fn check_equivalence(kind: &str, input: &str) -> Result<(), TestCaseError> {
 /// under the header's lowercased name.
 fn through_holder<T>(header: SipHeader) -> impl Fn(&str) -> Result<T, ParseError>
 where
-    T: for<'a> TypedHeader<'a>,
+    T: TypedHeader,
 {
     move |input| {
         let fields = SipHeaderFields::from(vec![(
@@ -910,7 +910,7 @@ fn in_their_rows<T>(
     spans: impl Fn(&T) -> Vec<Option<Span>>,
 ) -> Result<(), TestCaseError>
 where
-    T: for<'a> TypedHeader<'a>,
+    T: TypedHeader,
 {
     let fields = SipHeaderFields::from(
         rows.iter()

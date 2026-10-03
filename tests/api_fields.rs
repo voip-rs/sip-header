@@ -242,13 +242,13 @@ fn hostile() -> SipHeaderFields<'static> {
 /// The accessor's lenient value prints no CR, LF or NUL and is the value
 /// `parse_header` reports with warnings, which `parse_header_strict`
 /// refuses; or all three fail.
-fn clean_or_refused<'a, T>(
-    fields: &'a SipHeaderFields<'static>,
+fn clean_or_refused<T>(
+    fields: &SipHeaderFields<'static>,
     header: SipHeader,
     lenient: Result<Option<T>, ParseError>,
     print: impl Fn(&T) -> String,
 ) where
-    T: TypedHeader<'a> + PartialEq + Debug,
+    T: TypedHeader + PartialEq + Debug,
 {
     let strict = fields.parse_header_strict::<T>(header);
     assert!(strict.is_err(), "{header}: strict accepted {strict:?}");

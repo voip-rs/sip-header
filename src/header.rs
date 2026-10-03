@@ -33,9 +33,9 @@ pub(crate) mod rows {
     use crate::error::ParseError;
 
     /// Building a value from every row of one header.
-    pub trait FromRows<'a>: Sized {
+    pub trait FromRows: Sized {
         /// `rows` is non-empty and `header` one of the type's headers.
-        fn from_rows(header: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError>;
+        fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError>;
     }
 }
 
@@ -45,7 +45,7 @@ pub(crate) mod rows {
 /// ([`SipHeader::is_list`]) splits every row into entries, a header that
 /// repeats without being a list ([`SipHeader::may_repeat`]) takes each row
 /// as one entry, and any other header must occur once. Sealed.
-pub trait TypedHeader<'a>: rows::FromRows<'a> {
+pub trait TypedHeader: rows::FromRows {
     /// The headers whose value this type holds.
     const HEADERS: &'static [SipHeader];
 }
@@ -85,21 +85,21 @@ fn single_row<T: HeaderParse + Located>(rows: Vec<&str>) -> Result<Parsed<T>, Pa
 
 macro_rules! typed_header {
     ($reader:ident: $($Type:ty => [$($header:ident),+ $(,)?];)+) => {$(
-        impl<'a> rows::FromRows<'a> for $Type {
+        impl rows::FromRows for $Type {
             typed_header!(@from_rows $reader);
         }
 
-        impl<'a> TypedHeader<'a> for $Type {
+        impl TypedHeader for $Type {
             const HEADERS: &'static [SipHeader] = &[$(SipHeader::$header),+];
         }
     )+};
     (@from_rows list) => {
-        fn from_rows(header: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
+        fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
             list_rows(header, rows)
         }
     };
     (@from_rows single) => {
-        fn from_rows(_: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
+        fn from_rows(_: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
             single_row(rows)
         }
     };
@@ -138,8 +138,8 @@ impl Located for SipCallId {}
 /// One value per row, as the authentication headers carry them (RFC 3261
 /// §7.3.1); a warning's or error's entry index is the row, and a blank row
 /// is an empty entry.
-impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
-    fn from_rows(_: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
+impl rows::FromRows for Vec<SipAuthValue> {
+    fn from_rows(_: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
         let mut values = Vec::with_capacity(rows.len());
         let mut warnings = Vec::new();
         for (i, row) in rows
@@ -182,7 +182,7 @@ impl<'a> rows::FromRows<'a> for Vec<SipAuthValue> {
     }
 }
 
-impl<'a> TypedHeader<'a> for Vec<SipAuthValue> {
+impl TypedHeader for Vec<SipAuthValue> {
     const HEADERS: &'static [SipHeader] = &[
         SipHeader::Authorization,
         SipHeader::ProxyAuthorization,
@@ -191,13 +191,13 @@ impl<'a> TypedHeader<'a> for Vec<SipAuthValue> {
     ];
 }
 
-impl<'a> rows::FromRows<'a> for TokenList {
-    fn from_rows(header: SipHeader, rows: Vec<&'a str>) -> Result<Parsed<Self>, ParseError> {
+impl rows::FromRows for TokenList {
+    fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
         TokenList::from_rows_with_warnings(header, rows)
     }
 }
 
-impl<'a> TypedHeader<'a> for TokenList {
+impl TypedHeader for TokenList {
     const HEADERS: &'static [SipHeader] = &[
         SipHeader::Allow,
         SipHeader::Supported,
@@ -258,8 +258,8 @@ pub trait SipHeaderLookup: SipHeaderRows {
     ///
     /// Errors with [`FaultCode::WrongHeader`] when `name` is not among
     /// [`T::HEADERS`](TypedHeader::HEADERS).
-    fn parse_header<'a, T: TypedHeader<'a>>(
-        &'a self,
+    fn parse_header<T: TypedHeader>(
+        &self,
         name: SipHeader,
     ) -> Result<Option<Parsed<T>>, ParseError> {
         if !T::HEADERS.contains(&name) {
@@ -278,8 +278,8 @@ pub trait SipHeaderLookup: SipHeaderRows {
 
     /// Parse `name` as `T`, refusing the first grammar breach as
     /// [`ParseError::NonConformant`].
-    fn parse_header_strict<'a, T: TypedHeader<'a>>(
-        &'a self,
+    fn parse_header_strict<T: TypedHeader>(
+        &self,
         name: SipHeader,
     ) -> Result<Option<T>, ParseError> {
         self.parse_header(name)?
@@ -1193,8 +1193,8 @@ mod tests {
 
     /// Code and entry of each warning, after checking strict parsing
     /// refuses the first.
-    fn row_warnings<'a, T: TypedHeader<'a> + std::fmt::Debug>(
-        h: &'a HashMap<String, Vec<String>>,
+    fn row_warnings<T: TypedHeader + std::fmt::Debug>(
+        h: &HashMap<String, Vec<String>>,
         header: SipHeader,
     ) -> (T, Vec<(crate::WarningCode, Option<usize>)>) {
         let parsed = h
@@ -1282,7 +1282,7 @@ mod tests {
     /// The same value, warnings and rows, and the same spans.
     fn same_as_accessor<L>(header: SipHeader, wire: &[&str], spans: impl Fn(&L) -> Spans)
     where
-        L: crate::ListParse + for<'a> TypedHeader<'a> + PartialEq + std::fmt::Debug,
+        L: crate::ListParse + TypedHeader + PartialEq + std::fmt::Debug,
     {
         let h = rows(&[(header.as_str(), wire)]);
         let from_rows = L::from_rows_with_warnings(

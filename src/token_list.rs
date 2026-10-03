@@ -237,7 +237,7 @@ impl TokenList {
 
     /// No token of `header`, refusing a header that is no token list.
     fn empty(header: SipHeader) -> Result<Self, ParseError> {
-        if !<Self as TypedHeader<'_>>::HEADERS.contains(&header) {
+        if !<Self as TypedHeader>::HEADERS.contains(&header) {
             return Err(ParseError::malformed(
                 Field::Value,
                 FaultCode::WrongHeader,

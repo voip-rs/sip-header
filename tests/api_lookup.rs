@@ -256,12 +256,12 @@ fn a_single_valued_header_twice_is_an_error() {
 
 #[test]
 fn every_type_holds_headers_of_one_row_policy() {
-    fn single<'a, T: TypedHeader<'a>>() {
+    fn single<T: TypedHeader>() {
         for h in T::HEADERS {
             assert!(!h.may_repeat(), "{h}");
         }
     }
-    fn repeatable<'a, T: TypedHeader<'a>>() {
+    fn repeatable<T: TypedHeader>() {
         for h in T::HEADERS {
             assert!(h.may_repeat(), "{h}");
         }
