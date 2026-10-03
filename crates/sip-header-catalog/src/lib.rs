@@ -597,41 +597,9 @@ mod compact_form_tests {
     use super::*;
 
     #[test]
-    fn from_compact_known() {
-        assert_eq!(SipHeader::from_compact('f'), Some(SipHeader::From));
-        assert_eq!(SipHeader::from_compact('F'), Some(SipHeader::From));
-        assert_eq!(SipHeader::from_compact('v'), Some(SipHeader::Via));
-        assert_eq!(SipHeader::from_compact('i'), Some(SipHeader::CallId));
-        assert_eq!(SipHeader::from_compact('m'), Some(SipHeader::Contact));
-        assert_eq!(SipHeader::from_compact('t'), Some(SipHeader::To));
-        assert_eq!(SipHeader::from_compact('c'), Some(SipHeader::ContentType));
-    }
-
-    #[test]
     fn from_compact_unknown() {
         assert_eq!(SipHeader::from_compact('z'), None);
         assert_eq!(SipHeader::from_compact('g'), None);
-    }
-
-    #[test]
-    fn compact_form_roundtrip() {
-        assert_eq!(SipHeader::From.compact_form(), Some('f'));
-        assert_eq!(SipHeader::Via.compact_form(), Some('v'));
-        assert_eq!(SipHeader::CallId.compact_form(), Some('i'));
-        assert_eq!(SipHeader::Contact.compact_form(), Some('m'));
-    }
-
-    #[test]
-    fn compact_form_absent() {
-        assert_eq!(SipHeader::HistoryInfo.compact_form(), None);
-        assert_eq!(SipHeader::PAssertedIdentity.compact_form(), None);
-    }
-
-    #[test]
-    fn parse_name_compact() {
-        assert_eq!(SipHeader::parse_name("f"), Ok(SipHeader::From));
-        assert_eq!(SipHeader::parse_name("F"), Ok(SipHeader::From));
-        assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
     }
 
     #[test]
@@ -672,41 +640,17 @@ mod compact_form_tests {
     }
 
     #[test]
-    fn all_compact_forms_resolve() {
-        let expected = [
-            ('a', SipHeader::AcceptContact),
-            ('b', SipHeader::ReferredBy),
-            ('c', SipHeader::ContentType),
-            ('d', SipHeader::RequestDisposition),
-            ('e', SipHeader::ContentEncoding),
-            ('f', SipHeader::From),
-            ('i', SipHeader::CallId),
-            ('j', SipHeader::RejectContact),
-            ('k', SipHeader::Supported),
-            ('l', SipHeader::ContentLength),
-            ('m', SipHeader::Contact),
-            ('n', SipHeader::IdentityInfo),
-            ('o', SipHeader::Event),
-            ('r', SipHeader::ReferTo),
-            ('s', SipHeader::Subject),
-            ('t', SipHeader::To),
-            ('u', SipHeader::AllowEvents),
-            ('v', SipHeader::Via),
-            ('x', SipHeader::SessionExpires),
-            ('y', SipHeader::Identity),
-        ];
-        for (ch, header) in expected {
-            assert_eq!(
-                SipHeader::from_compact(ch),
-                Some(header),
-                "compact form '{ch}' failed"
-            );
-            assert_eq!(
-                header.compact_form(),
-                Some(ch),
-                "compact_form() for {} failed",
-                header
-            );
+    fn parse_name_takes_compact_forms_in_either_case() {
+        for h in SipHeader::ALL {
+            if let Some(ch) = h.compact_form() {
+                for spelling in [ch, ch.to_ascii_uppercase()] {
+                    assert_eq!(
+                        SipHeader::parse_name(&spelling.to_string()),
+                        Ok(*h),
+                        "{spelling}"
+                    );
+                }
+            }
         }
     }
 }
@@ -750,29 +694,41 @@ mod occurrence_tests {
 mod registry_tests {
     use super::*;
 
-    fn listed(file: &str) -> Vec<&str> {
-        let mut names: Vec<&str> = file
+    /// Each line: wire name, then its compact form if the registry gives one.
+    fn listed(file: &str) -> Vec<(&str, Option<char>)> {
+        let mut rows: Vec<(&str, Option<char>)> = file
             .lines()
-            .map(|l| {
-                l.split('#')
+            .filter_map(|l| {
+                let mut cols = l
+                    .split('#')
+                    .next()?
+                    .split_whitespace();
+                let name = cols.next()?;
+                let compact = cols
                     .next()
-                    .unwrap_or("")
-                    .trim()
+                    .map(|c| {
+                        let mut chars = c.chars();
+                        match (chars.next(), chars.next()) {
+                            (Some(ch), None) => ch,
+                            _ => panic!("{name}: compact form {c:?} is not one letter"),
+                        }
+                    });
+                assert_eq!(cols.next(), None, "{name}: extra column");
+                Some((name, compact))
             })
-            .filter(|l| !l.is_empty())
             .collect();
-        names.sort_unstable();
-        names
+        rows.sort_unstable();
+        rows
     }
 
-    fn catalog(registry: Registry) -> Vec<&'static str> {
-        let mut names: Vec<&str> = SipHeader::ALL
+    fn catalog(registry: Registry) -> Vec<(&'static str, Option<char>)> {
+        let mut rows: Vec<(&str, Option<char>)> = SipHeader::ALL
             .iter()
             .filter(|h| h.registry() == registry)
-            .map(|h| h.as_str())
+            .map(|h| (h.as_str(), h.compact_form()))
             .collect();
-        names.sort_unstable();
-        names
+        rows.sort_unstable();
+        rows
     }
 
     #[test]

@@ -1,5 +1,5 @@
 Accept
-Accept-Contact
+Accept-Contact a
 Accept-Encoding
 Accept-Language
 Accept-Resource-Priority
@@ -7,37 +7,37 @@ Additional-Identity
 Alert-Info
 AlertMsg-Error
 Allow
-Allow-Events
+Allow-Events u
 Answer-Mode
 Attestation-Info
 Authentication-Info
 Authorization
-Call-ID
+Call-ID i
 Call-Info
 Cellular-Network-Info
-Contact
+Contact m
 Content-Disposition
-Content-Encoding
+Content-Encoding e
 Content-ID
 Content-Language
-Content-Length
-Content-Type
+Content-Length l
+Content-Type c
 CSeq
 Date
 DC-Info
 Encryption
 Error-Info
-Event
+Event o
 Expires
 Feature-Caps
 Flow-Timer
-From
+From f
 Geolocation
 Geolocation-Error
 Geolocation-Routing
 Hide
 History-Info
-Identity
+Identity y
 Identity-Info
 Info-Package
 In-Reply-To
@@ -92,13 +92,13 @@ Record-Route
 Recv-Info
 Refer-Events-At
 Refer-Sub
-Refer-To
-Referred-By
-Reject-Contact
+Refer-To r
+Referred-By b
+Reject-Contact j
 Relayed-Charge
 Replaces
 Reply-To
-Request-Disposition
+Request-Disposition d
 Require
 Resource-Priority
 Resource-Share
@@ -114,21 +114,21 @@ Security-Verify
 Server
 Service-Interact-Info
 Service-Route
-Session-Expires
+Session-Expires x
 Session-ID
 SIP-ETag
 SIP-If-Match
-Subject
+Subject s
 Subscription-State
-Supported
+Supported k
 Suppress-If-Match
 Target-Dialog
 Timestamp
-To
+To t
 Trigger-Consent
 Unsupported
 User-Agent
 User-to-User
-Via
+Via v
 Warning
 WWW-Authenticate
