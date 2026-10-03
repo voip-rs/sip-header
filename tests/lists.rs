@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use sip_header::sip_uri::WarningKind;
 use sip_header::{
-    ContactList, FaultCode, HeaderParse, HistoryInfo, ParseError, SipAccept, SipAcceptEncoding,
-    SipAcceptLanguage, SipGeolocation, SipHeader, SipHeaderAddrList, SipHeaderLookup,
-    SipReasonList, SipSecurity, SipVia, SipWarning, TokenList, TypedHeader, UriInfo,
+    split_comma_entries, ContactList, FaultCode, HeaderParse, HistoryInfo, ListParse, ParseError,
+    SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipGeolocation, SipHeader, SipHeaderAddrList,
+    SipHeaderLookup, SipReasonList, SipSecurity, SipVia, SipWarning, TokenList, TypedHeader,
+    UriInfo, WarningCode,
 };
 
 fn is_empty_fault<T: std::fmt::Debug>(r: Result<T, ParseError>) -> bool {
@@ -438,5 +440,177 @@ fn contact_list_addresses_are_mutable_and_iterable() {
         star.into_iter()
             .count(),
         0
+    );
+}
+
+/// `entries` with a malformed entry at `at` reads as `expected`, the entry
+/// skipped under a Lost warning naming it; strict reading refuses. Joined
+/// reads are checked only where joining keeps the entries apart.
+fn skips_entry<T>(entries: &[&str], at: usize, expected: &T)
+where
+    T: ListParse + std::fmt::Debug + PartialEq,
+{
+    let joined = entries.join(", ");
+    let row = [joined.as_str()];
+    let mut reads = vec![
+        (
+            "parse",
+            T::parse_with_warnings(&joined),
+            T::parse_strict(&joined),
+        ),
+        (
+            "entries",
+            T::from_entries_with_warnings(
+                entries
+                    .iter()
+                    .copied(),
+            ),
+            T::from_entries_strict(
+                entries
+                    .iter()
+                    .copied(),
+            ),
+        ),
+        (
+            "rows",
+            T::from_rows_with_warnings(row),
+            T::from_rows_strict(row),
+        ),
+    ];
+    if split_comma_entries(&joined).len() != entries.len() {
+        reads.retain(|(how, ..)| *how == "entries");
+    }
+    for (how, lenient, strict) in reads {
+        let parsed = lenient.unwrap_or_else(|e| panic!("{how} {entries:?}: {e:?}"));
+        assert_eq!(&parsed.value, expected, "{how} {entries:?}");
+        assert!(
+            parsed
+                .warnings
+                .iter()
+                .all(|w| w.entry == Some(at)),
+            "{how} {entries:?}: {:?}",
+            parsed.warnings
+        );
+        assert!(
+            parsed
+                .warnings
+                .iter()
+                .any(|w| w.code == WarningCode::SkippedEntry
+                    && w.kind == WarningKind::Lost
+                    && w.position
+                        .is_some()),
+            "{how} {entries:?}: {:?}",
+            parsed.warnings
+        );
+        assert!(
+            matches!(strict, Err(ParseError::NonConformant(_))),
+            "{how} {entries:?}"
+        );
+    }
+}
+
+/// Every `bad` entry, at every position among `good`, is skipped; alone it
+/// leaves the list empty, which `T::new` decides.
+macro_rules! skips_malformed {
+    ($Type:ty, [$($good:expr),+ $(,)?], [$($bad:expr),+ $(,)?], $alone:expr) => {{
+        let good: Vec<&str> = vec![$($good),+];
+        let expected = <$Type>::from_entries_strict(good.iter().copied()).unwrap();
+        for bad in [$($bad),+] {
+            for at in 0..=good.len() {
+                let mut entries = good.clone();
+                entries.insert(at, bad);
+                skips_entry::<$Type>(&entries, at, &expected);
+            }
+            let alone: fn(Result<$Type, ParseError>) -> bool = $alone;
+            assert!(alone(<$Type>::parse(bad)), "{bad:?}");
+        }
+    }};
+}
+
+fn refused<T>(r: Result<T, ParseError>) -> bool {
+    matches!(r, Err(ParseError::Malformed(_) | ParseError::Uri(_)))
+}
+
+#[test]
+fn malformed_entry_never_fails_the_list() {
+    skips_malformed!(
+        SipAccept,
+        ["application/sdp", "text/plain"],
+        ["application", "/plain", "text/", " ;q=1"],
+        |r| r.is_ok_and(|l| l.is_empty())
+    );
+    skips_malformed!(
+        SipAcceptEncoding,
+        ["gzip", "identity"],
+        [" ;q=1", "<>;q=0.5"],
+        |r| r.is_ok_and(|l| l.is_empty())
+    );
+    skips_malformed!(SipAcceptLanguage, ["fr-ca", "en"], [" ;q=1", "<>"], |r| r
+        .is_ok_and(|l| l.is_empty()));
+    skips_malformed!(
+        SipSecurity,
+        ["digest;q=0.1", "tls"],
+        [";q=1", "<>;q=0.2"],
+        refused
+    );
+    skips_malformed!(
+        SipReasonList,
+        ["Q.850;cause=16", "SIP;cause=200"],
+        [" ;cause=16"],
+        refused
+    );
+    skips_malformed!(
+        SipWarning,
+        [r#"399 example.com "a""#, r#"301 example.org "b""#],
+        ["399", "399 example.com", r#"399 example.com "abc"#],
+        refused
+    );
+    skips_malformed!(
+        SipVia,
+        [
+            "SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1",
+            "SIP/2.0/TCP example.com"
+        ],
+        [
+            "SIP2.0UDP example.com",
+            "SIP/2.0/UDP exa mple.com",
+            "SIP/2.0/UDP 2001:db8::1:5060",
+            "SIP/2.0/UDP [2001:db8::1",
+            "SIP/2.0/UDP [2001:db8::1]x"
+        ],
+        refused
+    );
+    skips_malformed!(
+        SipHeaderAddrList,
+        ["<sip:a@example.com>", "<sip:b@example.com>"],
+        ["<sip:c@example.com", "\"Bob\" <sip:c@example.com"],
+        refused
+    );
+    skips_malformed!(
+        ContactList,
+        ["<sip:a@example.com>", "<sip:b@example.com>"],
+        ["<sip:c@example.com"],
+        refused
+    );
+    skips_malformed!(
+        HistoryInfo,
+        [
+            "<sip:a@example.com>;index=1",
+            "<sip:b@example.com>;index=1.1"
+        ],
+        ["<sip:c@example.com;index=1.2"],
+        refused
+    );
+    skips_malformed!(
+        SipGeolocation,
+        ["<cid:a@example.com>", "<https://example.com/l>"],
+        ["<cid:c@example.com"],
+        refused
+    );
+    skips_malformed!(
+        UriInfo,
+        ["<https://example.com/a>", "<urn:example:call:1>"],
+        ["<>;purpose=icon"],
+        refused
     );
 }
