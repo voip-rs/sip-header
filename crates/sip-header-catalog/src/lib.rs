@@ -31,6 +31,9 @@ pub use rows::{RowError, RowErrorKind, SipHeaderRows, SipHeaderRowsExt};
 /// Items `define_header_enum!` expands to; not public API.
 #[doc(hidden)]
 pub mod __private {
+    /// Seals [`HeaderName`](crate::HeaderName) to macro-generated enums.
+    pub trait HeaderNameSealed {}
+
     #[cfg(feature = "serde")]
     pub use crate::serde_name::{deserialize_name, serialize_name};
     #[cfg(feature = "serde")]

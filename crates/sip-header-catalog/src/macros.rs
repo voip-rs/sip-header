@@ -5,9 +5,11 @@ use core::str::FromStr;
 /// A fieldless enum of protocol names, as [`define_header_enum!`](crate::define_header_enum) generates.
 ///
 /// Mirrors the inherent `ALL` and `as_str` every generated enum carries, for
-/// code generic over name catalogs.
+/// code generic over name catalogs. Sealed: only enums the macro generates
+/// implement it.
 pub trait HeaderName:
-    Copy
+    crate::__private::HeaderNameSealed
+    + Copy
     + Eq
     + Hash
     + Debug
@@ -183,6 +185,8 @@ macro_rules! define_header_enum {
                 }
             }
         }
+
+        impl $crate::__private::HeaderNameSealed for $Name {}
 
         impl $crate::HeaderName for $Name {
             type ParseError = $Err;
