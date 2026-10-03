@@ -126,6 +126,20 @@ macro_rules! list_type {
                     .iter()
             }
 
+            /// The entries, in order, each changed only through its own
+            /// checked methods.
+            pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, $Entry> {
+                self.0
+                    .iter_mut()
+            }
+
+            /// The entry at `index`, changed only through its own checked
+            /// methods; `None` when there is none.
+            pub fn get_mut(&mut self, index: usize) -> Option<&mut $Entry> {
+                self.0
+                    .get_mut(index)
+            }
+
             /// Append an entry.
             pub fn push(&mut self, entry: $Entry) {
                 self.0

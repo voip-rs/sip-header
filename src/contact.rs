@@ -92,6 +92,27 @@ impl ContactList {
             .iter()
     }
 
+    /// The addresses, in order, each changed only through its own checked
+    /// methods; none for the wildcard.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, SipHeaderAddr> {
+        self.addrs_mut()
+            .iter_mut()
+    }
+
+    /// The address at `index`, changed only through its own checked
+    /// methods; `None` when there is none or for the wildcard.
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut SipHeaderAddr> {
+        self.addrs_mut()
+            .get_mut(index)
+    }
+
+    fn addrs_mut(&mut self) -> &mut [SipHeaderAddr] {
+        match &mut self.0 {
+            Contacts::Wildcard => &mut [],
+            Contacts::Addrs(addrs) => addrs,
+        }
+    }
+
     /// Append an address; errors on the wildcard, which stands alone.
     pub fn push(&mut self, addr: SipHeaderAddr) -> Result<(), ParseError> {
         match &mut self.0 {
@@ -133,6 +154,25 @@ impl ContactList {
             Contacts::Wildcard => Vec::new(),
             Contacts::Addrs(addrs) => addrs,
         }
+    }
+}
+
+impl IntoIterator for ContactList {
+    type Item = SipHeaderAddr;
+    type IntoIter = std::vec::IntoIter<SipHeaderAddr>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_addrs()
+            .into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ContactList {
+    type Item = &'a SipHeaderAddr;
+    type IntoIter = std::slice::Iter<'a, SipHeaderAddr>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

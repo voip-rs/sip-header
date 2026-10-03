@@ -154,7 +154,7 @@ assert!(a.equivalent(&b));
 | `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68` and credential parameters |
 | value types without `Hash` | every value type is `Hash`, consistent with its `Eq` |
 
-Lists are opaque too: `iter()`, `entries()`, `push`, `remove` and `retain`. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
+Lists are opaque too: `iter()`, `entries()`, `iter_mut()`, `get_mut()`, `push`, `remove` and `retain`; an entry reached mutably changes only through its own checked methods. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
 
 A blank entry beside real ones is dropped with `EmptyEntry`, in every list, and a Warning entry whose code is not three digits with `SkippedEntry`; `Err` comes only when no entry remains where the grammar needs one. A comma ending a list is ignored with `TrailingComma`.
 
