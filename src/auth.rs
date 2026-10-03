@@ -41,8 +41,8 @@ use crate::traits::{sealed, HeaderParse};
 /// same rule; [`HeaderEquivalence`](crate::HeaderEquivalence) compares as
 /// RFC 7235 §2.1 does.
 ///
-/// [`Debug`](fmt::Debug) masks the `token68` and the values of `response`,
-/// `nonce`, `cnonce`, `nextnonce`, `rspauth` and `auts`.
+/// [`Debug`](fmt::Debug) masks the `token68` and the values of `username`,
+/// `response`, `nonce`, `cnonce`, `nextnonce`, `rspauth` and `auts`.
 #[derive(Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct SipAuthValue {
@@ -272,7 +272,15 @@ impl fmt::Debug for SipAuthValue {
                             .map(|(name, value)| {
                                 (
                                     name,
-                                    value.map(|v| if is_credential(name) { MASK } else { v }),
+                                    value.map(|v| {
+                                        if is_credential(name)
+                                            || name.eq_ignore_ascii_case("username")
+                                        {
+                                            MASK
+                                        } else {
+                                            v
+                                        }
+                                    }),
                                 )
                             }),
                     )

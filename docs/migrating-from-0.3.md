@@ -153,7 +153,7 @@ assert!(a.equivalent(&b));
 | `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`, a sent-by port that is no port with `InvalidPort`; an `rport` that is no port stays a parameter, `rport()` `None`, with `InvalidRport` |
 | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, `cause() -> Option<SipReasonCause>` keeping the digits (`as_u16()`, `AsRef<str>`); `cause` and `text` are reserved parameters, held in `params()` |
 | `join()` returning `SipReplaces` | `SipJoin`, which has no `early-only` |
-| `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68` and credential parameters |
+| `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68`, credential parameters and `username` |
 | value types without `Hash` | every value type is `Hash`, consistent with its `Eq` |
 
 Lists are opaque too: `iter()`, `entries()`, `iter_mut()`, `get_mut()`, `push`, `remove` and `retain`; an entry reached mutably changes only through its own checked methods. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
