@@ -3,8 +3,8 @@
 
 use sip_header::{
     extract_all_headers, extract_header, extract_request_uri, extract_request_uri_with_warnings,
-    ParseError, SipHeader, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders,
-    WarningCode,
+    ExtractedHeaders, ParseError, Parsed, SipHeader, SipHeaderFields, SipHeaderLookup,
+    SipHeaderRowsExt, SipMessageHeaders, WarningCode,
 };
 
 const MSG: &str = concat!(
@@ -285,6 +285,24 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
         e.span()
             .map(|s| s.get(&spaced)),
         Some(Ok(first))
+    );
+    Ok(())
+}
+
+#[test]
+fn results_destructure_and_build() -> Result<(), ParseError> {
+    let ExtractedHeaders { headers, skipped } = extract_all_headers(MSG);
+    let rebuilt = ExtractedHeaders {
+        headers: headers.clone(),
+        skipped: skipped.clone(),
+    };
+    assert_eq!(rebuilt, extract_all_headers(MSG));
+    let Some(Parsed { value, warnings }) = extract_request_uri_with_warnings(MSG)? else {
+        panic!("no Request-URI");
+    };
+    assert_eq!(
+        Some(Parsed { value, warnings }),
+        extract_request_uri_with_warnings(MSG)?
     );
     Ok(())
 }
