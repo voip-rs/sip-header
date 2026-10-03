@@ -1,10 +1,11 @@
 # sip-header-catalog
 
-SIP header names and the raw lookup a header store implements. Depend on it when your public API names SIP headers or exposes a header store; the parsing accessors over a store come from [sip-header](https://crates.io/crates/sip-header), which a caller picks its own version of. The catalog is 1.x: a breaking change to any public item waits for 2.0.
+SIP header names and the raw lookup a header store implements. Depend on it when your public API names SIP headers or exposes a header store; the parsing accessors over a store come from [sip-header](https://crates.io/crates/sip-header), which a caller picks its own version of.
 
-```toml
-[dependencies]
-sip-header-catalog = "1.0.0-rc.1"
+The catalog has a stable major version because header names and one row per header occurrence are not expected to change: crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose minor releases may break.
+
+```sh
+cargo add sip-header-catalog
 ```
 
 ## What it holds
@@ -26,7 +27,7 @@ assert!(SipHeader::Via.is_list());
 assert!(SipHeader::Authorization.may_repeat() && !SipHeader::Authorization.is_list());
 ```
 
-`FromStr` takes canonical names, case-insensitively; `parse_name` also takes compact forms. `Display` always writes the canonical name.
+`FromStr` takes canonical names, case-insensitively; `parse_name` also takes compact forms. `Display` always writes the canonical name, and `SipHeader` sorts by it.
 
 ## Implementing a store
 

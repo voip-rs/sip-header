@@ -4,7 +4,7 @@ sip-header 0.4 changes four things about the crate:
 
 - Parsing rarely fails. Non-conformant input parses, and each breach of the grammar comes back as a typed warning, as in sip-uri 0.3.
 - A value you build is checked. Every constructor, builder and parameter setter refuses what would print as a different value, so a built header cannot carry injected structure.
-- Header names and the raw row lookup moved to their own crate, sip-header-catalog, which is 1.x.
+- Header names and the raw row lookup moved to their own crate, sip-header-catalog, which has a stable major version.
 - The API reads like sip-uri's: traits imported by name, opaque collections with checked mutation, identity equality with RFC equivalence beside it, and a redaction policy you build once.
 
 Most of the changes on this page follow from one of those four.
@@ -18,7 +18,7 @@ Which to depend on:
 - An application that parses header values depends on `sip-header`.
 - A library that only names headers, or hands a header store across its API, depends on `sip-header-catalog`, and its callers choose their own sip-header version for the typed accessors.
 
-The catalog changes only when a header name or the row contract changes. Value types stay in sip-header 0.x, where their shapes are still being settled against real traffic.
+Header names and one row per header occurrence are not expected to change, so crates exchange them across their public APIs as stable data types without sharing a parser version. Value types stay in sip-header, whose minor releases may break while their shapes are settled against real traffic.
 
 ## Import the traits by name
 
@@ -175,7 +175,7 @@ impl SipHeaderRows for Store {
 }
 ```
 
-A store returns one row per header occurrence, never a comma-joined string, because RFC 3261 §7.3.1 forbids joining the authentication headers. `SipHeaderLookup` comes to every store by blanket impl, and `SipHeaderRowsExt` gives `sip_header()`, `sip_header_str()` and `sip_header_rows()`, each returning `Result`, so a store's decoding failure reaches the caller. `HashMap` stores match names case-insensitively and through the compact form.
+A store returns one row per header occurrence, never a comma-joined string, because RFC 3261 §7.3.1 forbids joining the authentication headers. `SipHeaderLookup` comes to every store by blanket impl, and `SipHeaderRowsExt` gives `sip_header()`, `sip_header_str()` and `sip_header_rows()`, each returning `Result`, so a store's decoding failure reaches the caller. `HashMap` and `BTreeMap` stores, keyed by `String` or `&str`, match names case-insensitively and through the compact form.
 
 Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allow()`, `supported()`, …) return an owned `TokenList` whose `contains()` follows the header's case rule. It carries its header, so building and parsing take it first: `TokenList::new(SipHeader::Require, ["timer"])`, `TokenList::parse(header, raw)`, `from_entries(header, entries)` and `from_rows(header, rows)`, each with its `_with_warnings` and `_strict` siblings as inherent methods. `require_header()` is `require()`, and `contact()` returns a `ContactList`. `parse_header::<T>(SipHeader)` returns `Parsed<T>` with the warnings, and `parse_header_strict` refuses them. `parse_header::<SipHeaderAddr>` also reads Reply-To, P-Called-Party-ID, P-Served-User and P-DCS-Trace-Party-ID, and `parse_header::<SipHeaderAddrList>` P-Refused-URI-List and Permission-Missing.
 

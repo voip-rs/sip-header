@@ -11,17 +11,18 @@ SIP header field parsers for Rust: name-addr, Contact, Via, Warning, Call-ID, au
 
 Sits between URI parsing ([sip-uri](https://crates.io/crates/sip-uri)) and full SIP stacks, handling the header-level grammar: display names, header parameters, and structured header values.
 
-```toml
-[dependencies]
-sip-header = "0.4.0-rc.1"
+```sh
+cargo add sip-header
 ```
 
 ## Crates
 
-| Crate | Holds | Stability |
-|---|---|---|
-| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) | 1.x |
-| **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` | 0.x |
+| Crate | Holds |
+|---|---|
+| [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) |
+| **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` |
+
+The catalog has a stable major version because header names and one row per header occurrence are not expected to change, so crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose minor releases may break while their shapes are settled against real traffic.
 
 A crate whose public API names header names or a header store depends on sip-header-catalog alone. sip-header re-exports it; a store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
 
