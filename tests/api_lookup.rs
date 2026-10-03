@@ -286,3 +286,53 @@ fn every_type_holds_headers_of_one_row_policy() {
     repeatable::<sip_header::SipAcceptLanguage>();
     repeatable::<sip_header::SipGeolocation>();
 }
+
+#[test]
+fn address_headers_of_name_addr_grammar_parse_as_addresses() {
+    let m = Wire::new(&[
+        ("Reply-To", "Bob <sip:bob@example.com>"),
+        ("P-Called-Party-ID", "<sip:+15551234567@example.com>"),
+        (
+            "P-Served-User",
+            "<sip:a@example.com>;sescase=orig;regstate=reg",
+        ),
+        ("P-DCS-Trace-Party-ID", "<tel:+15551234567>;timestamp=1"),
+        (
+            "P-Refused-URI-List",
+            "<sip:a@example.com>, sip:b@example.com",
+        ),
+        (
+            "Permission-Missing",
+            "<sip:a@example.com>, <sip:b@example.com>",
+        ),
+    ]);
+    for header in [
+        SipHeader::ReplyTo,
+        SipHeader::PCalledPartyId,
+        SipHeader::PServedUser,
+        SipHeader::PDcsTracePartyId,
+    ] {
+        let parsed = m
+            .parse_header_strict::<SipHeaderAddr>(header)
+            .unwrap_or_else(|e| panic!("{header}: {e}"));
+        assert!(parsed.is_some(), "{header}");
+    }
+    for header in [SipHeader::PRefusedUriList, SipHeader::PermissionMissing] {
+        let parsed = m
+            .parse_header_strict::<SipHeaderAddrList>(header)
+            .unwrap_or_else(|e| panic!("{header}: {e}"));
+        assert_eq!(parsed.map(|l| l.len()), Some(2), "{header}");
+    }
+    let wrong = ParseError::Malformed(sip_header::Fault::new(Field::Value, FaultCode::WrongHeader));
+    for header in [
+        SipHeader::PAssociatedUri,
+        SipHeader::PolicyContact,
+        SipHeader::TriggerConsent,
+    ] {
+        assert_eq!(
+            m.parse_header::<SipHeaderAddrList>(header),
+            Err(wrong.clone()),
+            "{header}"
+        );
+    }
+}
