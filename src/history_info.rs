@@ -105,11 +105,11 @@ impl HistoryInfoEntry {
     }
 
     /// The header-level parameters, to edit through a guard that refuses
-    /// `index` and `tag`, which are set through typed setters, and clears
-    /// the spans once it changes them.
+    /// `index`, which [`with_index`](Self::with_index) sets, and clears the
+    /// spans once it changes them.
     pub fn params_mut(&mut self) -> ParamsMut<'_> {
         self.addr
-            .params_mut_reserving(&["index", "tag"])
+            .params_mut_reserving(&["index"])
     }
 
     /// Raw percent-encoded Reason value from the URI `?Reason=...` header.
