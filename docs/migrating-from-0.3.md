@@ -118,7 +118,7 @@ params.remove("ob")?;
 params.retain(|name, _| name != "x-debug");
 ```
 
-Every guard operation runs the builders' check, refuses the owner's reserved keys (`retain` never offers them), and clears the value's spans when it changes something. `HeaderParams::new()` builds standalone parameters.
+Every guard operation runs the builders' check, refuses the owner's reserved keys (`retain` never offers them), and clears the value's spans when it changes something. `HeaderParams` is read-only outside a guard.
 
 `q()` on the Accept family and `SipSecurityMechanism` returns `Option<QValue>`; the text stays in `param("q")`.
 

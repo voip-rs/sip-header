@@ -500,35 +500,6 @@ fn auth_guard_refuses_flags_quotes_and_drops_token68() {
     assert_eq!(auth.to_string(), "Bearer algorithm=MD5");
 }
 
-#[test]
-fn standalone_params_build_and_mutate() {
-    let mut p = HeaderParams::new()
-        .with("Lr", None)
-        .and_then(|p| p.with_quoted("n", "a b"))
-        .unwrap();
-    assert_eq!(p.to_string(), r#";lr;n="a b""#);
-    assert!(is_fault(p.push("LR", None), FaultCode::Duplicate));
-    assert!(p
-        .push("a b", None)
-        .is_err());
-    assert!(p
-        .push("a", Some("x\ny"))
-        .is_err());
-    p.set("LR", Some("1"))
-        .unwrap();
-    p.set_quoted("q", "t")
-        .unwrap();
-    p.push_quoted("r", "u")
-        .unwrap();
-    assert_eq!(p.to_string(), r#";lr=1;n="a b";q="t";r="u""#);
-    assert_eq!(p.remove("N"), 1);
-    p.retain(|name, _| name != "lr");
-    assert_eq!(p.to_string(), r#";q="t";r="u""#);
-    assert!(HeaderParams::new()
-        .with("x", Some("\0"))
-        .is_err());
-}
-
 #[cfg(feature = "serde")]
 mod serde_shape {
     use super::*;

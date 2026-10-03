@@ -417,73 +417,16 @@ pub(crate) fn any_value(
 }
 
 impl HeaderParams {
-    /// No parameters.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// [`push`](Self::push), returning the parameters.
-    pub fn with(mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<Self, ParseError> {
-        self.push(name, value)?;
-        Ok(self)
-    }
-
-    /// [`push_quoted`](Self::push_quoted), returning the parameters.
-    pub fn with_quoted(
-        mut self,
-        name: impl AsRef<str>,
-        value: impl AsRef<str>,
-    ) -> Result<Self, ParseError> {
-        self.push_quoted(name, value)?;
-        Ok(self)
-    }
-
-    /// Append a parameter, its name lowercased, `None` for a flag.
-    ///
-    /// Errors when the name is not a `token` or is already present (see
-    /// [`set`](Self::set)), or when the value holds CR, LF or NUL, which
-    /// no `quoted-string` carries back.
-    pub fn push(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
-        self.insert(name.as_ref(), value, false, false)
-    }
-
-    /// [`push`](Self::push), the value written as a `quoted-string` even
-    /// where it could be bare.
-    pub fn push_quoted(
-        &mut self,
-        name: impl AsRef<str>,
-        value: impl AsRef<str>,
-    ) -> Result<(), ParseError> {
-        self.insert(name.as_ref(), Some(value.as_ref()), true, false)
-    }
-
-    /// Set a parameter, replacing the first of the same name in place and
-    /// dropping the rest, or appending it; errors as [`push`](Self::push)
-    /// does but for a name already present.
-    pub fn set(&mut self, name: impl AsRef<str>, value: Option<&str>) -> Result<(), ParseError> {
-        self.insert(name.as_ref(), value, false, true)
-    }
-
-    /// [`set`](Self::set), the value written as a `quoted-string` even
-    /// where it could be bare.
-    pub fn set_quoted(
-        &mut self,
-        name: impl AsRef<str>,
-        value: impl AsRef<str>,
-    ) -> Result<(), ParseError> {
-        self.insert(name.as_ref(), Some(value.as_ref()), true, true)
-    }
-
     /// Remove every parameter named `name`, case-insensitively, returning
     /// how many were removed.
-    pub fn remove(&mut self, name: &str) -> usize {
+    fn remove(&mut self, name: &str) -> usize {
         let before = self.len();
         self.retain(|n, _| !n.eq_ignore_ascii_case(name));
         before - self.len()
     }
 
     /// Keep only the parameters for which `keep` returns `true`, in order.
-    pub fn retain(&mut self, mut keep: impl FnMut(&str, Option<&str>) -> bool) {
+    fn retain(&mut self, mut keep: impl FnMut(&str, Option<&str>) -> bool) {
         let before = self.len();
         self.0
             .retain(|p| {
@@ -513,8 +456,8 @@ impl HeaderParams {
         }
     }
 
-    /// The checked path under [`push`](Self::push) and [`set`](Self::set),
-    /// `replace` choosing between them.
+    /// Append a parameter, its name lowercased, or with `replace` set it in
+    /// place; errors on a non-`token` name, a repeat without `replace`, CR, LF or NUL.
     pub(crate) fn insert(
         &mut self,
         name: &str,
@@ -914,17 +857,17 @@ mod tests {
     #[test]
     fn set_replaces_first_and_drops_later_duplicates() {
         let (mut p, _) = read(";a=1;b=2;a=3;c;a=4");
-        p.set("A", Some("x"))
+        p.insert("A", Some("x"), false, true)
             .unwrap();
         assert_eq!(p.to_string(), ";a=x;b=2;c");
-        p.set("d", None)
+        p.insert("d", None, false, true)
             .unwrap();
         assert_eq!(p.to_string(), ";a=x;b=2;c;d");
         assert!(p
-            .set("a b", None)
+            .insert("a b", None, false, true)
             .is_err());
         assert!(p
-            .set_quoted("x", "a\nb")
+            .insert("x", Some("a\nb"), true, true)
             .is_err());
     }
 
@@ -933,7 +876,7 @@ mod tests {
         let mut p = HeaderParams::default();
         p.insert("f", None, true, false)
             .unwrap();
-        p.set("e", Some(""))
+        p.insert("e", Some(""), false, true)
             .unwrap();
         assert!(!p.is_quoted("f"));
         assert!(p.is_quoted("e"));
