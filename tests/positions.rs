@@ -195,7 +195,7 @@ fn a_final_comma_is_positioned_at_the_comma() {
 fn a_skipped_entry_names_its_row_and_position() {
     let rows = [
         "<sip:a@example.com>, <sip:b@example.com>",
-        "<sip:c@example.com>, <sip:d@example.com",
+        "<sip:c@example.com>, \"Dave\"",
     ];
     let parsed = SipHeaderAddrList::from_rows_with_warnings(rows).unwrap();
     assert_eq!(
@@ -208,7 +208,7 @@ fn a_skipped_entry_names_its_row_and_position() {
         at(&parsed.warnings[0]),
         (
             WarningCode::SkippedEntry,
-            rows[1].rfind('<'),
+            Some(rows[1].len()),
             Some(1),
             Some(3)
         )

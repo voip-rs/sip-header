@@ -493,8 +493,12 @@ fn parse_quoted_string(s: &str) -> Option<(String, usize)> {
 }
 
 /// Byte range of the URI inside the `<...>` opening `s[open..]`, and the
-/// index just past `>`.
-fn angle_uri(s: &str, open: usize, offset: usize) -> Result<(usize, usize, usize), ParseError> {
+/// index just past `>`; `None` when the `<` never closes.
+fn angle_uri(
+    s: &str,
+    open: usize,
+    offset: usize,
+) -> Result<Option<(usize, usize, usize)>, ParseError> {
     if !s[open..].starts_with('<') {
         return Err(ParseError::malformed(
             Field::Addr,
@@ -502,13 +506,9 @@ fn angle_uri(s: &str, open: usize, offset: usize) -> Result<(usize, usize, usize
             Some(offset + open),
         ));
     }
-    let close = s[open..]
+    Ok(s[open..]
         .find('>')
-        .map(|i| open + i)
-        .ok_or_else(|| {
-            ParseError::malformed(Field::Addr, FaultCode::Unterminated, Some(offset + open))
-        })?;
-    Ok((open + 1, close, close + 1))
+        .map(|i| (open + 1, open + i, open + i + 1)))
 }
 
 /// Parse the URI at `text`, which starts `offset` bytes into the caller's
@@ -602,7 +602,26 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         };
         return Ok(Parsed::new(addr, warnings));
     };
-    let (start, end, after) = angle_uri(s, open, lead)?;
+    let Some((start, end, after)) = angle_uri(s, open, lead)? else {
+        let rest = &s[open + 1..];
+        let (text, params) = rest.split_at(bare_params_at(rest));
+        let text = text.trim_end();
+        let at = lead + open + 1;
+        warnings.push(
+            ParseWarning::new(Field::Addr, WarningCode::UnclosedBracket)
+                .at(lead + open)
+                .covering(Span::new(lead + open..at + text.len())),
+        );
+        let uri = parse_uri(text, at, &mut warnings)?;
+        let addr = SipHeaderAddr {
+            display_name: display_name.filter(|n| !n.is_empty()),
+            params: HeaderParams::read(input, params, &mut warnings),
+            span,
+            uri_span: Some(Span::new(at..at + text.len())),
+            ..SipHeaderAddr::unchecked(uri)
+        };
+        return Ok(Parsed::new(addr, warnings));
+    };
     let uri = parse_uri(&s[start..end], lead + start, &mut warnings)?;
     let tail = &s[after..];
     let junk = tail.len()
@@ -1519,7 +1538,7 @@ mod tests {
         let addr = &parsed.value;
         assert_eq!(addr.display_name(), Some("Bob"));
         assert_eq!(addr.tag(), Some("x"));
-        assert_eq!(addr.to_string(), r#""Bob" <sip:bob@example.com>;tag=x"#);
+        assert_eq!(addr.to_string(), "Bob <sip:bob@example.com>;tag=x");
         let w = parsed.warnings[0];
         assert_eq!(
             parsed

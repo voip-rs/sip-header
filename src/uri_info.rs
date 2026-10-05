@@ -219,7 +219,8 @@ pub(crate) struct UriEntry<'a> {
 /// to `entry`, for every list whose entries are `<URI> *(SEMI param)`.
 ///
 /// Without its brackets the URI runs to the first `;` under
-/// [`WarningCode::MissingBrackets`]; text after `>` that starts no
+/// [`WarningCode::MissingBrackets`], and without its `>` under
+/// [`WarningCode::UnclosedBracket`]; text after `>` that starts no
 /// parameter is dropped under [`WarningCode::TrailingContent`].
 pub(crate) fn read_uri_entry<'a>(
     entry: &'a str,
@@ -231,14 +232,19 @@ pub(crate) fn read_uri_entry<'a>(
         .strip_prefix('<')
         .and_then(|s| s.split_once('>'))
     {
-        Some((data, tail)) => (data, tail, false),
+        Some((data, tail)) => (data, tail, None),
         None => {
             let (data, params) = crate::split_at_params(raw);
+            let code = if raw.starts_with('<') {
+                WarningCode::UnclosedBracket
+            } else {
+                WarningCode::MissingBrackets
+            };
             (
                 data.trim()
                     .trim_matches(|c| c == '<' || c == '>'),
                 params,
-                true,
+                Some(code),
             )
         }
     };
@@ -260,18 +266,21 @@ pub(crate) fn read_uri_entry<'a>(
     }
     let (uri, uri_warnings) = read_uri(data, data_at)?;
     let uri_span = Span::new(data_at..data_at + data.len());
-    if recovered {
+    if let Some(code) = recovered {
+        let from = match code {
+            WarningCode::UnclosedBracket => at,
+            _ => data_at,
+        };
         warnings.push(
-            ParseWarning::new(Field::Entry, WarningCode::MissingBrackets)
+            ParseWarning::new(Field::Entry, code)
                 .at(at)
-                .covering(uri_span),
+                .covering(Span::new(from..data_at + data.len())),
         );
     }
     warnings.extend(uri_warnings);
-    let params = if recovered {
-        params
-    } else {
-        after_bracket(entry, params, warnings)
+    let params = match recovered {
+        Some(_) => params,
+        None => after_bracket(entry, params, warnings),
     };
     Ok(UriEntry {
         uri,

@@ -1161,13 +1161,7 @@ mod tests {
 
     #[test]
     fn addr_list_skip_carries_entry_index_across_rows() {
-        let h = rows(&[(
-            "Route",
-            &[
-                "<sip:a@example.com>, <sip:b@example.com>",
-                "<sip:c@example.com",
-            ],
-        )]);
+        let h = rows(&[("Route", &["<sip:a@example.com>, <sip:b@example.com>", "<>"])]);
         let (route, seen) = row_warnings::<SipHeaderAddrList>(&h, SipHeader::Route);
         assert_eq!(route.len(), 2);
         assert_eq!(seen, [(crate::WarningCode::SkippedEntry, Some(2))]);
@@ -1297,10 +1291,7 @@ mod tests {
                 "<sip:c@example.com>",
             ],
             &["<sip:a@example.com>,", "<sip:b@example.com>"],
-            &[
-                "<sip:a@example.com>, <sip:b@example.com>",
-                "<sip:c@example.com",
-            ],
+            &["<sip:a@example.com>, <sip:b@example.com>", "<>"],
             &["", "<sip:a@example.com>"],
             &["   "],
         ];
@@ -1335,10 +1326,7 @@ mod tests {
             SipHeaderAddrList::from_entries(wire).map(|l| l.len()),
             Ok(2)
         );
-        let bad = [
-            "<sip:a@example.com>, <sip:b@example.com>",
-            "<sip:c@example.com",
-        ];
+        let bad = ["<sip:a@example.com>, <sip:b@example.com>", "<>"];
         let skipped = SipHeaderAddrList::from_rows_with_warnings(bad).unwrap();
         assert_eq!(
             skipped

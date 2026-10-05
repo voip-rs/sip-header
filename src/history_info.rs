@@ -696,7 +696,7 @@ mod tests {
 
     #[test]
     fn bad_entry_skip_carries_index() {
-        let raw = "<sip:a@example.com>;index=1, <sip:b@example.com";
+        let raw = "<sip:a@example.com>;index=1, <>;index=2";
         let parsed = HistoryInfo::parse_with_warnings(raw).unwrap();
         assert_eq!(
             parsed

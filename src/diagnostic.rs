@@ -134,8 +134,9 @@ impl ParseWarning {
     /// The text the warning concerns, in the row it names: the whole entry
     /// a [`WarningCode::SkippedEntry`] dropped, the text a
     /// [`WarningCode::TrailingContent`], [`WarningCode::InvalidPort`] or
-    /// [`WarningCode::InvalidCause`] dropped, or the URI a
-    /// [`WarningCode::MissingBrackets`] kept. `None` for a warning that
+    /// [`WarningCode::InvalidCause`] dropped, the URI a
+    /// [`WarningCode::MissingBrackets`] kept, or the URI and the `<` before
+    /// it an [`WarningCode::UnclosedBracket`] kept. `None` for a warning that
     /// names no range, and for text decoded before parsing.
     ///
     /// ```
@@ -355,6 +356,11 @@ pub enum WarningCode {
     /// `locationValue` (RFC 6442 §4.1 `LAQUOT locationURI RAQUOT`), or an
     /// addr-spec holding a comma, semicolon or question mark (RFC 3261 §20).
     MissingBrackets,
+    /// A `<` opening a URI that never closes, where RFC 3261 §25.1
+    /// `name-addr = [ display-name ] LAQUOT addr-spec RAQUOT`, §20.9
+    /// `LAQUOT absoluteURI RAQUOT` or RFC 6442 §4.1 `LAQUOT locationURI
+    /// RAQUOT` requires the `>`; the URI runs to its header parameters.
+    UnclosedBracket,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
     /// A blank list element or header parameter, which RFC 3261 §25.1
@@ -430,6 +436,7 @@ impl WarningCode {
             WarningCode::InvalidCause => "invalid-cause",
             WarningCode::UnquotedText => "unquoted-text",
             WarningCode::MissingBrackets => "missing-brackets",
+            WarningCode::UnclosedBracket => "unclosed-bracket",
             WarningCode::SkippedEntry => "skipped-entry",
             WarningCode::EmptyEntry => "empty-entry",
             WarningCode::InvalidQvalue => "invalid-qvalue",
