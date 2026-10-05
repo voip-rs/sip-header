@@ -91,6 +91,24 @@ impl ParseError {
         }
     }
 
+    /// Detach the error from any list entry.
+    pub(crate) fn without_entry(self) -> Self {
+        match self {
+            ParseError::Malformed(fault) => ParseError::Malformed(Fault {
+                entry: None,
+                ..fault
+            }),
+            ParseError::Uri(fault) => ParseError::Uri(UriFault {
+                entry: None,
+                ..fault
+            }),
+            ParseError::NonConformant(w) => {
+                ParseError::NonConformant(ParseWarning { entry: None, ..w })
+            }
+            ParseError::Row(e) => ParseError::Row(e),
+        }
+    }
+
     /// Point an error that names no position at `at`.
     pub(crate) fn placed(self, at: usize) -> Self {
         match self {

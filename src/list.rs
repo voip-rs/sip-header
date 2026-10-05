@@ -325,6 +325,37 @@ pub(crate) trait CommaList: Sized {
     fn list_from_marked<'a>(
         entries: impl IntoIterator<Item = RowEntry<'a>>,
     ) -> Result<Parsed<Self>, ParseError> {
+        let ReadEntries {
+            kept,
+            mut warnings,
+            first_fault,
+            rows,
+        } = Self::read_marked(entries)?;
+        let none_kept = kept.is_empty();
+        let value =
+            Self::from_parsed_reporting(kept, &mut warnings).map_err(|e| match first_fault {
+                Some(fault) if none_kept => fault,
+                _ => e,
+            })?;
+        for w in &mut warnings {
+            if w.row
+                .is_none()
+            {
+                w.row = w
+                    .entry
+                    .and_then(|e| rows.get(e))
+                    .copied()
+                    .flatten();
+            }
+        }
+        Ok(Parsed::new(value, warnings))
+    }
+
+    /// Parse every entry, positioned in the row it was split from; errs only
+    /// with a store's row error.
+    fn read_marked<'a>(
+        entries: impl IntoIterator<Item = RowEntry<'a>>,
+    ) -> Result<ReadEntries<Self::Entry>, ParseError> {
         let entries: Vec<(RowEntry<'a>, Scrubbed<'a>)> = entries
             .into_iter()
             .map(|e| (e, scrub(e.text)))
@@ -406,25 +437,84 @@ pub(crate) trait CommaList: Sized {
                 (i, v)
             }));
         }
-        let none_kept = kept.is_empty();
-        let value =
-            Self::from_parsed_reporting(kept, &mut warnings).map_err(|e| match first_fault {
-                Some(fault) if none_kept => fault,
-                _ => e,
-            })?;
-        for w in &mut warnings {
-            if w.row
-                .is_none()
-            {
-                w.row = w
-                    .entry
-                    .and_then(|e| rows.get(e))
-                    .copied()
-                    .flatten();
+        Ok(ReadEntries {
+            kept,
+            warnings,
+            first_fault,
+            rows,
+        })
+    }
+}
+
+/// What reading a list's entries left: each kept entry with its index, the
+/// warnings, the first dropped entry's fault, and each entry's row.
+pub(crate) struct ReadEntries<E> {
+    kept: Vec<(usize, E)>,
+    warnings: Vec<ParseWarning>,
+    first_fault: Option<ParseError>,
+    rows: Vec<Option<usize>>,
+}
+
+/// The first entry of `raw` parsed alone, as the list `L` reads it, outside
+/// any list; text after its comma is dropped under
+/// [`WarningCode::TrailingContent`].
+pub(crate) fn entry_from_str<L: CommaList>(raw: &str) -> Result<Parsed<L::Entry>, ParseError> {
+    let mut split = crate::split_row(raw, None, L::QUOTE_START);
+    let first = split.next();
+    let rest = split
+        .next()
+        .and(first)
+        .and_then(|e| {
+            e.base
+                .map(|b| {
+                    b + e
+                        .text
+                        .len()
+                })
+        });
+    let read = L::read_marked(first)?;
+    let Some((_, value)) = read
+        .kept
+        .into_iter()
+        .next()
+    else {
+        return Err(read
+            .first_fault
+            .map_or_else(
+                || ParseError::empty(Field::Value),
+                ParseError::without_entry,
+            ));
+    };
+    let mut warnings = read.warnings;
+    for w in &mut warnings {
+        w.entry = None;
+    }
+    if let Some(at) = rest {
+        warnings.push(
+            ParseWarning::new(Field::Value, WarningCode::TrailingContent)
+                .at(at)
+                .covering(Span::new(
+                    at..raw
+                        .trim_end()
+                        .len(),
+                )),
+        );
+    }
+    Ok(Parsed::new(value, warnings))
+}
+
+/// HeaderParse for a list's entry type, parsing one entry as
+/// [`entry_from_str`] does.
+macro_rules! entry_parse {
+    ($Entry:ty, $List:ty) => {
+        impl $crate::traits::HeaderParse for $Entry {
+            fn parse_with_warnings(
+                raw: &str,
+            ) -> Result<$crate::diagnostic::Parsed<Self>, $crate::error::ParseError> {
+                $crate::list::entry_from_str::<$List>(raw)
             }
         }
-        Ok(Parsed::new(value, warnings))
-    }
+    };
 }
 
 /// A list type's entries, for checking one entry through the list's parser.

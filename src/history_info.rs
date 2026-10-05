@@ -14,7 +14,9 @@ use crate::traits::sealed;
 
 /// A single entry from a History-Info header (RFC 7044).
 ///
-/// Parsed as an entry of [`HistoryInfo`].
+/// Parsed as an entry of [`HistoryInfo`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// Each entry is a SIP name-addr (`<URI>;params`) where the URI may contain
 /// an embedded `?Reason=...` header and the params include `index`, which
@@ -236,6 +238,7 @@ impl CommaList for HistoryInfo {
 }
 
 list_parse!(HistoryInfo);
+entry_parse!(HistoryInfoEntry, HistoryInfo);
 
 #[cfg(test)]
 mod tests {

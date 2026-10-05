@@ -15,7 +15,9 @@ use crate::{is_token, is_token_char};
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 ///
-/// Parsed as an entry of [`SipAccept`].
+/// Parsed as an entry of [`SipAccept`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// # Equality
 ///
@@ -387,6 +389,9 @@ impl CommaList for SipAccept {
 }
 
 list_parse!(SipAccept);
+
+impl crate::traits::sealed::Sealed for SipAcceptEntry {}
+entry_parse!(SipAcceptEntry, SipAccept);
 
 #[cfg(test)]
 mod tests {

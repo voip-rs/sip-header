@@ -13,7 +13,9 @@ use crate::params::HeaderParams;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
 ///
-/// Parsed as an entry of [`SipSecurity`].
+/// Parsed as an entry of [`SipSecurity`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// # Equality
 ///
@@ -175,6 +177,9 @@ impl CommaList for SipSecurity {
 }
 
 list_parse!(SipSecurity);
+
+impl crate::traits::sealed::Sealed for SipSecurityMechanism {}
+entry_parse!(SipSecurityMechanism, SipSecurity);
 
 #[cfg(test)]
 mod tests {

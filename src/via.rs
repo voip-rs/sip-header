@@ -20,7 +20,9 @@ use crate::{is_token, RawParam};
 
 /// A single Via entry.
 ///
-/// Parsed as an entry of [`SipVia`].
+/// Parsed as an entry of [`SipVia`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// ```
 /// use sip_header::sip_uri::Host;
@@ -553,6 +555,7 @@ impl CommaList for SipVia {
 }
 
 list_parse!(SipVia);
+entry_parse!(SipViaEntry, SipVia);
 
 /// A `sent-by` host with its span, and its port.
 type SentBy = (Host, Span, Option<u16>);

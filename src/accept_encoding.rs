@@ -16,7 +16,9 @@ use crate::params::HeaderParams;
 
 /// A single Accept-Encoding entry: `encoding *(SEMI accept-param)`.
 ///
-/// Parsed as an entry of [`SipAcceptEncoding`].
+/// Parsed as an entry of [`SipAcceptEncoding`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// # Equality
 ///
@@ -141,6 +143,9 @@ impl CommaList for SipAcceptEncoding {
 }
 
 list_parse!(SipAcceptEncoding);
+
+impl crate::traits::sealed::Sealed for SipAcceptEncodingEntry {}
+entry_parse!(SipAcceptEncodingEntry, SipAcceptEncoding);
 
 #[cfg(test)]
 mod tests {

@@ -19,7 +19,9 @@ const WARN_CODE_MAX: u16 = 999;
 
 /// A single Warning header entry.
 ///
-/// Parsed as an entry of [`SipWarning`].
+/// Parsed as an entry of [`SipWarning`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// RFC 3261 §20.43:
 /// ```text
@@ -328,6 +330,9 @@ impl CommaList for SipWarning {
 }
 
 list_parse!(SipWarning);
+
+impl crate::traits::sealed::Sealed for SipWarningEntry {}
+entry_parse!(SipWarningEntry, SipWarning);
 
 #[cfg(test)]
 mod tests {

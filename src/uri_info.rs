@@ -27,7 +27,9 @@ use crate::traits::sealed;
 
 /// One `<uri>;key=value;key=value` entry from a URI-info-style header.
 ///
-/// Parsed as an entry of [`UriInfo`].
+/// Parsed as an entry of [`UriInfo`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// # Equality
 ///
@@ -361,6 +363,7 @@ impl CommaList for UriInfo {
 }
 
 list_parse!(UriInfo);
+entry_parse!(UriInfoEntry, UriInfo);
 
 #[cfg(test)]
 mod tests {

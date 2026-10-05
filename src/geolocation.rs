@@ -26,7 +26,9 @@ use crate::uri_info::read_uri_entry;
 /// (RFC 6442 §4.1): a `cid:` reference to a MIME body part (typically
 /// PIDF-LO) or a URI to dereference.
 ///
-/// Parsed as an entry of [`SipGeolocation`].
+/// Parsed as an entry of [`SipGeolocation`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// Resolving `cid:` references against the message body or dereferencing
 /// the URI is the caller's responsibility.
@@ -304,6 +306,7 @@ impl CommaList for SipGeolocation {
 }
 
 list_parse!(SipGeolocation);
+entry_parse!(SipGeolocationEntry, SipGeolocation);
 
 #[cfg(test)]
 mod tests {

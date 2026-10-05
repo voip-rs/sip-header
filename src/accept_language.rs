@@ -14,7 +14,9 @@ use crate::params::HeaderParams;
 
 /// A single Accept-Language entry: `language-range *(SEMI accept-param)`.
 ///
-/// Parsed as an entry of [`SipAcceptLanguage`].
+/// Parsed as an entry of [`SipAcceptLanguage`], or alone through
+/// [`HeaderParse`](crate::HeaderParse), which drops text after the entry's
+/// comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// # Equality
 ///
@@ -166,6 +168,9 @@ impl CommaList for SipAcceptLanguage {
 }
 
 list_parse!(SipAcceptLanguage);
+
+impl crate::traits::sealed::Sealed for SipAcceptLanguageEntry {}
+entry_parse!(SipAcceptLanguageEntry, SipAcceptLanguage);
 
 #[cfg(test)]
 mod tests {

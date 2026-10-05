@@ -181,7 +181,7 @@ assert!(a.equivalent(&b));
 | `SipAuthValue` `Debug` showing credentials | `Debug` masks `token68`, credential parameters and `username` |
 | value types without `Hash` | every value type is `Hash`, consistent with its `Eq` |
 
-Lists are opaque too: `iter()`, `entries()`, `iter_mut()`, `get_mut()`, `push`, `remove` and `retain`; an entry reached mutably changes only through its own checked methods. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
+Lists are opaque too: `iter()`, `entries()`, `iter_mut()`, `get_mut()`, `push`, `remove` and `retain`; an entry reached mutably changes only through its own checked methods. Each entry type also parses alone through `HeaderParse` (`SipViaEntry::parse`, `UriInfoEntry::parse`, …), reading one entry as its list does; text after the entry's comma is dropped with `TrailingContent`. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
 
 A blank entry beside real ones is dropped with `EmptyEntry`, in every list, and a Warning entry whose code is not three digits with `SkippedEntry`; `Err` comes only when no entry remains where the grammar needs one, and it is the first dropped entry's fault, with its position and entry index. A comma ending a list is ignored with `TrailingComma`.
 
