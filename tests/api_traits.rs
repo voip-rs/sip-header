@@ -2,7 +2,7 @@
 
 use sip_header::{
     FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipHeaderAddrList, SipReason,
-    SipReasonList, SipReplaces, SipTargetDialog, SipVia, UriHeaderParse, WarningCode,
+    SipReasonList, SipReplaces, SipTargetDialog, SipVia, UriHeaderParse, WarningCode, WarningKind,
 };
 
 type R = Result<(), ParseError>;
@@ -68,6 +68,26 @@ fn uri_header_parse_covers_dialogs_and_reason() -> R {
     assert_eq!(parsed.warnings[0].code, WarningCode::InvalidCause);
     assert!(SipReason::parse_uri_header_strict("Q.850%3Bcause%3Dx").is_err());
     assert!(SipReason::parse_uri_header("%C0%80").is_err());
+    Ok(())
+}
+
+#[test]
+fn uri_header_reason_parses_as_one_entry() -> R {
+    let raw = "Q.850%3Bcause%3D16%2C%20SIP%3Bcause%3D200";
+    let one = SipReason::parse("Q.850;cause=16")?;
+    assert_eq!(SipReason::parse_uri_header(raw)?, one);
+    let parsed = SipReason::parse_uri_header_with_warnings(raw)?;
+    assert_eq!(parsed.value, one);
+    let codes: Vec<_> = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.code, w.kind, w.span()))
+        .collect();
+    assert_eq!(
+        codes,
+        [(WarningCode::TrailingContent, WarningKind::Lost, None)]
+    );
+    assert!(SipReason::parse_uri_header_strict(raw).is_err());
     Ok(())
 }
 
