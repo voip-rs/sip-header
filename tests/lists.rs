@@ -627,3 +627,120 @@ fn malformed_entry_never_fails_the_list() {
         refused
     );
 }
+
+/// `$Entry` parses `$wire` as the one entry `$List` reads from it, with the
+/// same warnings outside a list; text after its comma is dropped.
+macro_rules! entry_parses_alone {
+    ($Entry:ty, $List:ty, $($wire:expr),+ $(,)?) => {{
+        for wire in [$($wire),+] {
+            let list = <$List>::parse_with_warnings(wire).unwrap();
+            let one = <$Entry>::parse_with_warnings(wire).unwrap();
+            assert_eq!(list.value.entries(), std::slice::from_ref(&one.value), "{wire}");
+            let unlisted: Vec<_> = list
+                .warnings
+                .iter()
+                .map(|w| (w.field, w.code, w.position, w.row))
+                .collect();
+            let alone: Vec<_> = one
+                .warnings
+                .iter()
+                .map(|w| (w.field, w.code, w.position, w.row, w.entry))
+                .collect();
+            assert_eq!(
+                alone,
+                unlisted
+                    .into_iter()
+                    .map(|(f, c, p, r)| (f, c, p, r, None))
+                    .collect::<Vec<_>>(),
+                "{wire}"
+            );
+
+            let two = format!("{wire}, {wire}");
+            let first = <$Entry>::parse_with_warnings(&two).unwrap();
+            assert_eq!(first.value, one.value, "{two}");
+            let dropped = first
+                .warnings
+                .last()
+                .copied()
+                .unwrap();
+            assert_eq!(
+                (dropped.code, dropped.kind, dropped.position, dropped.entry),
+                (WarningCode::TrailingContent, WarningKind::Lost, Some(wire.len()), None),
+                "{two}"
+            );
+            assert_eq!(
+                dropped
+                    .span()
+                    .map(|s| s.get(&two)),
+                Some(Ok(&two[wire.len()..])),
+                "{two}"
+            );
+            assert!(<$Entry>::parse_strict(&two).is_err(), "{two}");
+
+            let comma = format!("{wire},");
+            let parsed = <$Entry>::parse_with_warnings(&comma).unwrap();
+            assert_eq!(parsed.value, one.value, "{comma}");
+            assert_eq!(
+                parsed
+                    .warnings
+                    .last()
+                    .map(|w| (w.code, w.position)),
+                Some((WarningCode::TrailingComma, Some(wire.len()))),
+                "{comma}"
+            );
+        }
+    }};
+}
+
+#[test]
+fn entry_types_parse_on_their_own() {
+    use sip_header::{
+        HistoryInfoEntry, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguageEntry,
+        SipGeolocationEntry, SipSecurityMechanism, SipViaEntry, SipWarningEntry, UriInfoEntry,
+    };
+
+    entry_parses_alone!(
+        SipViaEntry,
+        SipVia,
+        "SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1",
+        " SIP/2.0/TCP example.com:x"
+    );
+    entry_parses_alone!(
+        UriInfoEntry,
+        UriInfo,
+        "<https://example.com/a>;purpose=icon",
+        " urn:example:1;purpose=info"
+    );
+    entry_parses_alone!(
+        HistoryInfoEntry,
+        HistoryInfo,
+        "<sip:a@example.com>;index=1",
+        "sip:b@example.com"
+    );
+    entry_parses_alone!(
+        SipGeolocationEntry,
+        SipGeolocation,
+        "<cid:a@example.com>;inserted-by=x",
+        "https://example.com/l"
+    );
+    entry_parses_alone!(SipAcceptEntry, SipAccept, "application/sdp;q=0.5");
+    entry_parses_alone!(SipAcceptEncodingEntry, SipAcceptEncoding, "gzip;q=2");
+    entry_parses_alone!(SipAcceptLanguageEntry, SipAcceptLanguage, "fr-ca");
+    entry_parses_alone!(SipSecurityMechanism, SipSecurity, "digest;d-qop=auth;q=0.1");
+    entry_parses_alone!(SipWarningEntry, SipWarning, r#"399 example.com "a, b""#);
+}
+
+#[test]
+fn an_entry_that_yields_nothing_errs_with_its_fault() {
+    use sip_header::{SipAcceptEntry, SipViaEntry, UriInfoEntry};
+
+    assert!(matches!(
+        UriInfoEntry::parse(" <>"),
+        Err(ParseError::Malformed(f)) if (f.position, f.row, f.entry) == (Some(1), None, None)
+    ));
+    assert!(matches!(
+        SipViaEntry::parse("SIP/2.0/UDP :5060"),
+        Err(ParseError::Malformed(f)) if f.position.is_some() && f.entry.is_none()
+    ));
+    assert!(is_empty_fault(SipAcceptEntry::parse(" ")));
+}
