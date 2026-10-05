@@ -28,7 +28,7 @@ Setting a key that exists replaces its value in place and drops its later repeat
 
 ## Body extraction shares the header boundary
 
-Callers re-deriving the header/body boundary as `split_once("\r\n\r\n")` silently lose the body on bare-`\n` messages this crate accepts, so `extract_body` and the header extractors share one boundary helper. The splitter stays private: a public one would freeze header-block slice semantics we haven't needed to define, and exposing it later is non-breaking.
+Callers re-deriving the header/body boundary as `split_once("\r\n\r\n")` silently lose the body on bare-`\n` messages this crate accepts, so `extract_body` and the header extractors share one boundary helper. The splitter stays private: a public one would freeze header-block slice semantics we haven't needed to define, and exposing it later is non-breaking. Every line the header reader does not turn into a row is reported by offset; only a first line recognized as a request or status line is exempt.
 
 ## Replaces framing is an explicit constructor
 
