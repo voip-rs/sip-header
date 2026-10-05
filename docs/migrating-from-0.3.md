@@ -1,6 +1,6 @@
-# Migrating from sip-header 0.3 to 0.4
+# Migrating from sip-header 0.3 to 1.0
 
-sip-header 0.4 changes four things about the crate:
+sip-header 1.0 changes four things about the crate:
 
 - Parsing rarely fails. Non-conformant input parses, and each breach of the grammar comes back as a typed warning, as in sip-uri 0.3.
 - A value you build is checked. Every constructor, builder and parameter setter refuses what would print as a different value, so a built header cannot carry injected structure.
@@ -51,7 +51,7 @@ Without the import the compiler names the method, not the trait: `UriInfo::parse
 // 0.3
 let addr: SipHeaderAddr = s.parse()?;
 
-// 0.4
+// 1.0
 use sip_header::{HeaderParse, SipHeaderAddr};
 let addr = SipHeaderAddr::parse(s)?;                    // lenient
 let parsed = SipHeaderAddr::parse_with_warnings(s)?;   // value + warnings
@@ -79,7 +79,7 @@ The parameters after a bare addr-spec (`sip:alice@example.com;tag=x`) are header
 
 Every parser, constructor and accessor returns one `ParseError`, so nested parsers compose with `?`:
 
-| 0.3 | 0.4 |
+| 0.3 | 1.0 |
 |---|---|
 | `SipViaError`, `SipAuthError`, `ParseSipHeaderAddrError`, `UriInfoError`, `HistoryInfoError`, … | `ParseError::Malformed(Fault)` |
 | a failed URI as a string | `ParseError::Uri(UriFault)`, sip-uri's error as `source()` and, typed, `cause()` |
@@ -97,7 +97,7 @@ Names and text are `impl AsRef<str>`, optional values `Option<&str>`:
 ```rust
 // 0.3
 addr.with_param("lr", None::<String>)
-// 0.4
+// 1.0
 addr.with_param("lr", None)?
 addr.with_param(key, value.as_deref())?
 ```
@@ -129,12 +129,12 @@ Every guard operation runs the builders' check, refuses the owner's reserved key
 
 ## `param()` returns the wire text, not a decoded value
 
-In 0.3, `SipHeaderAddr::param()` percent-decoded the value. In 0.4, every `param()` returns the text as received, escapes included: `%` is an ordinary token character in a header parameter (RFC 3261 §25.1), so nothing in the grammar says a `%XX` stands for a byte. The port compiles with no warning and changes the value:
+In 0.3, `SipHeaderAddr::param()` percent-decoded the value. In 1.0, every `param()` returns the text as received, escapes included: `%` is an ordinary token character in a header parameter (RFC 3261 §25.1), so nothing in the grammar says a `%XX` stands for a byte. The port compiles with no warning and changes the value:
 
 ```rust
 // 0.3: Some("urn:service:sos")
 let urn = addr.param("serviceurn")?.ok()?;
-// 0.4: Some("urn%3Aservice%3Asos")
+// 1.0: Some("urn%3Aservice%3Asos")
 let urn = addr.param("serviceurn")??;
 ```
 
@@ -168,7 +168,7 @@ assert!(a.equivalent(&b));
 
 ## Value shapes
 
-| 0.3 | 0.4 |
+| 0.3 | 1.0 |
 |---|---|
 | `SipHeaderAddr::parse_list -> Vec<SipHeaderAddr>` | `SipHeaderAddrList`, `Err` when empty |
 | `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list` | opaque `ContactList`: `wildcard()`, `new(addrs)`, `is_wildcard()`, `addrs()`; `*` beside addresses is dropped with `WildcardNotAlone` |
@@ -193,7 +193,7 @@ impl SipHeaderLookup for Store {
     fn sip_header_str(&self, name: &str) -> Option<&str> { … }
 }
 
-// 0.4
+// 1.0
 use sip_header::{RowError, SipHeaderRows};
 impl SipHeaderRows for Store {
     fn sip_header_rows_str<'a>(&'a self, name: &str) -> Result<Vec<&'a str>, RowError> { … }
@@ -214,7 +214,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 
 ## Raw messages
 
-| 0.3 | 0.4 |
+| 0.3 | 1.0 |
 |---|---|
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` |
@@ -250,4 +250,4 @@ Value types serialize as their parts and deserialize through the same checks a p
 
 ## sip-uri 0.3
 
-sip-header 0.4 depends on sip-uri 0.3 and re-exports it as `sip_header::sip_uri`. Its own changes are in [sip-uri's migration guide](https://github.com/voip-rs/sip-uri/blob/b0f038421200416fbad56bf4960278f4f585c238/docs/migrating-from-0.2.md).
+sip-header 1.0 depends on sip-uri 0.3 and re-exports it as `sip_header::sip_uri`. Its own changes are in [sip-uri's migration guide](https://github.com/voip-rs/sip-uri/blob/b0f038421200416fbad56bf4960278f4f585c238/docs/migrating-from-0.2.md).
