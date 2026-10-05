@@ -588,8 +588,11 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         let (text, params) = s.split_at(bare_params_at(s));
         let uri = parse_uri(text, lead, &mut warnings)?;
         if let Some(i) = text.find([',', ';', '?']) {
-            warnings
-                .push(ParseWarning::new(Field::Addr, WarningCode::MissingBrackets).at(lead + i));
+            warnings.push(
+                ParseWarning::new(Field::Addr, WarningCode::MissingBrackets)
+                    .at(lead + i)
+                    .covering(Span::new(lead..lead + text.len())),
+            );
         }
         let addr = SipHeaderAddr {
             params: HeaderParams::read(input, params, &mut warnings),
@@ -675,8 +678,8 @@ impl CommaList for SipHeaderAddrList {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipHeaderAddr>, ParseError> {
-        parse_list_addr(entry, warnings).map(Some)
+    ) -> Result<SipHeaderAddr, ParseError> {
+        parse_list_addr(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipHeaderAddr>) -> Result<Self, ParseError> {

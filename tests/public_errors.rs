@@ -301,10 +301,10 @@ fn a_fault_spans_from_its_position_to_its_end() {
 fn a_strict_refusal_spans_the_point_of_its_warning() {
     use sip_header::{HeaderParse, UriInfo};
 
-    let input = "<urn:example:0>, urn:example:1";
+    let input = "<urn:example:0>;a;a";
     let e = UriInfo::parse_strict(input).unwrap_err();
     let at = input
-        .find("urn:example:1")
+        .rfind('a')
         .unwrap();
     assert_eq!(span_of(&e, &[input]), Some((None, at..at, String::new())));
     assert_eq!(ParseError::from(row_error()).span(), None);

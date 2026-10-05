@@ -91,6 +91,26 @@ impl ParseError {
         }
     }
 
+    /// Point an error that names no position at `at`.
+    pub(crate) fn placed(self, at: usize) -> Self {
+        match self {
+            ParseError::Malformed(fault)
+                if fault
+                    .position
+                    .is_none() =>
+            {
+                ParseError::Malformed(fault.at(at))
+            }
+            ParseError::NonConformant(w)
+                if w.position
+                    .is_none() =>
+            {
+                ParseError::NonConformant(w.at(at))
+            }
+            e => e,
+        }
+    }
+
     /// Drop the position and row, for input that was decoded before parsing.
     pub(crate) fn without_position(self) -> Self {
         match self {

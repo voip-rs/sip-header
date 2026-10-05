@@ -151,12 +151,11 @@ impl SipWarningEntryParts {
     }
 }
 
-/// Parse one `warning-value`, positions relative to `entry`; `None`, with
-/// [`WarningCode::SkippedEntry`], when its code is not `3DIGIT`.
+/// Parse one `warning-value`, positions relative to `entry`.
 fn parse_warning_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<Option<SipWarningEntry>, ParseError> {
+) -> Result<SipWarningEntry, ParseError> {
     let s = entry.trim();
     if s.is_empty() {
         return Err(ParseError::malformed(
@@ -185,13 +184,7 @@ fn parse_warning_entry(
             c.parse::<u16>()
                 .ok()
         });
-    let Some(code) = code else {
-        warnings.push(
-            ParseWarning::new(Field::Code, WarningCode::SkippedEntry)
-                .at(crate::offset_in(entry, code_str)),
-        );
-        return Ok(None);
-    };
+    let code = code.ok_or_else(|| at(Field::Code, FaultCode::InvalidNumber, code_str))?;
     if code < WARN_CODE_MIN {
         warnings.push(
             ParseWarning::new(Field::Code, WarningCode::WarnCodeLeadingZero)
@@ -229,11 +222,11 @@ fn parse_warning_entry(
 
     let text = parse_quoted_string(entry, &after_code[quote_pos..], warnings)?;
 
-    Ok(Some(SipWarningEntry {
+    Ok(SipWarningEntry {
         code,
         agent: agent.into_owned(),
         text,
-    }))
+    })
 }
 
 /// RFC 3261 §25.1 `hostport = host [ ":" port ]`, host as sip-uri reads it.
@@ -325,7 +318,7 @@ impl CommaList for SipWarning {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipWarningEntry>, ParseError> {
+    ) -> Result<SipWarningEntry, ParseError> {
         parse_warning_entry(entry, warnings)
     }
 
@@ -442,7 +435,7 @@ mod tests {
             );
             assert_eq!(
                 SipWarning::parse(bad),
-                Err(ParseError::empty(Field::Value)),
+                Err(fault(Field::Code, FaultCode::InvalidNumber, Some(0)).in_entry(0)),
                 "{bad}"
             );
         }
@@ -460,7 +453,7 @@ mod tests {
     fn test_missing_warn_text() {
         assert_eq!(
             SipWarning::parse("301 example.com"),
-            Err(fault(Field::Text, FaultCode::Missing, None))
+            Err(fault(Field::Text, FaultCode::Missing, Some(0)))
         );
     }
 
@@ -692,7 +685,7 @@ mod tests {
         );
         assert_eq!(
             SipWarning::parse_with_warnings("nope"),
-            Err(ParseError::malformed(Field::Agent, FaultCode::Missing, None).in_entry(0))
+            Err(ParseError::malformed(Field::Agent, FaultCode::Missing, Some(0)).in_entry(0))
         );
     }
 }

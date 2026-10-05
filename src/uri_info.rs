@@ -8,8 +8,8 @@
 //! no URI is kept as a scheme-less [`Uri::Other`] with sip-uri's warning;
 //! an entry sip-uri cannot read at all is dropped with
 //! [`SkippedEntry`](crate::WarningCode::SkippedEntry), a blank one with
-//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and `Err(Empty)` means
-//! no entry yielded a URI.
+//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and the list errs when
+//! no entry yields a URI.
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -17,7 +17,7 @@ use std::hash::{Hash, Hasher};
 use sip_uri::{Uri, UriParse, UriRedact};
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::error::ParseError;
+use crate::error::{FaultCode, ParseError};
 use crate::header_addr::Rendered;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
@@ -206,22 +206,32 @@ impl UriInfoEntryParts {
     }
 }
 
-/// Read one entry, positions relative to `entry`; `None` when it yields no URI.
-fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEntry> {
+/// One `LAQUOT URI RAQUOT *(SEMI generic-param)` entry as read: its URI,
+/// the parameter text after it, and where both were read from.
+pub(crate) struct UriEntry<'a> {
+    pub(crate) uri: Uri,
+    pub(crate) params: &'a str,
+    pub(crate) span: Span,
+    pub(crate) uri_span: Span,
+}
+
+/// Read a bracketed URI and the parameter text after it, positions relative
+/// to `entry`, for every list whose entries are `<URI> *(SEMI param)`.
+///
+/// Without its brackets the URI runs to the first `;` under
+/// [`WarningCode::MissingBrackets`]; text after `>` that starts no
+/// parameter is dropped under [`WarningCode::TrailingContent`].
+pub(crate) fn read_uri_entry<'a>(
+    entry: &'a str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<UriEntry<'a>, ParseError> {
     let raw = entry.trim();
     let at = crate::offset_in(entry, raw);
-
-    let bracketed = raw
+    let (data, params, recovered) = match raw
         .strip_prefix('<')
         .and_then(|s| s.split_once('>'))
-        .filter(|(_, rest)| {
-            let rest = rest.trim_start();
-            rest.is_empty() || rest.starts_with(';')
-        });
-    // Without the RFC 3261 §20.9 brackets, data runs to the first `;` with
-    // stray brackets stripped.
-    let (data, params, recovered) = match bracketed {
-        Some((data, params)) => (data, params, false),
+    {
+        Some((data, tail)) => (data, tail, false),
         None => {
             let (data, params) = crate::split_at_params(raw);
             (
@@ -232,47 +242,98 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<UriInfoEn
             )
         }
     };
-    // A `<` left inside the data would reframe the list when written back.
-    if data.is_empty() || data.contains('<') {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
-        return None;
-    }
     let data_at = crate::offset_in(entry, data);
-    let Some((uri, uri_warnings)) = read_uri(data, data_at) else {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::SkippedEntry).at(at));
-        return None;
-    };
+    if data.is_empty() {
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Empty,
+            Some(at),
+        ));
+    }
+    // A `<` left inside the data would reframe the list when written back.
+    if let Some(i) = data.find('<') {
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::InvalidChar,
+            Some(data_at + i),
+        ));
+    }
+    let (uri, uri_warnings) = read_uri(data, data_at)?;
+    let uri_span = Span::new(data_at..data_at + data.len());
     if recovered {
-        warnings.push(ParseWarning::new(Field::Entry, WarningCode::MissingBrackets).at(at));
+        warnings.push(
+            ParseWarning::new(Field::Entry, WarningCode::MissingBrackets)
+                .at(at)
+                .covering(uri_span),
+        );
     }
     warnings.extend(uri_warnings);
-
-    Some(UriInfoEntry {
-        params: HeaderParams::read(entry, params, warnings),
-        span: Some(Span::new(at..at + raw.len())),
-        uri_span: Some(Span::new(data_at..data_at + data.len())),
-        ..UriInfoEntry::unchecked(uri)
+    let params = if recovered {
+        params
+    } else {
+        after_bracket(entry, params, warnings)
+    };
+    Ok(UriEntry {
+        uri,
+        params,
+        span: Span::new(at..at + raw.len()),
+        uri_span,
     })
 }
 
-/// Read the URI inside a list entry's brackets, with sip-uri's warnings
-/// moved `offset` bytes into the entry; `None` when sip-uri cannot read it
-/// or it would print a bracket.
-pub(crate) fn read_uri(data: &str, offset: usize) -> Option<(Uri, Vec<ParseWarning>)> {
-    let parsed = Uri::parse_with_warnings(data).ok()?;
+/// The parameter text in `tail`, what follows `>`, dropping text before
+/// its first `;` under [`WarningCode::TrailingContent`].
+fn after_bracket<'a>(entry: &str, tail: &'a str, warnings: &mut Vec<ParseWarning>) -> &'a str {
+    let junk = tail.trim_start();
+    if junk.is_empty() || junk.starts_with(';') {
+        return tail;
+    }
+    let (dropped, params) = junk.split_at(
+        junk.find(';')
+            .unwrap_or(junk.len()),
+    );
+    warnings.push(
+        ParseWarning::new(Field::Param, WarningCode::TrailingContent)
+            .at(crate::offset_in(entry, junk))
+            .covering(Span::within(entry, dropped.trim_end())),
+    );
+    params
+}
+
+/// Read a list entry's URI, with sip-uri's warnings moved `offset` bytes
+/// into the entry; errs when sip-uri cannot read it or it would print a
+/// bracket.
+fn read_uri(data: &str, offset: usize) -> Result<(Uri, Vec<ParseWarning>), ParseError> {
+    let parsed =
+        Uri::parse_with_warnings(data).map_err(|e| ParseError::uri(e, offset, data.len()))?;
     if parsed
         .value
         .to_string()
         .contains(['<', '>'])
     {
-        return None;
+        return Err(ParseError::malformed(
+            Field::Entry,
+            FaultCode::Unrepresentable,
+            Some(offset),
+        ));
     }
     let warnings = parsed
         .warnings
         .into_iter()
         .map(|w| ParseWarning::from_uri(w, offset))
         .collect();
-    Some((parsed.value, warnings))
+    Ok((parsed.value, warnings))
+}
+
+/// Read one entry, positions relative to `entry`.
+fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<UriInfoEntry, ParseError> {
+    let read = read_uri_entry(entry, warnings)?;
+    Ok(UriInfoEntry {
+        params: HeaderParams::read(entry, read.params, warnings),
+        span: Some(read.span),
+        uri_span: Some(read.uri_span),
+        ..UriInfoEntry::unchecked(read.uri)
+    })
 }
 
 impl CommaList for UriInfo {
@@ -281,8 +342,8 @@ impl CommaList for UriInfo {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<UriInfoEntry>, ParseError> {
-        Ok(read_entry(entry, warnings))
+    ) -> Result<UriInfoEntry, ParseError> {
+        read_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<UriInfoEntry>) -> Result<Self, ParseError> {
@@ -301,7 +362,7 @@ mod tests {
     use sip_uri::WarningKind;
 
     fn parse_entry(raw: &str) -> Option<UriInfoEntry> {
-        read_entry(raw, &mut Vec::new())
+        read_entry(raw, &mut Vec::new()).ok()
     }
 
     fn lenient(raw: &str) -> (UriInfo, Vec<Seen>) {

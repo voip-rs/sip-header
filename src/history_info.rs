@@ -211,7 +211,7 @@ impl CommaList for HistoryInfo {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<HistoryInfoEntry>, ParseError> {
+    ) -> Result<HistoryInfoEntry, ParseError> {
         let addr = parse_list_addr(entry, warnings)?;
         // A successful parse without `<` is the bare addr-spec branch.
         if !entry.contains('<') {
@@ -227,7 +227,7 @@ impl CommaList for HistoryInfo {
         {
             warnings.push(ParseWarning::new(Field::Index, WarningCode::MissingIndex));
         }
-        Ok(Some(HistoryInfoEntry { addr }))
+        Ok(HistoryInfoEntry { addr })
     }
 
     fn from_parsed(entries: Vec<HistoryInfoEntry>) -> Result<Self, ParseError> {

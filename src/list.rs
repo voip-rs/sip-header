@@ -223,8 +223,8 @@ pub(crate) fn retain_needed<T>(
     Ok(())
 }
 
-/// The warning for an entry dropped on `fault`, at the fault or else at `start`.
-fn skipped(fault: &ParseError, start: usize) -> ParseWarning {
+/// The warning for an entry dropped on `fault`, at the fault, covering `entry`.
+fn skipped(fault: &ParseError, entry: Span) -> ParseWarning {
     let field = match fault {
         ParseError::Malformed(f) => f.field,
         ParseError::NonConformant(w) => w.field,
@@ -232,11 +232,18 @@ fn skipped(fault: &ParseError, start: usize) -> ParseWarning {
     };
     let at = fault
         .span()
-        .map_or(start, |s| {
-            s.range()
-                .start
-        });
-    ParseWarning::new(field, WarningCode::SkippedEntry).at(at)
+        .map_or(
+            entry
+                .range()
+                .start,
+            |s| {
+                s.range()
+                    .start
+            },
+        );
+    ParseWarning::new(field, WarningCode::SkippedEntry)
+        .at(at)
+        .covering(entry)
 }
 
 /// A header value of the form `entry *(COMMA entry)`.
@@ -255,12 +262,12 @@ pub(crate) trait CommaList: Sized {
     /// commas a quote hides.
     const QUOTE_START: QuoteStart = QuoteStart::Param;
 
-    /// Parse one entry, positions relative to `entry`; `Ok(None)` drops it,
-    /// an `Err` drops it under [`skipped`].
+    /// Parse one entry, positions relative to `entry`; an `Err` drops it
+    /// under [`skipped`].
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<Self::Entry>, ParseError>;
+    ) -> Result<Self::Entry, ParseError>;
 
     /// Build the list from the entries kept.
     fn from_parsed(entries: Vec<Self::Entry>) -> Result<Self, ParseError>;
@@ -368,15 +375,15 @@ pub(crate) trait CommaList: Sized {
                     .trim(),
             );
             let value = match Self::parse_entry(&scrubbed.text, &mut found) {
-                Ok(value) => value,
+                Ok(value) => Some(value),
                 Err(ParseError::Row(e)) => return Err(ParseError::Row(e)),
                 Err(e) => {
-                    found.push(skipped(
-                        &e,
+                    let e = e.placed(
                         whole
                             .range()
                             .start,
-                    ));
+                    );
+                    found.push(skipped(&e, whole));
                     first_fault.get_or_insert_with(|| {
                         e.relocate(&back)
                             .in_entry(i)
@@ -384,18 +391,6 @@ pub(crate) trait CommaList: Sized {
                     None
                 }
             };
-            if value.is_none() {
-                for w in found
-                    .iter_mut()
-                    .filter(|w| {
-                        w.code == WarningCode::SkippedEntry
-                            && w.span
-                                .is_none()
-                    })
-                {
-                    w.span = Some(whole);
-                }
-            }
             let found = found
                 .into_iter()
                 .map(|w| w.relocate(&back))

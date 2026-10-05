@@ -165,8 +165,8 @@ impl CommaList for SipSecurity {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipSecurityMechanism>, ParseError> {
-        parse_mechanism(entry, warnings).map(Some)
+    ) -> Result<SipSecurityMechanism, ParseError> {
+        parse_mechanism(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipSecurityMechanism>) -> Result<Self, ParseError> {

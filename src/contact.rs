@@ -220,11 +220,11 @@ impl CommaList for ContactList {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<Option<SipHeaderAddr>>, ParseError> {
+    ) -> Result<Option<SipHeaderAddr>, ParseError> {
         if entry.trim() == "*" {
-            return Ok(Some(None));
+            return Ok(None);
         }
-        parse_list_addr(entry, warnings).map(|addr| Some(Some(addr)))
+        parse_list_addr(entry, warnings).map(Some)
     }
 
     fn from_parsed(entries: Vec<Option<SipHeaderAddr>>) -> Result<Self, ParseError> {

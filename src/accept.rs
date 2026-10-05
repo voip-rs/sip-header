@@ -377,8 +377,8 @@ impl CommaList for SipAccept {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipAcceptEntry>, ParseError> {
-        parse_accept_entry(entry, warnings).map(Some)
+    ) -> Result<SipAcceptEntry, ParseError> {
+        parse_accept_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipAcceptEntry>) -> Result<Self, ParseError> {

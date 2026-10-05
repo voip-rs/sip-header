@@ -205,13 +205,13 @@ fn via_entry_without_host_is_dropped() -> R {
     assert_eq!(
         (w.field, w.code, w.kind, w.entry),
         (
-            Field::Entry,
+            Field::SentBy,
             WarningCode::SkippedEntry,
             WarningKind::Lost,
             Some(0)
         )
     );
-    assert_eq!(SipVia::parse("SIP/2.0/UDP :5060"), Err(empty()));
+    assert!(SipVia::parse("SIP/2.0/UDP :5060").is_err());
     Ok(())
 }
 

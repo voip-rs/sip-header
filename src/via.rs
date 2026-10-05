@@ -411,12 +411,11 @@ impl SipViaEntryParts {
     }
 }
 
-/// Parse one `via-parm`, positions relative to `entry`; `None` when the
-/// sent-by has no host.
+/// Parse one `via-parm`, positions relative to `entry`.
 fn parse_via_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
-) -> Result<Option<SipViaEntry>, ParseError> {
+) -> Result<SipViaEntry, ParseError> {
     let trimmed = entry.trim();
     if trimmed.is_empty() {
         return Err(ParseError::malformed(
@@ -430,13 +429,7 @@ fn parse_via_entry(
 
     let (protocol_name, protocol_version, transport, sent_by) =
         parse_sent_protocol(entry, main_part, warnings)?;
-    let Some((host, host_span, port)) = parse_host_port(entry, sent_by, warnings)? else {
-        warnings.push(
-            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
-                .at(crate::offset_in(entry, trimmed)),
-        );
-        return Ok(None);
-    };
+    let (host, host_span, port) = parse_host_port(entry, sent_by, warnings)?;
 
     let at = crate::offset_in(entry, trimmed);
     let mut via = SipViaEntry {
@@ -457,7 +450,7 @@ fn parse_via_entry(
             via.rport = read_rport(entry, &p, warnings);
         }
     }
-    Ok(Some(via))
+    Ok(via)
 }
 
 /// `rport` read from its value (RFC 3581): `Some(None)` for a flag, `None`
@@ -550,7 +543,7 @@ impl CommaList for SipVia {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipViaEntry>, ParseError> {
+    ) -> Result<SipViaEntry, ParseError> {
         parse_via_entry(entry, warnings)
     }
 
@@ -561,8 +554,8 @@ impl CommaList for SipVia {
 
 list_parse!(SipVia);
 
-/// A `sent-by` host with its span, and its port; `None` without a host.
-type SentBy = Option<(Host, Span, Option<u16>)>;
+/// A `sent-by` host with its span, and its port.
+type SentBy = (Host, Span, Option<u16>);
 
 /// Split `sent-by = host [ COLON port ]`, allowing SWS around the colon; the
 /// host is read by sip-uri's host grammar, with its warnings forwarded, and
@@ -603,7 +596,7 @@ fn parse_host_port(
         return Err(at(FaultCode::InvalidChar, &host[i..]));
     }
     if host.is_empty() {
-        return Ok(None);
+        return Err(at(FaultCode::Missing, host));
     }
     let at = crate::offset_in(entry, host);
     let span = Span::new(at..at + host.len());
@@ -620,7 +613,7 @@ fn parse_host_port(
         }
         port
     });
-    Ok(Some((host, span, port)))
+    Ok((host, span, port))
 }
 
 /// RFC 3261 §25.1 `port = 1*DIGIT`, when it fits a port number.
@@ -801,7 +794,9 @@ mod tests {
     fn test_invalid_format() {
         assert_eq!(
             SipVia::parse("invalid"),
-            Err(ParseError::malformed(Field::SentProtocol, FaultCode::Missing, None).in_entry(0))
+            Err(
+                ParseError::malformed(Field::SentProtocol, FaultCode::Missing, Some(0)).in_entry(0)
+            )
         );
     }
 
@@ -1061,22 +1056,29 @@ mod tests {
             " SIP/2.0/UDP ",
             " SIP/2.0/UDP ;branch=z9hG4bK1",
         ] {
-            let (via, seen) = lenient(&format!("SIP/2.0/UDP 198.51.100.1,{bad}"));
+            let raw = format!("SIP/2.0/UDP 198.51.100.1,{bad}");
+            let (via, seen) = lenient(&raw);
             assert_eq!(via.len(), 1, "{bad}");
-            assert_eq!(
-                seen,
-                vec![(
-                    Field::Entry,
-                    WarningCode::SkippedEntry,
-                    WarningKind::Lost,
-                    Some("SIP/2.0/UDP 198.51.100.1, ".len()),
-                    Some(1)
-                )],
-                "{bad}"
+            let host_at = "SIP/2.0/UDP 198.51.100.1, SIP/2.0/UDP".len()
+                + bad[" SIP/2.0/UDP".len()..].len()
+                - bad[" SIP/2.0/UDP".len()..]
+                    .trim_start()
+                    .len();
+            assert!(
+                matches!(
+                    seen.as_slice(),
+                    [(Field::SentBy, WarningCode::SkippedEntry, WarningKind::Lost, Some(at), Some(1))]
+                        if (raw.len() - bad.len()..=host_at).contains(at)
+                ),
+                "{bad}: {seen:?}"
             );
-            assert_eq!(
-                SipVia::parse(bad),
-                Err(ParseError::empty(Field::Value)),
+            assert!(
+                matches!(
+                    SipVia::parse(bad),
+                    Err(ParseError::Malformed(f))
+                        if (f.field, f.code, f.entry) == (Field::SentBy, FaultCode::Missing, Some(0))
+                            && f.position.is_some()
+                ),
                 "{bad}"
             );
         }

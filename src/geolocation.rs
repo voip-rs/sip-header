@@ -1,9 +1,11 @@
 //! SIP Geolocation header parser (RFC 6442).
 //!
-//! An entry that is not a non-empty `<uri>` is dropped with
+//! An entry without its angle brackets is kept with
+//! [`MissingBrackets`](crate::WarningCode::MissingBrackets). An entry that
+//! yields no URI is dropped with
 //! [`SkippedEntry`](crate::WarningCode::SkippedEntry), a blank one with
-//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and `Err(Empty)` means
-//! no entry yielded a URI (RFC 6442 §4.1 `locationValue *(COMMA
+//! [`EmptyEntry`](crate::WarningCode::EmptyEntry), and the list errs when
+//! no entry yields a URI (RFC 6442 §4.1 `locationValue *(COMMA
 //! locationValue)`).
 
 use std::fmt::{self, Write as _};
@@ -11,14 +13,14 @@ use std::hash::{Hash, Hasher};
 
 use sip_uri::{Uri, UriRedact};
 
-use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::diagnostic::{Field, ParseWarning};
 use crate::error::ParseError;
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
 use crate::traits::sealed;
-use crate::uri_info::read_uri;
+use crate::uri_info::read_uri_entry;
 
 /// One `locationValue = LAQUOT locationURI RAQUOT *(SEMI geoloc-param)`
 /// (RFC 6442 §4.1): a `cid:` reference to a MIME body part (typically
@@ -272,51 +274,17 @@ impl SipGeolocationEntryParts {
     }
 }
 
-/// Read one `locationValue`, positions relative to `entry`; `None` when it
-/// is not a non-empty `<uri>` sip-uri can read.
-fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Option<SipGeolocationEntry> {
-    let raw = entry.trim();
-    let skipped = |warnings: &mut Vec<ParseWarning>| {
-        warnings.push(
-            ParseWarning::new(Field::Entry, WarningCode::SkippedEntry)
-                .at(crate::offset_in(entry, raw)),
-        );
-    };
-    let Some((inner, tail)) = raw
-        .strip_prefix('<')
-        .and_then(|s| s.split_once('>'))
-        .filter(|(inner, _)| !inner.is_empty() && !inner.contains('<'))
-    else {
-        skipped(warnings);
-        return None;
-    };
-    let inner_at = crate::offset_in(entry, inner);
-    let Some((uri, uri_warnings)) = read_uri(inner, inner_at) else {
-        skipped(warnings);
-        return None;
-    };
-    warnings.extend(uri_warnings);
-    let junk = tail.trim_start();
-    let params = if junk.is_empty() || junk.starts_with(';') {
-        tail
-    } else {
-        let (dropped, params) = junk.split_at(
-            junk.find(';')
-                .unwrap_or(junk.len()),
-        );
-        warnings.push(
-            ParseWarning::new(Field::Param, WarningCode::TrailingContent)
-                .at(crate::offset_in(entry, junk))
-                .covering(Span::within(entry, dropped.trim_end())),
-        );
-        params
-    };
-    let at = crate::offset_in(entry, raw);
-    Some(SipGeolocationEntry {
-        params: HeaderParams::read(entry, params, warnings),
-        span: Some(Span::new(at..at + raw.len())),
-        uri_span: Some(Span::new(inner_at..inner_at + inner.len())),
-        ..SipGeolocationEntry::unchecked(uri)
+/// Read one `locationValue`, positions relative to `entry`.
+fn read_entry(
+    entry: &str,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<SipGeolocationEntry, ParseError> {
+    let read = read_uri_entry(entry, warnings)?;
+    Ok(SipGeolocationEntry {
+        params: HeaderParams::read(entry, read.params, warnings),
+        span: Some(read.span),
+        uri_span: Some(read.uri_span),
+        ..SipGeolocationEntry::unchecked(read.uri)
     })
 }
 
@@ -326,8 +294,8 @@ impl CommaList for SipGeolocation {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipGeolocationEntry>, ParseError> {
-        Ok(read_entry(entry, warnings))
+    ) -> Result<SipGeolocationEntry, ParseError> {
+        read_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipGeolocationEntry>) -> Result<Self, ParseError> {

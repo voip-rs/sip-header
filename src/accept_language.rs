@@ -156,8 +156,8 @@ impl CommaList for SipAcceptLanguage {
     fn parse_entry(
         entry: &str,
         warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipAcceptLanguageEntry>, ParseError> {
-        parse_entry(entry, warnings).map(Some)
+    ) -> Result<SipAcceptLanguageEntry, ParseError> {
+        parse_entry(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipAcceptLanguageEntry>) -> Result<Self, ParseError> {

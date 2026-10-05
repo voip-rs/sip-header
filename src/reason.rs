@@ -242,11 +242,8 @@ list_type!(SipReasonList, SipReason, non_empty);
 impl CommaList for SipReasonList {
     type Entry = SipReason;
 
-    fn parse_entry(
-        entry: &str,
-        warnings: &mut Vec<ParseWarning>,
-    ) -> Result<Option<SipReason>, ParseError> {
-        parse_reason(entry, warnings).map(Some)
+    fn parse_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipReason, ParseError> {
+        parse_reason(entry, warnings)
     }
 
     fn from_parsed(entries: Vec<SipReason>) -> Result<Self, ParseError> {

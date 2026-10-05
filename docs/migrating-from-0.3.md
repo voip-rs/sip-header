@@ -173,7 +173,7 @@ assert!(a.equivalent(&b));
 | `ContactValue::{Wildcard, Addr(Box<_>)}`, `parse_contact_list` | opaque `ContactList`: `wildcard()`, `new(addrs)`, `is_wildcard()`, `addrs()`; `*` beside addresses is dropped with `WildcardNotAlone` |
 | `SipCallId<'a>` borrowing its input | owned `SipCallId`, `AsRef<str>` |
 | `UriInfoEntry { data, metadata }` | `new(Uri)`, `uri()`, `params()`; text that is no URI parses as a scheme-less `Uri::Other` with sip-uri's warning |
-| `SipGeolocation::parse` infallible, `refs()`, `url()` as `&str` | `Err` when no entry yields a URI; `SipGeolocationEntry` with `uri()` and `cid()`; `url()` as `&Uri` |
+| `SipGeolocation::parse` infallible, `refs()`, `url()` as `&str` | `Err` when no entry yields a URI; an entry without its angle brackets is kept with `MissingBrackets`, as in Call-Info; `SipGeolocationEntry` with `uri()` and `cid()`; `url()` as `&Uri` |
 | `SipViaEntry::host() -> &str` | `new(protocol, version, transport, Host)`, `host() -> &sip_uri::Host`; an entry without a host is dropped with `SkippedEntry`, a sent-by port that is no port with `InvalidPort`; an `rport` that is no port stays a parameter, `rport()` `None`, with `InvalidRport` |
 | `HistoryInfoReason`, `cause() -> Option<u16>` | `SipReason`, `cause() -> Option<SipReasonCause>` keeping the digits (`as_u16()`, `AsRef<str>`); `cause` and `text` are reserved parameters, held in `params()` |
 | `join()` returning `SipReplaces` | `SipJoin`, which has no `early-only` |
@@ -182,7 +182,7 @@ assert!(a.equivalent(&b));
 
 Lists are opaque too: `iter()`, `entries()`, `iter_mut()`, `get_mut()`, `push`, `remove` and `retain`; an entry reached mutably changes only through its own checked methods. A list whose grammar needs an entry refuses the mutation that would empty it. Every list's Display joins entries with `, `.
 
-A blank entry beside real ones is dropped with `EmptyEntry`, in every list, and a Warning entry whose code is not three digits with `SkippedEntry`; `Err` comes only when no entry remains where the grammar needs one. A comma ending a list is ignored with `TrailingComma`.
+A blank entry beside real ones is dropped with `EmptyEntry`, in every list, and a Warning entry whose code is not three digits with `SkippedEntry`; `Err` comes only when no entry remains where the grammar needs one, and it is the first dropped entry's fault, with its position and entry index. A comma ending a list is ignored with `TrailingComma`.
 
 ## Lookup stores implement `SipHeaderRows`
 
@@ -222,7 +222,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 
 ## Received text is reached by span
 
-`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, and `SipViaEntry` carries `span()` and `host_span()`: a row index and byte range into what you parsed. `HeaderParams::value_span(name)` covers a parameter value as received, quotes included, on every type that holds parameters, and `value_spans(name)` yields one `Option<Span>` per valued occurrence of a repeated name, `None` for one that cannot be placed, so mask its whole value. Slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`; either returns a `SpanError` saying why it found no text. On the exact string or rows the value was parsed from, `get` never errs and `slice` errs only with `NoRow`, for a value parsed from one string; any other error means the text handed in is not what was parsed. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde. `ParseWarning::span()` covers the entry a `SkippedEntry` dropped and the text a `TrailingContent`, `InvalidPort` or `InvalidCause` dropped; equality and hashing ignore it.
+`to_string()` on a parsed value prints its canonical form, not the input. `UriInfoEntry`, `SipGeolocationEntry`, `HistoryInfoEntry` and `SipHeaderAddr` carry `span()` and `uri_span()`, and `SipViaEntry` carries `span()` and `host_span()`: a row index and byte range into what you parsed. `HeaderParams::value_span(name)` covers a parameter value as received, quotes included, on every type that holds parameters, and `value_spans(name)` yields one `Option<Span>` per valued occurrence of a repeated name, `None` for one that cannot be placed, so mask its whole value. Slice your own row with `Span::get`, or `Span::slice(&rows)` beside `from_rows`; either returns a `SpanError` saying why it found no text. On the exact string or rows the value was parsed from, `get` never errs and `slice` errs only with `NoRow`, for a value parsed from one string; any other error means the text handed in is not what was parsed. Spans are `None` on built or deserialized values, cleared by any builder or guard that changes the value, and ignored by `Eq`, `Hash` and serde. `ParseWarning::span()` covers the entry a `SkippedEntry` dropped, the text a `TrailingContent`, `InvalidPort` or `InvalidCause` dropped, and the URI a `MissingBrackets` kept; equality and hashing ignore it.
 
 ## Redaction is a policy you build once
 

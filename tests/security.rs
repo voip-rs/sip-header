@@ -1692,7 +1692,7 @@ fn a_quote_inside_a_token_is_dropped() {
 
 #[test]
 fn a_bracket_or_comma_inside_a_token_is_dropped() {
-    let input = "<https://e\r\n xam;ple.com/,a>>;purpose=icon,<urn:example:call:1>;purpose=info";
+    let input = "<https://e\r\n xam;ple.com/,a>;p<a,b>x=icon,<urn:example:call:1>;purpose=info";
     let parsed = UriInfo::parse_with_warnings(input).unwrap();
     assert!(parsed
         .warnings

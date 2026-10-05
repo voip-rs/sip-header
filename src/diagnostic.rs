@@ -132,9 +132,10 @@ impl ParseWarning {
     }
 
     /// The text the warning concerns, in the row it names: the whole entry
-    /// a [`WarningCode::SkippedEntry`] dropped, or the text a
+    /// a [`WarningCode::SkippedEntry`] dropped, the text a
     /// [`WarningCode::TrailingContent`], [`WarningCode::InvalidPort`] or
-    /// [`WarningCode::InvalidCause`] dropped. `None` for a warning that
+    /// [`WarningCode::InvalidCause`] dropped, or the URI a
+    /// [`WarningCode::MissingBrackets`] kept. `None` for a warning that
     /// names no range, and for text decoded before parsing.
     ///
     /// ```
@@ -349,8 +350,10 @@ pub enum WarningCode {
     InvalidCause,
     /// A Reason `text` without the quotes RFC 3326 requires, kept.
     UnquotedText,
-    /// A URI without the angle brackets RFC 3261 requires: a URI-info entry
-    /// (§20.9), or an addr-spec holding a comma, semicolon or question mark (§20).
+    /// A URI without the angle brackets its grammar requires: a URI-info
+    /// entry (RFC 3261 §20.9 `LAQUOT absoluteURI RAQUOT`), a Geolocation
+    /// `locationValue` (RFC 6442 §4.1 `LAQUOT locationURI RAQUOT`), or an
+    /// addr-spec holding a comma, semicolon or question mark (RFC 3261 §20).
     MissingBrackets,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
