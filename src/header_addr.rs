@@ -875,6 +875,21 @@ mod tests {
     }
 
     #[test]
+    fn bare_addr_spec_warnings_come_in_input_order() {
+        let input = "sip:a%zz@example.com?Subject=b%zz;tag=x";
+        let seen: Vec<_> = SipHeaderAddr::parse_with_warnings(input)
+            .unwrap()
+            .warnings
+            .iter()
+            .map(|w| (w.code, w.position))
+            .collect();
+        let missing = (WarningCode::MissingBrackets, input.find('?'));
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[1], missing, "{seen:?}");
+        assert!(seen.is_sorted_by_key(|(_, at)| *at), "{seen:?}");
+    }
+
+    #[test]
     fn bare_addr_spec_holding_semicolon_or_question_mark_needs_brackets() {
         for (input, at) in [
             (
