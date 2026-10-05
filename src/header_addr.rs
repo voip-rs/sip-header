@@ -586,14 +586,21 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let span = Some(Span::new(lead..lead + s.len()));
     let Some(open) = open else {
         let (text, params) = s.split_at(bare_params_at(s));
-        let uri = parse_uri(text, lead, &mut warnings)?;
-        if let Some(i) = text.find([',', ';', '?']) {
-            warnings.push(
+        let mut found = Vec::new();
+        let uri = parse_uri(text, lead, &mut found)?;
+        let missing = text
+            .find([',', ';', '?'])
+            .map(|i| {
                 ParseWarning::new(Field::Addr, WarningCode::MissingBrackets)
                     .at(lead + i)
-                    .covering(Span::new(lead..lead + text.len())),
-            );
-        }
+                    .covering(Span::new(lead..lead + text.len()))
+            });
+        warnings.extend(crate::scrub::merge(
+            missing
+                .into_iter()
+                .collect(),
+            found,
+        ));
         let addr = SipHeaderAddr {
             params: HeaderParams::read(input, params, &mut warnings),
             span,
@@ -886,7 +893,11 @@ mod tests {
         let missing = (WarningCode::MissingBrackets, input.find('?'));
         assert_eq!(seen.len(), 3, "{seen:?}");
         assert_eq!(seen[1], missing, "{seen:?}");
-        assert!(seen.is_sorted_by_key(|(_, at)| *at), "{seen:?}");
+        assert!(
+            seen.windows(2)
+                .all(|w| w[0].1 <= w[1].1),
+            "{seen:?}"
+        );
     }
 
     #[test]
