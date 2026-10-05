@@ -548,6 +548,30 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_bracket_kept_with_its_own_warning() {
+        let raw = "<cid:a@example.com;inserted-by=x";
+        let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
+        let (geo, seen) = lenient(raw);
+        assert_eq!(geo.to_string(), "<cid:a@example.com>;inserted-by=x");
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::UnclosedBracket,
+                WarningKind::Recovered,
+                Some(0),
+                Some(0)
+            )]
+        );
+        assert_eq!(
+            parsed.warnings[0]
+                .span()
+                .map(|s| s.get(raw)),
+            Some(Ok("<cid:a@example.com"))
+        );
+    }
+
+    #[test]
     fn from_entries_matches_parse() {
         let split =
             SipGeolocation::from_entries(["<cid:a>;inserted-by=x", "<https://example.com/a,b>"])

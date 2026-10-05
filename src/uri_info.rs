@@ -818,7 +818,7 @@ mod tests {
     fn unbracketed_entry_kept_with_missing_brackets() {
         for second in [
             " urn:example:1;purpose=icon",
-            " <urn:example:1;purpose=icon",
+            " urn:example:1>;purpose=icon",
         ] {
             let raw = format!("<urn:example:0>,{second}");
             let (info, seen) = lenient(&raw);
@@ -843,6 +843,34 @@ mod tests {
                 .span()
                 .map(|s| s.get(raw)),
             Some(Ok("urn:example:1"))
+        );
+    }
+
+    #[test]
+    fn unclosed_bracket_kept_with_its_own_warning() {
+        let raw = "<urn:example:0>, <urn:example:1;purpose=icon";
+        let parsed = UriInfo::parse_with_warnings(raw).unwrap();
+        let (info, seen) = lenient(raw);
+        assert_eq!(info.entries()[1].purpose(), Some("icon"));
+        assert_eq!(
+            info.to_string(),
+            "<urn:example:0>, <urn:example:1>;purpose=icon"
+        );
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::UnclosedBracket,
+                WarningKind::Recovered,
+                raw.rfind('<'),
+                Some(1)
+            )]
+        );
+        assert_eq!(
+            parsed.warnings[0]
+                .span()
+                .map(|s| s.get(raw)),
+            Some(Ok("<urn:example:1"))
         );
     }
 

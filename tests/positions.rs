@@ -217,17 +217,17 @@ fn a_skipped_entry_names_its_row_and_position() {
 
 #[test]
 fn a_list_left_without_entries_errs_at_the_entry_that_failed() {
-    let rows = ["  ", "<sip:d@example.com"];
+    let rows = ["  ", "\"Bob\""];
     let Err(ParseError::Malformed(fault)) = SipHeaderAddrList::from_rows(rows) else {
         panic!("not Malformed");
     };
     assert_eq!(
         (fault.field, fault.position, fault.row, fault.entry),
-        (Field::Addr, Some(0), Some(1), Some(1))
+        (Field::Addr, Some(5), Some(1), Some(1))
     );
     assert_eq!(
         ParseError::Malformed(fault).to_string(),
-        "malformed header value: addr: unterminated at byte 0 in row 1 in entry 1"
+        "malformed header value: addr: missing at byte 5 in row 1 in entry 1"
     );
 }
 

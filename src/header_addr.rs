@@ -1513,6 +1513,42 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_bracket_kept_with_its_own_warning() {
+        let raw = r#" "Bob" <sip:bob@example.com;tag=x"#;
+        let parsed = SipHeaderAddr::parse_with_warnings(raw).unwrap();
+        let addr = &parsed.value;
+        assert_eq!(addr.display_name(), Some("Bob"));
+        assert_eq!(addr.tag(), Some("x"));
+        assert_eq!(addr.to_string(), r#""Bob" <sip:bob@example.com>;tag=x"#);
+        let w = parsed.warnings[0];
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert_eq!(
+            (w.field, w.code, w.kind, w.position),
+            (
+                Field::Addr,
+                WarningCode::UnclosedBracket,
+                sip_uri::WarningKind::Recovered,
+                raw.find('<')
+            )
+        );
+        assert_eq!(
+            w.span()
+                .map(|s| s.get(raw)),
+            Some(Ok("<sip:bob@example.com"))
+        );
+        assert!(matches!(
+            SipHeaderAddr::parse_strict(raw),
+            Err(ParseError::NonConformant(_))
+        ));
+        assert_eq!(SipHeaderAddr::parse(raw).as_ref(), Ok(addr));
+    }
+
+    #[test]
     fn quoted_display_name_cannot_end_in_lone_backslash() {
         assert_eq!(
             SipHeaderAddr::parse(r#""a\" <sip:a@example.com>"#),

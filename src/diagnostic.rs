@@ -491,6 +491,7 @@ mod tests {
             WarningCode::InvalidCause,
             WarningCode::UnquotedText,
             WarningCode::MissingBrackets,
+            WarningCode::UnclosedBracket,
             WarningCode::SkippedEntry,
             WarningCode::EmptyEntry,
             WarningCode::InvalidQvalue,
@@ -517,6 +518,7 @@ mod tests {
                 | WarningCode::InvalidCause
                 | WarningCode::UnquotedText
                 | WarningCode::MissingBrackets
+                | WarningCode::UnclosedBracket
                 | WarningCode::SkippedEntry
                 | WarningCode::EmptyEntry
                 | WarningCode::InvalidQvalue

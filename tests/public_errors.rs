@@ -275,9 +275,9 @@ fn an_empty_uri_is_an_empty_span_where_it_stood() {
 fn a_fault_spans_from_its_position_to_its_end() {
     use sip_header::{ListParse, SipHeaderAddrList};
 
-    let rows = [" ", "<sip:b@example.com"];
+    let rows = [" ", "\"Bob\""];
     let e = SipHeaderAddrList::from_rows(rows).unwrap_err();
-    assert_eq!(span_of(&e, &rows), Some((Some(1), 0..0, String::new())));
+    assert_eq!(span_of(&e, &rows), Some((Some(1), 5..5, String::new())));
 
     let fault = Fault::new(Field::Value, FaultCode::Missing)
         .at(3)

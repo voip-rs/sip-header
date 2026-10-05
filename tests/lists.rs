@@ -596,13 +596,13 @@ fn malformed_entry_never_fails_the_list() {
     skips_malformed!(
         SipHeaderAddrList,
         ["<sip:a@example.com>", "<sip:b@example.com>"],
-        ["<sip:c@example.com", "\"Bob\" <sip:c@example.com"],
+        ["<>", "\"Bob\""],
         refused
     );
     skips_malformed!(
         ContactList,
         ["<sip:a@example.com>", "<sip:b@example.com>"],
-        ["<sip:c@example.com"],
+        ["<>", "\"Bob\""],
         refused
     );
     skips_malformed!(
@@ -611,7 +611,7 @@ fn malformed_entry_never_fails_the_list() {
             "<sip:a@example.com>;index=1",
             "<sip:b@example.com>;index=1.1"
         ],
-        ["<sip:c@example.com;index=1.2"],
+        ["<>;index=1.2"],
         refused
     );
     skips_malformed!(
