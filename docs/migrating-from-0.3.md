@@ -108,7 +108,7 @@ addr.with_param(key, value.as_deref())?
 Every value holds its parameters in an opaque `HeaderParams`: `params()` returns it, with `iter()`, `get()` and `is_quoted()`. Values are stored unescaped, each with whether it arrived quoted, and Display re-quotes exactly those plus any value that needs quotes.
 
 - `param()` returns `Option<Option<&str>>` everywhere; `Some(None)` is a flag.
-- Header parameters are never percent-decoded, so `param_raw()` is gone.
+- `param_raw()` is gone; see the next section for what `param()` returns.
 - `with_param` replaces the same name in place; `with_quoted_param` forces quotes.
 - A key the type sets itself is refused by every generic operation: use `with_tag`, `with_rport`, `with_to_tag`, `with_from_tag`, `with_local_tag`, `with_remote_tag`, `with_early_only`, `SipReason::with_cause`, `SipReason::with_text` or `HistoryInfoEntry::with_index`.
 - A repeated parameter from the wire is kept with a `DuplicateParam` warning, and `get()` returns the first. Adding a name a built value already holds is refused, since strict parsing refuses the repeat.
@@ -125,6 +125,28 @@ params.retain(|name, _| name != "x-debug");
 Every guard operation runs the builders' check, refuses the owner's reserved keys (`retain` never offers them), and clears the value's spans when it changes something. `HeaderParams` is read-only outside a guard.
 
 `q()` on the Accept family and `SipSecurityMechanism` returns `Option<QValue>`; the text stays in `param("q")`.
+
+## `param()` returns the wire text, not a decoded value
+
+In 0.3, `SipHeaderAddr::param()` percent-decoded the value. In 0.4, every `param()` returns the text as received, escapes included: `%` is an ordinary token character in a header parameter (RFC 3261 §25.1), so nothing in the grammar says a `%XX` stands for a byte. The port compiles with no warning and changes the value:
+
+```rust
+// 0.3: Some("urn:service:sos")
+let urn = addr.param("serviceurn")?.ok()?;
+// 0.4: Some("urn%3Aservice%3Asos")
+let urn = addr.param("serviceurn")??;
+```
+
+A producer that percent-encodes a header parameter's value leaves decoding to the reader that knows it does. Decode with sip-uri's escape decoder, which returns bytes since an escape may stand for part of a UTF-8 sequence:
+
+```rust
+use sip_header::sip_uri::encoding::decode_param;
+
+let bytes = decode_param(addr.param("serviceurn")??);
+let urn = std::str::from_utf8(&bytes)?;
+```
+
+Check every `param()` call whose 0.3 code relied on decoding; no test of yours will fail unless it fed an escaped value.
 
 ## Equality is identity; RFC comparison is `HeaderEquivalence`
 
@@ -220,6 +242,7 @@ Value types serialize as their parts and deserialize through the same checks a p
 
 ## Changes that still compile
 
+- **Parameter values.** `param()` returns the value as received, escapes included, where 0.3's `SipHeaderAddr::param()` decoded it; see [`param()` returns the wire text](#param-returns-the-wire-text-not-a-decoded-value).
 - **A validity check.** `parse` accepts non-conformant input and discards the warnings, so code that relied on it refusing a malformed header passes it on unreported. Use `parse_strict` to refuse, or `parse_with_warnings` to report the breach and keep the value.
 - **Forwarding received text.** `to_string()` prints the canonical form (escape hex upper-cased, parameters re-quoted per the type's rule). Forward the text as received through the value's span.
 - **Comparing headers.** `==` compares as held. Token case and parameter order count; use `equivalent` for the RFC's comparison.
