@@ -9,7 +9,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::params::HeaderParams;
 use crate::span::Span;
-use crate::traits::{sealed, HeaderParse, UriHeaderParse};
+use crate::traits::{sealed, UriHeaderParse};
 use crate::RawParam;
 
 /// An RFC 3326 `cause-value = 1*DIGIT`, kept as the digits were written.
@@ -99,7 +99,9 @@ impl fmt::Display for SipReasonCause {
 
 /// One RFC 3326 `reason-value = protocol *(SEMI reason-params)`.
 ///
-/// Parsed through [`HeaderParse`] and [`UriHeaderParse`].
+/// Parsed as an entry of [`SipReasonList`], through [`UriHeaderParse`], or
+/// alone through [`HeaderParse`](crate::HeaderParse), which drops text after
+/// the entry's comma under [`TrailingContent`](crate::WarningCode::TrailingContent).
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipReason};
@@ -202,12 +204,6 @@ fn parse_reason_value(s: &str) -> Result<Parsed<SipReason>, ParseError> {
     parse_reason(s, &mut warnings).map(|v| Parsed::new(v, warnings))
 }
 
-impl HeaderParse for SipReason {
-    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed_located(input, parse_reason_value)
-    }
-}
-
 impl UriHeaderParse for SipReason {
     fn parse_uri_header_with_warnings(raw: &str) -> Result<Parsed<Self>, ParseError> {
         crate::scrub::parse_uri_header(raw, parse_reason_value)
@@ -252,6 +248,7 @@ impl CommaList for SipReasonList {
 }
 
 list_parse!(SipReasonList);
+entry_parse!(SipReason, SipReasonList);
 
 #[cfg(feature = "serde")]
 serde_parts!(SipReason, SipReasonParts);
@@ -273,7 +270,7 @@ impl SipReasonParts {
             protocol: p.protocol,
             params: p.params,
         };
-        crate::check::reads_back(reason, SipReason::parse)
+        crate::list::entry_reads_back::<SipReasonList>(reason)
     }
 
     fn from_value(r: SipReason) -> Self {
@@ -404,6 +401,7 @@ mod tests {
     use sip_uri::WarningKind;
 
     use super::*;
+    use crate::HeaderParse;
 
     fn parsed(input: &str) -> Parsed<SipReason> {
         SipReason::parse_with_warnings(input).unwrap()
