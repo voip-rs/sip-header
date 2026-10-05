@@ -2,9 +2,9 @@
 #![cfg(feature = "message")]
 
 use sip_header::{
-    extract_all_headers, extract_header, extract_request_uri, extract_request_uri_with_warnings,
-    ExtractedHeaders, ParseError, Parsed, SipHeader, SipHeaderFields, SipHeaderLookup,
-    SipHeaderRowsExt, SipMessageHeaders, WarningCode,
+    extract_all_headers, extract_header, extract_header_block, extract_request_uri,
+    extract_request_uri_with_warnings, ExtractedHeaders, ParseError, Parsed, SipHeader,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders, WarningCode,
 };
 
 const MSG: &str = concat!(
@@ -86,6 +86,25 @@ fn skipped_lines_are_reported_by_position() {
     assert!(SipMessageHeaders::new("SIP/2.0 200 OK\r\n\r\n")
         .skipped()
         .is_empty());
+}
+
+#[test]
+fn a_refused_first_line_is_reported() {
+    for (msg, rows) in [
+        ("X-A/B: 1\r\nCall-ID: x\r\n", vec![("Call-ID", "x")]),
+        ("<sip:a@example.com>", vec![]),
+    ] {
+        let rows = SipHeaderFields::from(rows);
+        for headers in [
+            SipMessageHeaders::new(msg),
+            SipMessageHeaders::from_header_block(msg),
+        ] {
+            assert_eq!((headers.fields(), headers.skipped()), (&rows, &[0][..]));
+        }
+        for all in [extract_all_headers(msg), extract_header_block(msg)] {
+            assert_eq!((all.headers, all.skipped), (rows.clone(), vec![0]));
+        }
+    }
 }
 
 fn rows() -> SipHeaderFields<'static> {

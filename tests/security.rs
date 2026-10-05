@@ -7,16 +7,17 @@ use std::ops::Range;
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    extract_request_line, extract_request_uri, extract_request_uri_strict,
-    extract_request_uri_with_warnings, ContactList, DialogFraming, Fault, FaultCode, Field,
-    HeaderEquivalence, HeaderParams, HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry,
-    ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact, RequestLine, SipAccept,
-    SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
-    SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipGeolocation, SipGeolocationEntry,
-    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderFields, SipHeaderLookup,
-    SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
-    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
-    TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
+    extract_all_headers, extract_header_block, extract_request_line, extract_request_uri,
+    extract_request_uri_strict, extract_request_uri_with_warnings, ContactList, DialogFraming,
+    Fault, FaultCode, Field, HeaderEquivalence, HeaderParams, HeaderParse, HeaderRedaction,
+    HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact,
+    RequestLine, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
+    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipGeolocation,
+    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderFields,
+    SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason, SipReasonCause,
+    SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
+    SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
+    UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -2180,5 +2181,83 @@ proptest! {
             prop_assert_eq!(text, Ok(line.uri_text()));
             prop_assert_eq!(Uri::parse(text.unwrap()), Ok(parsed.value.clone()));
         }
+    }
+}
+
+fn start_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "(INVITE|OPTIONS|BYE) sips?:[a-z]{1,6}@example\\.com SIP/2\\.0",
+        "SIP/2\\.0 [1-6][0-9]{2} [A-Za-z][A-Za-z ]{0,10}",
+    ]
+}
+
+/// Lines that are neither a header nor a start line.
+fn refused_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "<sips?:[a-z]{1,6}@example\\.com>",
+        "[A-Za-z0-9-]{0,6}[/<@(\\[][A-Za-z0-9-]{0,6}: [a-z0-9]{1,8}",
+        "[a-z]{1,8}( [a-z]{1,8}){0,4}",
+        "[a-z]{1,4}@[a-z]{1,4} sip:[a-z]{1,6}@example\\.com SIP/2\\.0",
+        "SIP/2\\.0 [0-9]{0,2}[a-z]{1,3} [A-Za-z]{1,8}",
+    ]
+}
+
+fn header_or_refused() -> impl Strategy<Value = (bool, String)> {
+    prop_oneof![
+        "[A-Za-z][A-Za-z0-9-]{0,10}: ?[a-z0-9]{0,10}".prop_map(|l| (true, l)),
+        refused_line().prop_map(|l| (false, l)),
+    ]
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn every_line_is_a_row_or_skipped_unless_it_starts_the_message(
+        start in prop::option::of(start_line()),
+        lines in prop::collection::vec(header_or_refused(), 0..8),
+        eol in prop::sample::select(vec!["\r\n", "\n"]),
+        body in any::<bool>(),
+    ) {
+        let mut msg = String::new();
+        let mut rows = 0;
+        let mut refused = Vec::new();
+        if let Some(start) = &start {
+            msg.push_str(start);
+            msg.push_str(eol);
+        }
+        for (header, line) in &lines {
+            if *header {
+                rows += 1;
+            } else {
+                refused.push(msg.len());
+            }
+            msg.push_str(line);
+            msg.push_str(eol);
+        }
+        if body {
+            msg.push_str(eol);
+            msg.push_str("not a header");
+            msg.push_str(eol);
+        }
+        let block_skipped: Vec<usize> = start
+            .iter()
+            .map(|_| 0)
+            .chain(refused.iter().copied())
+            .collect();
+
+        let headers = SipMessageHeaders::new(&msg);
+        prop_assert_eq!(headers.len(), rows, "{:?}", msg);
+        prop_assert_eq!(headers.skipped(), refused.as_slice(), "{:?}", msg);
+        let all = extract_all_headers(&msg);
+        prop_assert_eq!(&all.skipped, &refused);
+        prop_assert_eq!(&all.headers, headers.fields());
+
+        let block = SipMessageHeaders::from_header_block(&msg);
+        prop_assert_eq!(block.fields(), headers.fields(), "{:?}", msg);
+        prop_assert_eq!(block.skipped(), block_skipped.as_slice(), "{:?}", msg);
+        let owned = extract_header_block(&msg);
+        prop_assert_eq!(&owned.skipped, &block_skipped);
+        prop_assert_eq!(&owned.headers, block.fields());
     }
 }
