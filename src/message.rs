@@ -2,8 +2,8 @@
 //!
 //! - [`SipMessageHeaders`]: the header rows of a raw message, a
 //!   [`SipHeaderRows`] store every typed accessor reads
-//! - [`extract_header`], [`extract_all_headers`]: the same rows as owned
-//!   strings
+//! - [`extract_header`], [`extract_all_headers`], [`extract_header_block`]:
+//!   the same rows as owned strings
 //! - [`extract_request_line`]: the request line's parts as received, which
 //!   parses its Request-URI, and [`extract_request_uri`]: that URI alone
 //!   (RFC 3261 §7.1)
@@ -82,9 +82,9 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// reads it. The rows a parsed value's positions point into are these
 /// trimmed, unfolded rows, not the lines of the message.
 ///
-/// A line that is neither a header, a continuation of one, nor the start
-/// line is skipped, and its byte offset reported by
-/// [`skipped`](Self::skipped).
+/// A line that is neither a header nor a continuation of one is skipped,
+/// and its byte offset reported by [`skipped`](Self::skipped), unless it is
+/// the request or status line [`new`](Self::new) exempts.
 ///
 /// The rows are a [`SipHeaderFields`], which [`fields`](Self::fields) and
 /// [`into_fields`](Self::into_fields) hand out.
@@ -109,8 +109,19 @@ pub struct SipMessageHeaders<'a> {
 }
 
 impl<'a> SipMessageHeaders<'a> {
-    /// Read the header block of `message`.
+    /// Read the header block of `message`, exempting a first line that is a
+    /// request or status line (RFC 3261 §7.1, §7.2).
     pub fn new(message: &'a str) -> Self {
+        Self::read(message, true)
+    }
+
+    /// Read `block`, header lines with no start line, up to its first blank
+    /// line; every line that is not a row is [`skipped`](Self::skipped).
+    pub fn from_header_block(block: &'a str) -> Self {
+        Self::read(block, false)
+    }
+
+    fn read(message: &'a str, start_line: bool) -> Self {
         let (block, _) = split_at_blank_line(message);
         let mut fields = SipHeaderFields::new();
         let mut skipped = Vec::new();
@@ -141,7 +152,7 @@ impl<'a> SipMessageHeaders<'a> {
             }
             match header_line(line) {
                 Some((name, value)) => open = Some((name, Cow::Borrowed(value))),
-                None if i == 0 => {}
+                None if i == 0 && start_line && is_start_line(line) => {}
                 None => skipped.push(at),
             }
         }
@@ -181,7 +192,8 @@ impl<'a> SipMessageHeaders<'a> {
 
     /// Byte offsets into the message of the lines that were skipped, in
     /// order: a line without a `:` after a `token` name (RFC 3261 §7.3
-    /// `header-name = token`), or a continuation with no header above it.
+    /// `header-name = token`) other than a start line [`new`](Self::new)
+    /// exempts, or a continuation with no header above it.
     pub fn skipped(&self) -> &[usize] {
         &self.skipped
     }
@@ -246,7 +258,7 @@ pub struct ExtractedHeaders {
 }
 
 /// Extract all headers from a raw SIP message as owned name-value pairs,
-/// as [`SipMessageHeaders`] reads them.
+/// as [`SipMessageHeaders::new`] reads them, exempting its start line.
 ///
 /// ```
 /// use sip_header::extract_all_headers;
@@ -260,7 +272,26 @@ pub struct ExtractedHeaders {
 /// assert_eq!(all.skipped, [msg.find("not").unwrap()]);
 /// ```
 pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
-    let SipMessageHeaders { fields, skipped } = SipMessageHeaders::new(message);
+    owned(SipMessageHeaders::new(message))
+}
+
+/// Extract all headers from a header block with no start line as owned
+/// name-value pairs, as [`SipMessageHeaders::from_header_block`] reads
+/// them, reporting every line that is not a row.
+///
+/// ```
+/// use sip_header::extract_header_block;
+///
+/// let all = extract_header_block("X-A/B: 1\r\nCall-ID: a@example.com\r\n");
+/// assert_eq!(all.headers.iter().next(), Some(("Call-ID", "a@example.com")));
+/// assert_eq!(all.skipped, [0]);
+/// ```
+pub fn extract_header_block(block: &str) -> ExtractedHeaders {
+    owned(SipMessageHeaders::from_header_block(block))
+}
+
+fn owned(headers: SipMessageHeaders<'_>) -> ExtractedHeaders {
+    let SipMessageHeaders { fields, skipped } = headers;
     ExtractedHeaders {
         headers: fields.into_owned(),
         skipped,
@@ -452,9 +483,32 @@ pub fn extract_request_line(message: &str) -> Result<Option<RequestLine<'_>>, Pa
         .split('\n')
         .next()
         .unwrap_or_default();
-    let first = first
-        .strip_suffix('\r')
-        .unwrap_or(first);
+    request_line(
+        first
+            .strip_suffix('\r')
+            .unwrap_or(first),
+    )
+}
+
+/// A request line's (RFC 3261 §7.1) or status line's (§7.2) shape, as
+/// [`extract_request_line`] splits it.
+fn is_start_line(line: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let status = parts
+        .next()
+        .is_some_and(|v| v.starts_with("SIP/"))
+        && parts
+            .next()
+            .is_some_and(|code| {
+                code.len() == 3
+                    && code
+                        .bytes()
+                        .all(|b| b.is_ascii_digit())
+            });
+    status || matches!(request_line(line), Ok(Some(_)))
+}
+
+fn request_line(first: &str) -> Result<Option<RequestLine<'_>>, ParseError> {
     if first.is_empty() {
         return Err(ParseError::empty(Field::Value));
     }

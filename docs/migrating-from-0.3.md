@@ -218,7 +218,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 |---|---|
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` |
-| a private `Vec<(String, String)>` store | sip-header-catalog's `SipHeaderFields`, or `SipMessageHeaders::new(msg)` as a store over the message |
+| a private `Vec<(String, String)>` store | sip-header-catalog's `SipHeaderFields`, or `SipMessageHeaders::new(msg)` as a store over the message; `SipMessageHeaders::from_header_block(block)` and `extract_header_block(block)` for header lines with no start line |
 | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`; `extract_request_line` for the method, URI text and version as received, whose `uri()`, `uri_with_warnings()` and `uri_strict()` parse the URI beside its `uri_span()` |
 
 ## Received text is reached by span
@@ -247,6 +247,7 @@ Value types serialize as their parts and deserialize through the same checks a p
 - **A validity check.** `parse` accepts non-conformant input and discards the warnings, so code that relied on it refusing a malformed header passes it on unreported. Use `parse_strict` to refuse, or `parse_with_warnings` to report the breach and keep the value.
 - **Forwarding received text.** `to_string()` prints the canonical form (escape hex upper-cased, parameters re-quoted per the type's rule). Forward the text as received through the value's span.
 - **Comparing headers.** `==` compares as held. Token case and parameter order count; use `equivalent` for the RFC's comparison.
+- **Lines that are not headers.** A line whose name is not a `token`, and a continuation after such a line, is reported by offset in `skipped` instead of becoming a row. Only a first line shaped as a request or status line is exempt, and only when reading a whole message.
 
 ## sip-uri 0.3
 

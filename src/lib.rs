@@ -131,9 +131,9 @@ pub use history_info::{HistoryInfo, HistoryInfoEntry};
 pub use join::SipJoin;
 #[cfg(feature = "message")]
 pub use message::{
-    extract_all_headers, extract_body, extract_header, extract_request_line, extract_request_uri,
-    extract_request_uri_strict, extract_request_uri_with_warnings, ExtractedHeaders, RequestLine,
-    SipHeaderExtract, SipMessageHeaders,
+    extract_all_headers, extract_body, extract_header, extract_header_block, extract_request_line,
+    extract_request_uri, extract_request_uri_strict, extract_request_uri_with_warnings,
+    ExtractedHeaders, RequestLine, SipHeaderExtract, SipMessageHeaders,
 };
 pub use params::{HeaderParams, ParamsMut};
 pub use reason::{SipReason, SipReasonCause, SipReasonList};
