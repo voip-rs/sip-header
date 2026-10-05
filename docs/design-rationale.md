@@ -58,7 +58,7 @@ Every header-value type parses the way sip-uri does, so the two crates read one 
 
 ## Lenient parsing fails only where no value exists
 
-`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection. Where a type cannot hold what the input carries, such as a wildcard beside addresses or a Via entry without a host, the parser drops that part under a warning whose kind says data was lost. A list entry that yields no value is such a part, for every list alike, and a list whose grammar needs an entry and has none left is `Err` with the first dropped entry's fault.
+`HeaderParse::parse` returns `Err` for input that yields no usable value: empty where the grammar requires content, or a structure the RFC makes the receiver reject outright, such as a second Replaces. Every other breach becomes a warning, so tightening a parser means adding a warning code, never a new rejection. Framing is not data: a value missing its angle brackets, or opening one it never closes, is kept under a warning that says nothing was lost. Where a type cannot hold what the input carries, such as a wildcard beside addresses or a Via entry without a host, the parser drops that part under a warning whose kind says data was lost. A list entry that yields no value is such a part, for every list alike, and a list whose grammar needs an entry and has none left is `Err` with the first dropped entry's fault.
 
 ## One error type for every header value
 
