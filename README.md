@@ -22,7 +22,7 @@ cargo add sip-header
 | [sip-header-catalog](crates/sip-header-catalog) | header names (`SipHeader`, `define_header_enum!`), the raw store trait (`SipHeaderRows`, `RowError`) and the received-header holders (`SipHeaderFields`, `SipHeaderField`) |
 | **sip-header** | value types, parsing, warnings, `ParseError`, validated constructors, redaction, `SipHeaderLookup` |
 
-The catalog has a stable major version because header names and one row per header occurrence are not expected to change, so crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose minor releases may break while their shapes are settled against real traffic.
+The catalog has a stable major version because header names and one row per header occurrence are not expected to change, so crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose own major moves when real traffic shows a shape was wrong; a consumer of names and stores alone is untouched by it.
 
 A crate whose public API names header names or a header store depends on sip-header-catalog alone. sip-header re-exports it; a store implements `SipHeaderRows` and gets every typed accessor through the blanket `SipHeaderLookup` impl.
 

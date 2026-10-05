@@ -2,7 +2,7 @@
 
 SIP header names and the raw lookup a header store implements. Depend on it when your public API names SIP headers or exposes a header store; the parsing accessors over a store come from [sip-header](https://crates.io/crates/sip-header), which a caller picks its own version of.
 
-The catalog has a stable major version because header names and one row per header occurrence are not expected to change: crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose minor releases may break.
+The catalog has a stable major version because header names and one row per header occurrence are not expected to change: crates exchange them across their public APIs as stable data types without sharing a parser version or caring how values are parsed. Value types stay in sip-header, whose own major moves independently of the catalog's.
 
 ```sh
 cargo add sip-header-catalog

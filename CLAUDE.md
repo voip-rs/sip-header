@@ -10,7 +10,7 @@ Cargo workspace of two library crates for SIP header field values, between
   commitment.
 - `sip-header` (repo root) — value types, parsing, warnings, `ParseError`,
   validated constructors, redaction, `SipHeaderLookup` (blanket over
-  `SipHeaderRows`). 0.x.
+  `SipHeaderRows`). Semver major; a breaking change waits for the next one.
 
 Nothing value- or parse-related goes into the catalog. `Cargo.lock` is
 gitignored per Cargo convention for libraries.
