@@ -219,7 +219,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
 | `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` |
 | a private `Vec<(String, String)>` store | sip-header-catalog's `SipHeaderFields`, or `SipMessageHeaders::new(msg)` as a store over the message |
-| `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`; `extract_request_line` for the method, URI text and version as received |
+| `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`; `extract_request_line` for the method, URI text and version as received, whose `uri()`, `uri_with_warnings()` and `uri_strict()` parse the URI beside its `uri_span()` |
 
 ## Received text is reached by span
 

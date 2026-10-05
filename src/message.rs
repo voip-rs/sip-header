@@ -4,8 +4,9 @@
 //!   [`SipHeaderRows`] store every typed accessor reads
 //! - [`extract_header`], [`extract_all_headers`]: the same rows as owned
 //!   strings
-//! - [`extract_request_line`]: the request line's parts as received, and
-//!   [`extract_request_uri`]: its Request-URI parsed (RFC 3261 §7.1)
+//! - [`extract_request_line`]: the request line's parts as received, which
+//!   parses its Request-URI, and [`extract_request_uri`]: that URI alone
+//!   (RFC 3261 §7.1)
 //! - [`extract_body`]: the message body following the header block
 //!   (RFC 3261 §7.4)
 //!
@@ -267,8 +268,8 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 }
 
 /// The Request-URI of a SIP request (RFC 3261 §7.1
-/// `Method SP Request-URI SP SIP-Version`), parsed leniently: the value
-/// [`extract_request_uri_with_warnings`] returns, without its warnings.
+/// `Method SP Request-URI SP SIP-Version`), parsed leniently:
+/// [`RequestLine::uri`] on [`extract_request_line`]'s line.
 ///
 /// `Ok(None)` for a status line (`SIP/2.0 200 OK`). Errors as
 /// [`extract_request_line`] does, and when the URI yields no value; error
@@ -281,22 +282,20 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 /// # Ok::<(), sip_header::ParseError>(())
 /// ```
 pub fn extract_request_uri(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
-    extract_request_uri_with_warnings(message).map(|p| p.map(|p| p.value))
-}
-
-/// [`extract_request_uri`], refusing the first warning
-/// [`extract_request_uri_with_warnings`] reports.
-pub fn extract_request_uri_strict(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
-    extract_request_uri_with_warnings(message)?
-        .map(Parsed::into_strict)
+    extract_request_line(message)?
+        .map(|line| line.uri())
         .transpose()
 }
 
-/// [`extract_request_uri`], with the breaches found on the way.
-///
-/// Whitespace other than one SP between the three parts, or around them,
-/// raises [`WarningCode::RequestLineWhitespace`]; the URI's own warnings
-/// pass through. Positions are byte offsets into the first line.
+/// [`RequestLine::uri_strict`] on [`extract_request_line`]'s line.
+pub fn extract_request_uri_strict(message: &str) -> Result<Option<sip_uri::Uri>, ParseError> {
+    extract_request_line(message)?
+        .map(|line| line.uri_strict())
+        .transpose()
+}
+
+/// [`RequestLine::uri_with_warnings`] on [`extract_request_line`]'s line;
+/// call those two to keep the line's spans as well.
 ///
 /// ```
 /// use sip_header::WarningCode;
@@ -311,32 +310,9 @@ pub fn extract_request_uri_strict(message: &str) -> Result<Option<sip_uri::Uri>,
 pub fn extract_request_uri_with_warnings(
     message: &str,
 ) -> Result<Option<Parsed<sip_uri::Uri>>, ParseError> {
-    let Some(line) = extract_request_line(message)? else {
-        return Ok(None);
-    };
-    let uri_at = line
-        .uri_span
-        .range()
-        .start;
-    let parsed = sip_uri::Uri::parse_with_warnings(line.uri_text).map_err(|e| {
-        ParseError::uri(
-            e,
-            uri_at,
-            line.uri_text
-                .len(),
-        )
-    })?;
-    let warnings = line
-        .warnings
-        .into_iter()
-        .chain(
-            parsed
-                .warnings
-                .into_iter()
-                .map(|w| ParseWarning::from_uri(w, uri_at)),
-        )
-        .collect();
-    Ok(Some(Parsed::new(parsed.value, warnings)))
+    extract_request_line(message)?
+        .map(|line| line.uri_with_warnings())
+        .transpose()
 }
 
 /// The request line of a SIP request (RFC 3261 §7.1 `Method SP Request-URI
@@ -391,6 +367,64 @@ impl<'a> RequestLine<'a> {
     /// around the parts other than the one SP each allows, in line order.
     pub fn warnings(&self) -> &[ParseWarning] {
         &self.warnings
+    }
+
+    /// The Request-URI parsed leniently: the value
+    /// [`uri_with_warnings`](Self::uri_with_warnings) returns, without its
+    /// warnings.
+    pub fn uri(&self) -> Result<sip_uri::Uri, ParseError> {
+        self.uri_with_warnings()
+            .map(|p| p.value)
+    }
+
+    /// [`uri`](Self::uri), refusing the first warning
+    /// [`uri_with_warnings`](Self::uri_with_warnings) reports.
+    pub fn uri_strict(&self) -> Result<sip_uri::Uri, ParseError> {
+        self.uri_with_warnings()?
+            .into_strict()
+    }
+
+    /// The Request-URI parsed, with the line's [`warnings`](Self::warnings)
+    /// and the URI's own, in line order; errors when the URI yields no
+    /// value. Positions are byte offsets into the message.
+    ///
+    /// ```
+    /// use sip_header::{extract_request_line, WarningCode};
+    ///
+    /// let msg = "INVITE  sip:bob@example.com SIP/2.0\r\n\r\n";
+    /// let line = extract_request_line(msg)?.unwrap();
+    /// let parsed = line.uri_with_warnings()?;
+    /// assert_eq!(parsed.value.to_string(), "sip:bob@example.com");
+    /// assert_eq!(parsed.warnings[0].code, WarningCode::RequestLineWhitespace);
+    /// assert_eq!(parsed.warnings[0].position, Some(6));
+    /// assert_eq!(line.uri_span().get(msg), Ok("sip:bob@example.com"));
+    /// # Ok::<(), sip_header::ParseError>(())
+    /// ```
+    pub fn uri_with_warnings(&self) -> Result<Parsed<sip_uri::Uri>, ParseError> {
+        let uri_at = self
+            .uri_span
+            .range()
+            .start;
+        let parsed = sip_uri::Uri::parse_with_warnings(self.uri_text).map_err(|e| {
+            ParseError::uri(
+                e,
+                uri_at,
+                self.uri_text
+                    .len(),
+            )
+        })?;
+        let warnings = self
+            .warnings
+            .iter()
+            .copied()
+            .chain(
+                parsed
+                    .warnings
+                    .into_iter()
+                    .map(|w| ParseWarning::from_uri(w, uri_at)),
+            )
+            .collect();
+        Ok(Parsed::new(parsed.value, warnings))
     }
 }
 
