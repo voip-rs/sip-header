@@ -611,6 +611,29 @@ mod tests {
     }
 
     #[test]
+    fn text_after_comma_is_dropped_as_trailing_content() {
+        let input = "SIP;cause=1, Q.850";
+        let one = value("SIP;cause=1");
+        assert_eq!(SipReason::parse(input), Ok(one.clone()));
+        let p = parsed(input);
+        assert_eq!(p.value, one);
+        let w = p.warnings[0];
+        assert_eq!(
+            (
+                p.warnings
+                    .len(),
+                w.code,
+                w.position
+            ),
+            (1, WarningCode::TrailingContent, input.find(','))
+        );
+        assert_eq!(
+            SipReason::parse_strict(input),
+            Err(ParseError::NonConformant(w))
+        );
+    }
+
+    #[test]
     fn empty_and_missing_protocol_are_errors() {
         assert_eq!(SipReason::parse(" "), Err(ParseError::empty(Field::Value)));
         assert_eq!(

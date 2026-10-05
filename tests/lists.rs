@@ -696,7 +696,8 @@ macro_rules! entry_parses_alone {
 fn entry_types_parse_on_their_own() {
     use sip_header::{
         HistoryInfoEntry, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguageEntry,
-        SipGeolocationEntry, SipSecurityMechanism, SipViaEntry, SipWarningEntry, UriInfoEntry,
+        SipGeolocationEntry, SipReason, SipSecurityMechanism, SipViaEntry, SipWarningEntry,
+        UriInfoEntry,
     };
 
     entry_parses_alone!(
@@ -728,6 +729,12 @@ fn entry_types_parse_on_their_own() {
     entry_parses_alone!(SipAcceptLanguageEntry, SipAcceptLanguage, "fr-ca");
     entry_parses_alone!(SipSecurityMechanism, SipSecurity, "digest;d-qop=auth;q=0.1");
     entry_parses_alone!(SipWarningEntry, SipWarning, r#"399 example.com "a, b""#);
+    entry_parses_alone!(
+        SipReason,
+        SipReasonList,
+        r#"SIP;cause=200;text="a, b""#,
+        "Q.850;cause=x"
+    );
 }
 
 #[test]
