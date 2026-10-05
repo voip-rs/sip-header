@@ -87,9 +87,9 @@ fn contact_wildcard_beside_addresses_is_dropped() -> R {
 
 #[test]
 fn geolocation_is_never_empty() {
-    assert_eq!(SipGeolocation::parse("junk, <>"), Err(empty()));
+    assert_eq!(SipGeolocation::parse(" , "), Err(empty()));
     assert_eq!(SipGeolocation::new(Vec::new()), Err(empty()));
-    assert_eq!(SipGeolocation::from_entries(["junk"]), Err(empty()));
+    assert!(SipGeolocation::from_entries(["<>"]).is_err());
 }
 
 #[test]

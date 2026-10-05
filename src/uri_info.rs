@@ -733,7 +733,7 @@ mod tests {
             entry
                 .uri()
                 .to_string(),
-            "urn:example:1%3Ejunk"
+            "urn:example:1"
         );
         assert_eq!(entry.purpose(), Some("icon"));
 
@@ -758,25 +758,48 @@ mod tests {
         for second in [
             " urn:example:1;purpose=icon",
             " <urn:example:1;purpose=icon",
-            " <urn:example:1>junk;purpose=icon",
         ] {
-            let (info, seen) = lenient(&format!("<urn:example:0>,{second}"));
+            let raw = format!("<urn:example:0>,{second}");
+            let (info, seen) = lenient(&raw);
             assert_eq!(info.len(), 2);
             assert_eq!(info.entries()[1].purpose(), Some("icon"));
             assert_eq!(
-                seen[0],
-                (
+                seen,
+                vec![(
                     Field::Entry,
                     WarningCode::MissingBrackets,
                     WarningKind::Recovered,
                     Some("<urn:example:0>, ".len()),
                     Some(1)
-                ),
+                )],
                 "{second}"
             );
-            let bracket_in_nss = second.contains("junk");
-            assert_eq!(seen.len(), 1 + usize::from(bracket_in_nss), "{second}");
         }
+        let raw = "<urn:example:0>, urn:example:1;purpose=icon";
+        let parsed = UriInfo::parse_with_warnings(raw).unwrap();
+        assert_eq!(
+            parsed.warnings[0]
+                .span()
+                .map(|s| s.get(raw)),
+            Some(Ok("urn:example:1"))
+        );
+    }
+
+    #[test]
+    fn text_after_bracket_is_dropped_with_warning() {
+        let raw = "<urn:example:1>junk;purpose=icon";
+        let (info, seen) = lenient(raw);
+        assert_eq!(info.entries()[0].purpose(), Some("icon"));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Param,
+                WarningCode::TrailingContent,
+                WarningKind::Lost,
+                raw.find('j'),
+                Some(0)
+            )]
+        );
     }
 
     #[test]
@@ -812,14 +835,15 @@ mod tests {
     }
 
     #[test]
-    fn nothing_valued_is_empty_error() {
+    fn nothing_valued_errs_with_the_first_fault() {
+        let fault = |r: Result<UriInfo, ParseError>| match r {
+            Err(ParseError::Malformed(f)) => (f.position, f.row, f.entry),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(fault(UriInfo::parse(",<>, ;x")), (Some(1), None, Some(1)));
         assert_eq!(
-            UriInfo::parse(",<>, ;x"),
-            Err(ParseError::empty(Field::Value))
-        );
-        assert_eq!(
-            UriInfo::from_entries_with_warnings(["<>"]),
-            Err(ParseError::empty(Field::Value))
+            fault(UriInfo::from_entries(["<>"])),
+            (Some(0), Some(0), Some(0))
         );
     }
 

@@ -397,10 +397,6 @@ mod tests {
             SipGeolocation::parse(" \t"),
             Err(ParseError::empty(Field::Value))
         );
-        assert_eq!(
-            SipGeolocation::parse("junk"),
-            Err(ParseError::empty(Field::Value))
-        );
     }
 
     fn lenient(raw: &str) -> (SipGeolocation, Vec<Seen>) {
@@ -544,22 +540,39 @@ mod tests {
     }
 
     #[test]
-    fn unbracketed_entry_skipped() {
-        let raw = "<cid:a>, cid:x@example.com, <https://example.com/loc>";
+    fn bare_uri_kept_with_missing_brackets() {
+        let raw = "http://198.51.100.1:8080/a/b-c.d";
+        let parsed = SipGeolocation::parse_with_warnings(raw).unwrap();
         let (geo, seen) = lenient(raw);
-        assert_eq!(geo.len(), 2);
-        assert_eq!(
-            geo.url()
-                .map(ToString::to_string)
-                .as_deref(),
-            Some("https://example.com/loc")
-        );
+        assert_eq!(geo.to_string(), format!("<{raw}>"));
         assert_eq!(
             seen,
             vec![(
                 Field::Entry,
-                WarningCode::SkippedEntry,
-                WarningKind::Lost,
+                WarningCode::MissingBrackets,
+                WarningKind::Recovered,
+                Some(0),
+                Some(0)
+            )]
+        );
+        assert_eq!(
+            parsed.warnings[0]
+                .span()
+                .map(|s| s.get(raw)),
+            Some(Ok(raw))
+        );
+
+        let raw = "<cid:a>, cid:x@example.com;inserted-by=y, <https://example.com/loc>";
+        let (geo, seen) = lenient(raw);
+        assert_eq!(geo.len(), 3);
+        assert_eq!(geo.entries()[1].cid(), Some("x@example.com"));
+        assert_eq!(geo.entries()[1].param("inserted-by"), Some(Some("y")));
+        assert_eq!(
+            seen,
+            vec![(
+                Field::Entry,
+                WarningCode::MissingBrackets,
+                WarningKind::Recovered,
                 raw.find("cid:x"),
                 Some(1)
             )]
@@ -602,7 +615,7 @@ mod tests {
                 .value
                 .clone())
         );
-        let split = SipGeolocation::from_entries_with_warnings(["<cid:a>", "junk"]).unwrap();
+        let split = SipGeolocation::from_entries_with_warnings(["<cid:a>", "<>"]).unwrap();
         assert_eq!(
             split
                 .value
@@ -610,10 +623,10 @@ mod tests {
             1
         );
         assert_eq!(split.warnings[0].code, WarningCode::SkippedEntry);
-        assert_eq!(
-            SipGeolocation::from_entries(["junk"]),
-            Err(ParseError::empty(Field::Value))
-        );
+        assert!(matches!(
+            SipGeolocation::from_entries([" <>"]),
+            Err(ParseError::Malformed(f)) if (f.position, f.row, f.entry) == (Some(1), Some(0), Some(0))
+        ));
         assert_eq!(
             SipGeolocation::parse_with_warnings(" "),
             Err(ParseError::empty(Field::Value))

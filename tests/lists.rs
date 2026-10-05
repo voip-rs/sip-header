@@ -527,8 +527,21 @@ macro_rules! skips_malformed {
     }};
 }
 
+/// The lone entry's own fault, placed in it.
 fn refused<T>(r: Result<T, ParseError>) -> bool {
-    matches!(r, Err(ParseError::Malformed(_) | ParseError::Uri(_)))
+    match r {
+        Err(ParseError::Malformed(f)) => {
+            f.position
+                .is_some()
+                && f.entry == Some(0)
+        }
+        Err(ParseError::Uri(f)) => {
+            f.position()
+                .is_some()
+                && f.entry() == Some(0)
+        }
+        _ => false,
+    }
 }
 
 #[test]
@@ -604,7 +617,7 @@ fn malformed_entry_never_fails_the_list() {
     skips_malformed!(
         SipGeolocation,
         ["<cid:a@example.com>", "<https://example.com/l>"],
-        ["<cid:c@example.com"],
+        ["<>", "<>;inserted-by=x"],
         refused
     );
     skips_malformed!(
