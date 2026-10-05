@@ -28,7 +28,8 @@
 //! [`AddrParts`], [`SipHeaderRowsExt`], [`Redact`], [`HeaderEquivalence`]
 //! and `SipHeaderExtract` (feature: `message`). Both crates define
 //! `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at their roots,
-//! so sip-uri's are spelled through `sip_uri::` beside these.
+//! so sip-uri's are spelled through `sip_uri::` beside these. [`WarningKind`]
+//! is sip-uri's, re-exported here as the type of [`ParseWarning::kind`].
 //!
 //! # Headers
 //!
@@ -77,6 +78,7 @@ pub use sip_header_catalog::{
     SipHeaderFieldsIntoIter, SipHeaderFieldsIter, SipHeaderRows, SipHeaderRowsExt,
 };
 pub use sip_uri;
+pub use sip_uri::WarningKind;
 
 mod accept;
 mod accept_encoding;

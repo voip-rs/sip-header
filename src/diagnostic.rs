@@ -61,7 +61,8 @@ pub struct ParseWarning {
     pub row: Option<usize>,
     /// Index of the list entry the breach is in, for list-valued headers.
     pub entry: Option<usize>,
-    /// Whether the parsed value still carries what was sent.
+    /// Whether the parsed value still carries what was sent; also named as
+    /// [`sip_header::WarningKind`](crate::WarningKind).
     pub kind: WarningKind,
     pub(crate) span: Option<Span>,
 }
