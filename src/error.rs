@@ -433,6 +433,7 @@ mod tests {
             panic!("not Uri");
         };
         assert_eq!((fault.position(), fault.entry()), (Some(4), Some(1)));
+        assert_eq!(fault.cause(), &sip_uri::ParseError::SchemeMismatch);
         let cause = Some(sip_uri::ParseError::SchemeMismatch.to_string());
         assert_eq!(
             fault
