@@ -199,14 +199,9 @@ impl fmt::Display for SipReason {
 
 impl sealed::Sealed for SipReason {}
 
-fn parse_reason_value(s: &str) -> Result<Parsed<SipReason>, ParseError> {
-    let mut warnings = Vec::new();
-    parse_reason(s, &mut warnings).map(|v| Parsed::new(v, warnings))
-}
-
 impl UriHeaderParse for SipReason {
     fn parse_uri_header_with_warnings(raw: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_uri_header(raw, parse_reason_value)
+        crate::scrub::parse_uri_header(raw, crate::list::entry_from_str::<SipReasonList>)
     }
 }
 
