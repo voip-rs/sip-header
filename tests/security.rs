@@ -548,18 +548,42 @@ fn inject(base: &str, snippets: &[(f64, String)]) -> String {
     s
 }
 
-/// A lenient parse, its wire form free of CR, LF and NUL and parsing back
-/// to itself.
+/// Rows never go back, and within a row positions never decrease.
+fn in_input_order(input: &str, warnings: &[ParseWarning]) -> Result<(), TestCaseError> {
+    let mut last: HashMap<Option<usize>, usize> = HashMap::new();
+    for (prev, w) in warnings
+        .iter()
+        .zip(
+            warnings
+                .iter()
+                .skip(1),
+        )
+    {
+        prop_assert!(prev.row <= w.row, "{:?}: {:?}", input, warnings);
+    }
+    for w in warnings {
+        if let Some(p) = w.position {
+            let before = last.insert(w.row, p);
+            prop_assert!(before <= Some(p), "{:?}: {:?}", input, warnings);
+        }
+    }
+    Ok(())
+}
+
+/// A lenient parse with its warnings in input order, its wire form free of
+/// CR, LF and NUL and parsing back to itself.
 fn lenient_is_stable<T>(
     input: &str,
-    parse: impl Fn(&str) -> Result<T, ParseError>,
+    parse: impl Fn(&str) -> Result<Parsed<T>, ParseError>,
 ) -> Result<Option<T>, TestCaseError>
 where
     T: std::fmt::Display + std::fmt::Debug + PartialEq,
 {
-    let Ok(v) = parse(input) else {
+    let Ok(parsed) = parse(input) else {
         return Ok(None);
     };
+    in_input_order(input, &parsed.warnings)?;
+    let v = parsed.value;
     let wire = v.to_string();
     prop_assert!(
         !wire.contains(['\r', '\n', '\0']),
@@ -567,9 +591,15 @@ where
         input,
         wire
     );
-    prop_assert_eq!(parse(&wire), Ok(v), "{:?} -> {:?}", input, wire);
+    prop_assert_eq!(
+        parse(&wire).map(|p| p.value),
+        Ok(v),
+        "{:?} -> {:?}",
+        input,
+        wire
+    );
     parse(input)
-        .map(Some)
+        .map(|p| Some(p.value))
         .map_err(|e| TestCaseError::fail(e.to_string()))
 }
 
@@ -601,32 +631,74 @@ fn serde_reads_back<T>(_value: Option<T>, _input: &str) -> Result<(), TestCaseEr
 
 fn check_kind(kind: &str, input: &str) -> Result<(), TestCaseError> {
     match kind {
-        "addr" => serde_reads_back(lenient_is_stable(input, SipHeaderAddr::parse)?, input),
-        "contact" => serde_reads_back(lenient_is_stable(input, ContactList::parse)?, input),
-        "via" => serde_reads_back(lenient_is_stable(input, SipVia::parse)?, input),
-        "warning" => serde_reads_back(lenient_is_stable(input, SipWarning::parse)?, input),
-        "auth" => serde_reads_back(lenient_is_stable(input, SipAuthValue::parse)?, input),
-        "accept" => serde_reads_back(lenient_is_stable(input, SipAccept::parse)?, input),
-        "accept-encoding" => {
-            serde_reads_back(lenient_is_stable(input, SipAcceptEncoding::parse)?, input)
-        }
-        "accept-language" => {
-            serde_reads_back(lenient_is_stable(input, SipAcceptLanguage::parse)?, input)
-        }
-        "security" => serde_reads_back(lenient_is_stable(input, SipSecurity::parse)?, input),
-        "uri-info" => serde_reads_back(lenient_is_stable(input, UriInfo::parse)?, input),
-        "geolocation" => serde_reads_back(lenient_is_stable(input, SipGeolocation::parse)?, input),
-        "history-info" => serde_reads_back(lenient_is_stable(input, HistoryInfo::parse)?, input),
-        "replaces" => serde_reads_back(lenient_is_stable(input, SipReplaces::parse)?, input),
-        "replaces-uri" => serde_reads_back(
-            lenient_is_stable(input, SipReplaces::parse_uri_header)?,
+        "addr" => serde_reads_back(
+            lenient_is_stable(input, SipHeaderAddr::parse_with_warnings)?,
             input,
         ),
-        "target-dialog" => {
-            serde_reads_back(lenient_is_stable(input, SipTargetDialog::parse)?, input)
-        }
-        "join" => serde_reads_back(lenient_is_stable(input, SipJoin::parse)?, input),
-        "reason" => serde_reads_back(lenient_is_stable(input, SipReason::parse)?, input),
+        "contact" => serde_reads_back(
+            lenient_is_stable(input, ContactList::parse_with_warnings)?,
+            input,
+        ),
+        "via" => serde_reads_back(
+            lenient_is_stable(input, SipVia::parse_with_warnings)?,
+            input,
+        ),
+        "warning" => serde_reads_back(
+            lenient_is_stable(input, SipWarning::parse_with_warnings)?,
+            input,
+        ),
+        "auth" => serde_reads_back(
+            lenient_is_stable(input, SipAuthValue::parse_with_warnings)?,
+            input,
+        ),
+        "accept" => serde_reads_back(
+            lenient_is_stable(input, SipAccept::parse_with_warnings)?,
+            input,
+        ),
+        "accept-encoding" => serde_reads_back(
+            lenient_is_stable(input, SipAcceptEncoding::parse_with_warnings)?,
+            input,
+        ),
+        "accept-language" => serde_reads_back(
+            lenient_is_stable(input, SipAcceptLanguage::parse_with_warnings)?,
+            input,
+        ),
+        "security" => serde_reads_back(
+            lenient_is_stable(input, SipSecurity::parse_with_warnings)?,
+            input,
+        ),
+        "uri-info" => serde_reads_back(
+            lenient_is_stable(input, UriInfo::parse_with_warnings)?,
+            input,
+        ),
+        "geolocation" => serde_reads_back(
+            lenient_is_stable(input, SipGeolocation::parse_with_warnings)?,
+            input,
+        ),
+        "history-info" => serde_reads_back(
+            lenient_is_stable(input, HistoryInfo::parse_with_warnings)?,
+            input,
+        ),
+        "replaces" => serde_reads_back(
+            lenient_is_stable(input, SipReplaces::parse_with_warnings)?,
+            input,
+        ),
+        "replaces-uri" => serde_reads_back(
+            lenient_is_stable(input, SipReplaces::parse_uri_header_with_warnings)?,
+            input,
+        ),
+        "target-dialog" => serde_reads_back(
+            lenient_is_stable(input, SipTargetDialog::parse_with_warnings)?,
+            input,
+        ),
+        "join" => serde_reads_back(
+            lenient_is_stable(input, SipJoin::parse_with_warnings)?,
+            input,
+        ),
+        "reason" => serde_reads_back(
+            lenient_is_stable(input, SipReason::parse_with_warnings)?,
+            input,
+        ),
         other => panic!("{other}"),
     }
 }
@@ -776,7 +848,7 @@ fn check_equivalence(kind: &str, input: &str) -> Result<(), TestCaseError> {
 
 /// Parse `input` as the one row of `header`, handed in through a holder
 /// under the header's lowercased name.
-fn through_holder<T>(header: SipHeader) -> impl Fn(&str) -> Result<T, ParseError>
+fn through_holder<T>(header: SipHeader) -> impl Fn(&str) -> Result<Parsed<T>, ParseError>
 where
     T: TypedHeader,
 {
@@ -789,21 +861,19 @@ where
         )]);
         fields
             .parse_header::<T>(header)
-            .map(|parsed| {
-                parsed
-                    .expect("the row is present")
-                    .value
-            })
+            .map(|parsed| parsed.expect("the row is present"))
     }
 }
 
 fn check_kind_through_holder(kind: &str, input: &str) -> Result<(), TestCaseError> {
     let one_auth = |input: &str| {
-        through_holder::<Vec<SipAuthValue>>(SipHeader::Authorization)(input).map(|values| {
-            values
-                .into_iter()
-                .next()
-                .expect("one row holds one value")
+        through_holder::<Vec<SipAuthValue>>(SipHeader::Authorization)(input).map(|parsed| {
+            parsed.map(|values| {
+                values
+                    .into_iter()
+                    .next()
+                    .expect("one row holds one value")
+            })
         })
     };
     match kind {
@@ -928,6 +998,7 @@ where
     match fields.parse_header::<T>(header) {
         Ok(parsed) => {
             let parsed = parsed.expect("the rows are present");
+            in_input_order(&rows.join("\n"), &parsed.warnings)?;
             for w in &parsed.warnings {
                 prop_assert!(
                     w.row
