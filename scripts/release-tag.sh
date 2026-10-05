@@ -80,7 +80,12 @@ if [ "$PACKAGE" = sip-header-catalog ]; then
 	git add Cargo.toml
 fi
 
-git commit -m "release: $TAG"
+# A version the manifests already carry has nothing to commit.
+if git diff --cached --quiet; then
+	echo "Manifests already at $CRATE_VERSION; no release commit."
+else
+	git commit -m "release: $TAG"
+fi
 
 git checkout --detach
 if git symbolic-ref -q HEAD >/dev/null; then
