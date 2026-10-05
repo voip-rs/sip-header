@@ -586,21 +586,14 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let span = Some(Span::new(lead..lead + s.len()));
     let Some(open) = open else {
         let (text, params) = s.split_at(bare_params_at(s));
-        let mut found = Vec::new();
-        let uri = parse_uri(text, lead, &mut found)?;
-        let missing = text
-            .find([',', ';', '?'])
-            .map(|i| {
+        let uri = parse_uri(text, lead, &mut warnings)?;
+        if let Some(i) = text.find([',', ';', '?']) {
+            warnings.push(
                 ParseWarning::new(Field::Addr, WarningCode::MissingBrackets)
                     .at(lead + i)
-                    .covering(Span::new(lead..lead + text.len()))
-            });
-        warnings.extend(crate::scrub::merge(
-            missing
-                .into_iter()
-                .collect(),
-            found,
-        ));
+                    .covering(Span::new(lead..lead + text.len())),
+            );
+        }
         let addr = SipHeaderAddr {
             params: HeaderParams::read(input, params, &mut warnings),
             span,

@@ -255,7 +255,6 @@ impl CommaList for ContactList {
                 None => wildcard_seen = true,
             }
         }
-        warnings.sort_by_key(|w| w.entry);
         if addrs.is_empty() && wildcard_seen {
             return Ok(Self::wildcard());
         }

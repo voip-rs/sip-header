@@ -326,11 +326,8 @@ pub fn extract_request_uri_with_warnings(
                 .len(),
         )
     })?;
-    let (before, after): (Vec<_>, Vec<_>) = line
+    let warnings = line
         .warnings
-        .into_iter()
-        .partition(|w| w.position < Some(uri_at));
-    let warnings = before
         .into_iter()
         .chain(
             parsed
@@ -338,7 +335,6 @@ pub fn extract_request_uri_with_warnings(
                 .into_iter()
                 .map(|w| ParseWarning::from_uri(w, uri_at)),
         )
-        .chain(after)
         .collect();
     Ok(Some(Parsed::new(parsed.value, warnings)))
 }

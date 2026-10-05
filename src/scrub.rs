@@ -112,27 +112,6 @@ pub(crate) fn scrub(input: &str) -> Scrubbed<'_> {
     }
 }
 
-/// Merge `scrubbed` into `found`, keeping input order.
-pub(crate) fn merge(scrubbed: Vec<ParseWarning>, found: Vec<ParseWarning>) -> Vec<ParseWarning> {
-    if scrubbed.is_empty() {
-        return found;
-    }
-    let mut out = Vec::with_capacity(scrubbed.len() + found.len());
-    let mut pending = scrubbed
-        .into_iter()
-        .peekable();
-    for w in found {
-        if let Some(pos) = w.position {
-            while let Some(s) = pending.next_if(|s| s.position <= Some(pos)) {
-                out.push(s);
-            }
-        }
-        out.push(w);
-    }
-    out.extend(pending);
-    out
-}
-
 /// Run `parse` over `input` scrubbed, with positions pointing back into
 /// `input` and the scrub's warnings among the parser's.
 pub(crate) fn parse_scrubbed<T>(
@@ -167,9 +146,14 @@ fn scrubbed_with<T>(
             let found = parsed
                 .warnings
                 .into_iter()
-                .map(|w| w.relocate(&back))
-                .collect();
-            Ok(Parsed::new(parsed.value, merge(warnings, found)))
+                .map(|w| w.relocate(&back));
+            Ok(Parsed::new(
+                parsed.value,
+                warnings
+                    .into_iter()
+                    .chain(found)
+                    .collect(),
+            ))
         }
         Err(e) => Err(e.relocate(&back)),
     }

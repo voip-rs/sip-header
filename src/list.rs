@@ -2,7 +2,7 @@
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
-use crate::scrub::{merge, scrub, Scrubbed};
+use crate::scrub::{scrub, Scrubbed};
 use crate::span::{Located, Span};
 use crate::{QuoteStart, RowEntry};
 
@@ -424,11 +424,10 @@ pub(crate) trait CommaList: Sized {
             };
             let found = found
                 .into_iter()
-                .map(|w| w.relocate(&back))
-                .collect();
+                .map(|w| w.relocate(&back));
             warnings.extend(
-                merge(own, found)
-                    .into_iter()
+                own.into_iter()
+                    .chain(found)
                     .chain(comma)
                     .map(|w| w.in_entry(i)),
             );

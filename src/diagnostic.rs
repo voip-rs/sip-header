@@ -15,13 +15,24 @@ use crate::span::{relocated, Relocation, Span};
 pub struct Parsed<T> {
     /// The parsed value.
     pub value: T,
-    /// Grammar breaches the parser accepted, in input order.
+    /// Grammar breaches the parser accepted, in input order: by row, entry
+    /// and position, a warning without a position after the rest of its entry.
     pub warnings: Vec<ParseWarning>,
 }
 
 impl<T> Parsed<T> {
-    /// `value` with the breaches found parsing it, in input order.
-    pub fn new(value: T, warnings: Vec<ParseWarning>) -> Self {
+    /// `value` with the breaches found parsing it, sorted into input order;
+    /// warnings at one place keep the order they are given in.
+    pub fn new(value: T, mut warnings: Vec<ParseWarning>) -> Self {
+        warnings.sort_by_key(|w| {
+            (
+                w.row,
+                w.entry,
+                w.position
+                    .is_none(),
+                w.position,
+            )
+        });
         Parsed { value, warnings }
     }
 

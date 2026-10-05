@@ -660,7 +660,8 @@ macro_rules! entry_parses_alone {
             assert_eq!(first.value, one.value, "{two}");
             let dropped = first
                 .warnings
-                .last()
+                .iter()
+                .rfind(|w| w.position.is_some())
                 .copied()
                 .unwrap();
             assert_eq!(
@@ -683,7 +684,8 @@ macro_rules! entry_parses_alone {
             assert_eq!(
                 parsed
                     .warnings
-                    .last()
+                    .iter()
+                    .rfind(|w| w.position.is_some())
                     .map(|w| (w.code, w.position)),
                 Some((WarningCode::TrailingComma, Some(wire.len()))),
                 "{comma}"
