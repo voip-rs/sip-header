@@ -125,7 +125,7 @@ pub use dialog_id::{DialogFraming, DialogKind};
 pub use equivalence::HeaderEquivalence;
 pub use error::{Fault, FaultCode, ParseError, UriFault};
 pub use geolocation::{SipGeolocation, SipGeolocationEntry};
-pub use header::{SipHeaderLookup, TypedHeader};
+pub use header::{SipHeaderLookup, TypedHeader, TypedValue};
 pub use header_addr::{AddrParts, SipHeaderAddr, SipHeaderAddrList};
 pub use history_info::{HistoryInfo, HistoryInfoEntry};
 pub use join::SipJoin;

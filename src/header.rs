@@ -83,54 +83,116 @@ fn single_row<T: HeaderParse + Located>(rows: Vec<&str>) -> Result<Parsed<T>, Pa
     }
 }
 
-macro_rules! typed_header {
-    ($reader:ident: $($Type:ty => [$($header:ident),+ $(,)?];)+) => {$(
-        impl rows::FromRows for $Type {
-            typed_header!(@from_rows $reader);
+/// The one table of typed headers: each value type, how it reads rows
+/// (`own` where its `FromRows` is written by hand), and its headers.
+macro_rules! typed_headers {
+    ($($(#[$doc:meta])* $Variant:ident($Type:ty, $reader:ident) => [$($header:ident),+ $(,)?];)+) => {
+        $(
+            typed_headers!(@from_rows $Type, $reader);
+
+            impl TypedHeader for $Type {
+                const HEADERS: &'static [SipHeader] = &[$(SipHeader::$header),+];
+            }
+        )+
+
+        /// The value of any typed header, as
+        /// [`SipHeaderLookup::parse_typed`] returns it: one variant per
+        /// [`TypedHeader`] type.
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum TypedValue {
+            $($(#[$doc])* $Variant($Type),)+
         }
 
-        impl TypedHeader for $Type {
-            const HEADERS: &'static [SipHeader] = &[$(SipHeader::$header),+];
+        /// `name` read as the [`TypedHeader`] type that holds it.
+        fn parse_typed<S: SipHeaderLookup + ?Sized>(
+            store: &S,
+            name: SipHeader,
+        ) -> Result<Option<Parsed<TypedValue>>, ParseError> {
+            $(
+                if <$Type as TypedHeader>::HEADERS.contains(&name) {
+                    return store
+                        .parse_header::<$Type>(name)
+                        .map(|p| p.map(|p| p.map(TypedValue::$Variant)));
+                }
+            )+
+            Err(wrong_header())
         }
-    )+};
-    (@from_rows list) => {
-        fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
-            list_rows(header, rows)
+
+        /// Every typed header list, one per [`TypedValue`] variant.
+        #[cfg(test)]
+        const TYPED: &[&[SipHeader]] = &[$(<$Type as TypedHeader>::HEADERS),+];
+    };
+    (@from_rows $Type:ty, list) => {
+        impl rows::FromRows for $Type {
+            fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
+                list_rows(header, rows)
+            }
         }
     };
-    (@from_rows single) => {
-        fn from_rows(_: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
-            single_row(rows)
+    (@from_rows $Type:ty, single) => {
+        impl rows::FromRows for $Type {
+            fn from_rows(_: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
+                single_row(rows)
+            }
         }
     };
+    (@from_rows $Type:ty, own) => {};
 }
 
-typed_header! { list:
-    UriInfo => [CallInfo, AlertInfo, ErrorInfo];
-    HistoryInfo => [HistoryInfo];
-    SipHeaderAddrList => [
+typed_headers! {
+    /// From, To and the other single-address headers.
+    Addr(SipHeaderAddr, single) => [
+        From, To, ReferTo, ReferredBy, ReplyTo, PCalledPartyId, PServedUser, PDcsTracePartyId,
+    ];
+    /// Route, P-Asserted-Identity and the other address lists.
+    AddrList(SipHeaderAddrList, list) => [
         PAssertedIdentity, PPreferredIdentity, Route, RecordRoute, Path, ServiceRoute,
         Diversion, RemotePartyId, PRefusedUriList, PermissionMissing,
     ];
-    ContactList => [Contact];
-    SipVia => [Via];
-    SipWarning => [Warning];
-    SipSecurity => [SecurityClient, SecurityServer, SecurityVerify];
-    SipAccept => [Accept];
-    SipAcceptEncoding => [AcceptEncoding];
-    SipAcceptLanguage => [AcceptLanguage];
-    SipGeolocation => [Geolocation];
-    SipReasonList => [Reason];
+    /// Contact.
+    Contact(ContactList, list) => [Contact];
+    /// Call-Info, Alert-Info and Error-Info.
+    UriInfo(UriInfo, list) => [CallInfo, AlertInfo, ErrorInfo];
+    /// History-Info.
+    HistoryInfo(HistoryInfo, list) => [HistoryInfo];
+    /// Via.
+    Via(SipVia, list) => [Via];
+    /// Warning.
+    Warning(SipWarning, list) => [Warning];
+    /// Security-Client, Security-Server and Security-Verify.
+    Security(SipSecurity, list) => [SecurityClient, SecurityServer, SecurityVerify];
+    /// Accept.
+    Accept(SipAccept, list) => [Accept];
+    /// Accept-Encoding.
+    AcceptEncoding(SipAcceptEncoding, list) => [AcceptEncoding];
+    /// Accept-Language.
+    AcceptLanguage(SipAcceptLanguage, list) => [AcceptLanguage];
+    /// Geolocation.
+    Geolocation(SipGeolocation, list) => [Geolocation];
+    /// Reason.
+    Reason(SipReasonList, list) => [Reason];
+    /// Call-ID.
+    CallId(SipCallId, single) => [CallId];
+    /// Replaces.
+    Replaces(SipReplaces, single) => [Replaces];
+    /// Join.
+    Join(SipJoin, single) => [Join];
+    /// Target-Dialog.
+    TargetDialog(SipTargetDialog, single) => [TargetDialog];
+    /// The authentication headers, one value per row.
+    Auth(Vec<SipAuthValue>, own) => [
+        Authorization, ProxyAuthorization, WwwAuthenticate, ProxyAuthenticate,
+    ];
+    /// Allow, Supported, Require and the other token lists.
+    Tokens(TokenList, own) => [
+        Allow, Supported, Require, ProxyRequire, Unsupported, AllowEvents, ContentEncoding,
+        ContentLanguage, InReplyTo,
+    ];
 }
 
-typed_header! { single:
-    SipHeaderAddr => [
-        From, To, ReferTo, ReferredBy, ReplyTo, PCalledPartyId, PServedUser, PDcsTracePartyId,
-    ];
-    SipCallId => [CallId];
-    SipReplaces => [Replaces];
-    SipJoin => [Join];
-    SipTargetDialog => [TargetDialog];
+fn wrong_header() -> ParseError {
+    ParseError::malformed(Field::Value, FaultCode::WrongHeader, None)
 }
 
 impl Located for SipCallId {}
@@ -182,33 +244,10 @@ impl rows::FromRows for Vec<SipAuthValue> {
     }
 }
 
-impl TypedHeader for Vec<SipAuthValue> {
-    const HEADERS: &'static [SipHeader] = &[
-        SipHeader::Authorization,
-        SipHeader::ProxyAuthorization,
-        SipHeader::WwwAuthenticate,
-        SipHeader::ProxyAuthenticate,
-    ];
-}
-
 impl rows::FromRows for TokenList {
     fn from_rows(header: SipHeader, rows: Vec<&str>) -> Result<Parsed<Self>, ParseError> {
         TokenList::from_rows_with_warnings(header, rows)
     }
-}
-
-impl TypedHeader for TokenList {
-    const HEADERS: &'static [SipHeader] = &[
-        SipHeader::Allow,
-        SipHeader::Supported,
-        SipHeader::Require,
-        SipHeader::ProxyRequire,
-        SipHeader::Unsupported,
-        SipHeader::AllowEvents,
-        SipHeader::ContentEncoding,
-        SipHeader::ContentLanguage,
-        SipHeader::InReplyTo,
-    ];
 }
 
 /// The lenient value of a [`SipHeaderLookup::parse_header`] result.
@@ -263,17 +302,22 @@ pub trait SipHeaderLookup: SipHeaderRows {
         name: SipHeader,
     ) -> Result<Option<Parsed<T>>, ParseError> {
         if !T::HEADERS.contains(&name) {
-            return Err(ParseError::malformed(
-                Field::Value,
-                FaultCode::WrongHeader,
-                None,
-            ));
+            return Err(wrong_header());
         }
         let rows = self.sip_header_rows(name)?;
         if rows.is_empty() {
             return Ok(None);
         }
         T::from_rows(name, rows).map(Some)
+    }
+
+    /// Parse `name` as whichever [`TypedHeader`] type holds it, with its
+    /// warnings; `Ok(None)` when the header is absent.
+    ///
+    /// Errors with [`FaultCode::WrongHeader`] when no type holds `name`, so
+    /// a caller reads every typed header without naming each type.
+    fn parse_typed(&self, name: SipHeader) -> Result<Option<Parsed<TypedValue>>, ParseError> {
+        parse_typed(self, name)
     }
 
     /// Parse `name` as `T`, refusing the first grammar breach as
@@ -911,6 +955,23 @@ mod tests {
     }
 
     /// Remote-Party-ID repeats but is no comma list, so a row is one party.
+    #[test]
+    fn every_typed_header_maps_to_one_variant() {
+        let empty: HashMap<String, String> = HashMap::new();
+        for &header in SipHeader::ALL {
+            let holders = TYPED
+                .iter()
+                .filter(|headers| headers.contains(&header))
+                .count();
+            assert!(holders <= 1, "{header}");
+            assert_eq!(
+                empty.parse_typed(header) == Err(wrong_header()),
+                holders == 0,
+                "{header}"
+            );
+        }
+    }
+
     #[test]
     fn a_repeated_non_list_header_does_not_split_rows() {
         let h = headers_with(&[(
