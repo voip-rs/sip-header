@@ -7,15 +7,16 @@ use std::ops::Range;
 use proptest::prelude::*;
 use sip_header::sip_uri::{Host, Redaction, Uri, UriParse, UserMask};
 use sip_header::{
-    ContactList, DialogFraming, Fault, FaultCode, Field, HeaderEquivalence, HeaderParams,
-    HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError,
-    ParseWarning, Parsed, Redact, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry,
-    SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId,
-    SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause,
-    SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
-    UriInfo, UriInfoEntry, WarningCode,
+    extract_request_line, extract_request_uri, extract_request_uri_strict,
+    extract_request_uri_with_warnings, ContactList, DialogFraming, Fault, FaultCode, Field,
+    HeaderEquivalence, HeaderParams, HeaderParse, HeaderRedaction, HistoryInfo, HistoryInfoEntry,
+    ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact, RequestLine, SipAccept,
+    SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage,
+    SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipGeolocation, SipGeolocationEntry,
+    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderFields, SipHeaderLookup,
+    SipHeaderRowsExt, SipJoin, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
+    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
+    TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -2102,6 +2103,82 @@ proptest! {
     ) {
         for &(header, kinds, check) in ACCESSORS {
             check(&lookup_store(header, kinds, &specs), header)?;
+        }
+    }
+}
+
+fn request_uri_text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        2 => uri().prop_map(|u| u.to_string()),
+        2 => prop::sample::select(vec![
+            "sips:[2001:db8::1]:5061;transport=tls",
+            "sip:alice@[2001:db8::2]:5060",
+            "sip:",
+            "sip:a@[2001:db8::1",
+            "sip:%ZZ@example.com",
+            "sip:alice@example.com;",
+            "sip:alice@exa_mple.com",
+            "mailto:alice@example.com",
+            "example.com",
+        ])
+        .prop_map(str::to_string),
+        1 => "(sips?|tel|urn|https?):[a-z0-9@%:;=.\\[\\]?&+-]{0,16}",
+        1 => field(),
+    ]
+}
+
+fn line_gap(leading: bool) -> impl Strategy<Value = &'static str> {
+    if leading {
+        prop::sample::select(vec!["", "", "", " ", "\t"])
+    } else {
+        prop::sample::select(vec![" ", " ", " ", "  ", "\t", " \t"])
+    }
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn a_request_line_parses_its_uri_as_the_message_does(
+        method in prop::sample::select(vec!["INVITE", "OPTIONS", "MESSAGE", "IN@VITE"]),
+        uri_text in request_uri_text(),
+        version in prop::sample::select(vec!["SIP/2.0", "SIP/3.0", "HTTP/1.1"]),
+        lead in line_gap(true),
+        gaps in (line_gap(false), line_gap(false)),
+        tail in line_gap(true),
+    ) {
+        let msg = format!(
+            "{lead}{method}{}{uri_text}{}{version}{tail}\r\nTo: <sip:bob@example.com>\r\n\r\n",
+            gaps.0, gaps.1,
+        );
+        let line = extract_request_line(&msg);
+        let via_line = |f: fn(&RequestLine<'_>) -> Result<Uri, ParseError>| {
+            line.clone()
+                .and_then(|l| l.as_ref().map(f).transpose())
+        };
+        prop_assert_eq!(via_line(|l| l.uri()), extract_request_uri(&msg), "{:?}", msg);
+        prop_assert_eq!(
+            via_line(|l| l.uri_strict()),
+            extract_request_uri_strict(&msg),
+            "{:?}",
+            msg
+        );
+        let parsed = line
+            .clone()
+            .and_then(|l| l.map(|l| l.uri_with_warnings()).transpose());
+        let extracted = extract_request_uri_with_warnings(&msg);
+        prop_assert_eq!(&parsed, &extracted, "{:?}", msg);
+        let spans = |p: &Result<Option<Parsed<Uri>>, ParseError>| -> Vec<Option<Span>> {
+            p.iter()
+                .flatten()
+                .flat_map(|p| p.warnings.iter().map(ParseWarning::span))
+                .collect()
+        };
+        prop_assert_eq!(spans(&parsed), spans(&extracted));
+        if let (Ok(Some(line)), Ok(Some(parsed))) = (&line, &parsed) {
+            let text = line.uri_span().get(&msg);
+            prop_assert_eq!(text, Ok(line.uri_text()));
+            prop_assert_eq!(Uri::parse(text.unwrap()), Ok(parsed.value.clone()));
         }
     }
 }
