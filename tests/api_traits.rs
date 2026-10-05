@@ -195,3 +195,13 @@ fn no_public_conversion_names_a_serde_mirror() {
         }
     }
 }
+
+#[test]
+fn a_warning_kind_is_named_at_the_root() -> R {
+    use sip_header::WarningKind;
+
+    let parsed = SipVia::parse_with_warnings("SIP/2.0/UDP 198.51.100.1:x")?;
+    let kind: WarningKind = parsed.warnings[0].kind;
+    assert_eq!(kind, WarningKind::Lost);
+    Ok(())
+}
