@@ -82,7 +82,7 @@ Every parser, constructor and accessor returns one `ParseError`, so nested parse
 | 0.3 | 0.4 |
 |---|---|
 | `SipViaError`, `SipAuthError`, `ParseSipHeaderAddrError`, `UriInfoError`, `HistoryInfoError`, … | `ParseError::Malformed(Fault)` |
-| a failed URI as a string | `ParseError::Uri(UriFault)`, sip-uri's error as `source()` |
+| a failed URI as a string | `ParseError::Uri(UriFault)`, sip-uri's error as `source()` and, typed, `cause()` |
 | `UriInfoError::Malformed(String)` from a store | `ParseError::Row(RowError)` |
 | — | `ParseError::NonConformant(ParseWarning)` from `parse_strict` |
 

@@ -257,6 +257,12 @@ impl UriFault {
         self.entry
     }
 
+    /// sip-uri's error for the URI, the one
+    /// [`source`](std::error::Error::source) returns.
+    pub fn cause(&self) -> &sip_uri::ParseError {
+        &self.source
+    }
+
     /// The URI's text in its row; `None` without a position.
     pub fn span(&self) -> Option<Span> {
         self.position
