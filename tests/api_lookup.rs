@@ -336,3 +336,49 @@ fn address_headers_of_name_addr_grammar_parse_as_addresses() {
         );
     }
 }
+
+#[test]
+fn every_typed_header_parses_through_one_dispatch() -> R {
+    use std::collections::HashMap;
+
+    use sip_header::TypedValue;
+
+    let empty: HashMap<String, String> = HashMap::new();
+    let mut typed = 0;
+    for &header in SipHeader::ALL {
+        match empty.parse_typed(header) {
+            Ok(None) => typed += 1,
+            Err(ParseError::Malformed(f)) if f.code == FaultCode::WrongHeader => {}
+            other => panic!("{header}: {other:?}"),
+        }
+    }
+    assert!(typed > 0);
+
+    let store = HashMap::from([
+        ("Via".to_string(), "SIP/2.0/UDP 198.51.100.1".to_string()),
+        ("Allow".to_string(), "INVITE, ACK".to_string()),
+    ]);
+    let via = store
+        .parse_typed(SipHeader::Via)?
+        .unwrap();
+    assert_eq!(
+        via.value,
+        TypedValue::Via(
+            store
+                .via()?
+                .unwrap()
+        )
+    );
+    let allow = store
+        .parse_typed(SipHeader::Allow)?
+        .unwrap();
+    assert_eq!(
+        allow.value,
+        TypedValue::Tokens(
+            store
+                .allow()?
+                .unwrap()
+        )
+    );
+    Ok(())
+}
