@@ -63,7 +63,7 @@ macro_rules! header_params {
                         reserved: $reserved,
                         check: $crate::params::any_value,
                     },
-                    $crate::params::Owner::Spans([&mut self.span, &mut self.$inner]),
+                    $crate::params::Owner::Spans(vec![&mut self.span, &mut self.$inner]),
                 )
             }
         }
@@ -146,7 +146,7 @@ pub(crate) struct ParamRule {
 pub(crate) enum Owner<'a> {
     Plain,
     /// Cleared on drop once the parameters changed.
-    Spans([&'a mut Option<Span>; 2]),
+    Spans(Vec<&'a mut Option<Span>>),
     /// Dropped by every parameter set, the two excluding each other.
     Token68(&'a mut Option<String>),
 }

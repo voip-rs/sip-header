@@ -72,6 +72,7 @@ pub struct SipHeaderAddr {
     params: HeaderParams,
     span: Option<Span>,
     uri_span: Option<Span>,
+    display_name_span: Option<Span>,
 }
 
 impl PartialEq for SipHeaderAddr {
@@ -99,6 +100,7 @@ impl Located for SipHeaderAddr {
     fn relocate_spans(&mut self, to: &Relocation<'_>) {
         relocated(&mut self.span, to);
         relocated(&mut self.uri_span, to);
+        relocated(&mut self.display_name_span, to);
         self.params
             .relocate_spans(to);
     }
@@ -168,6 +170,7 @@ impl SipHeaderAddr {
             params: HeaderParams::default(),
             span: None,
             uri_span: None,
+            display_name_span: None,
         }
     }
 
@@ -193,9 +196,16 @@ impl SipHeaderAddr {
     pub fn with_display_name(mut self, name: impl AsRef<str>) -> Result<Self, ParseError> {
         let name = name.as_ref();
         crate::check::refuse_controls(Field::DisplayName, name)?;
-        self.display_name = (!name.is_empty()).then(|| name.to_owned());
+        self.display_name = Some(name.to_owned());
         self.clear_spans();
         Ok(self)
+    }
+
+    /// Remove the display name.
+    pub fn without_display_name(mut self) -> Self {
+        self.display_name = None;
+        self.clear_spans();
+        self
     }
 
     /// Set the `tag` parameter (RFC 3261 §19.3), a `token`, replacing
@@ -222,7 +232,8 @@ impl SipHeaderAddr {
         Ok(self)
     }
 
-    /// The display name, if present, unescaped and case as sent.
+    /// The display name, unescaped and case as sent; `Some("")` for a
+    /// quoted empty name, `None` when none was sent.
     pub fn display_name(&self) -> Option<&str> {
         self.display_name
             .as_deref()
@@ -243,6 +254,12 @@ impl SipHeaderAddr {
     /// a value built or deserialized.
     pub fn uri_span(&self) -> Option<Span> {
         self.uri_span
+    }
+
+    /// Where the display name was read from, its quotes included; `None`
+    /// without a display name or for a value built or deserialized.
+    pub fn display_name_span(&self) -> Option<Span> {
+        self.display_name_span
     }
 
     /// If the URI is a SIP/SIPS URI, return a reference to it.
@@ -281,7 +298,11 @@ impl SipHeaderAddr {
                 reserved,
                 check: any_value,
             },
-            Owner::Spans([&mut self.span, &mut self.uri_span]),
+            Owner::Spans(vec![
+                &mut self.span,
+                &mut self.uri_span,
+                &mut self.display_name_span,
+            ]),
         )
     }
 
@@ -296,6 +317,7 @@ impl SipHeaderAddr {
     pub(crate) fn clear_spans(&mut self) {
         self.span = None;
         self.uri_span = None;
+        self.display_name_span = None;
         self.params
             .clear_spans();
     }
@@ -317,10 +339,7 @@ pub(crate) struct Rendered<'a, U, P> {
 
 impl<U: fmt::Display, P: fmt::Display> fmt::Display for Rendered<'_, U, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(name) = self
-            .display_name
-            .filter(|n| !n.is_empty())
-        {
+        if let Some(name) = self.display_name {
             if needs_quoting(name) {
                 crate::write_quoted_pair(f, name)?;
             } else {
@@ -334,9 +353,10 @@ impl<U: fmt::Display, P: fmt::Display> fmt::Display for Rendered<'_, U, P> {
 
 /// A display name needs quoting unless it is a single `token`.
 fn needs_quoting(name: &str) -> bool {
-    !name
-        .chars()
-        .all(is_token_char)
+    name.is_empty()
+        || !name
+            .chars()
+            .all(is_token_char)
 }
 
 impl fmt::Display for SipHeaderAddr {
@@ -450,8 +470,7 @@ impl Redact for SipHeaderAddr {
             == sip_uri::UserMask::Visible;
         let name = self
             .display_name()
-            .filter(|n| !n.is_empty())
-            .map(|n| if shows_user { n } else { "***" });
+            .map(|n| if shows_user || n.is_empty() { n } else { "***" });
         Rendered {
             display_name: name,
             uri: self
@@ -561,7 +580,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     }
     let mut warnings = Vec::new();
 
-    let (display_name, open) = if s.starts_with('"') {
+    let (display_name, name_span, open) = if s.starts_with('"') {
         let (name, end) = parse_quoted_string(s).ok_or_else(|| {
             ParseError::malformed(Field::DisplayName, FaultCode::Unterminated, Some(lead))
         })?;
@@ -570,7 +589,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
                 - s[end..]
                     .trim_start()
                     .len());
-        (Some(name), Some(open))
+        (Some(name), Some(Span::new(lead..lead + end)), Some(open))
     } else if let Some(open) = s.find('<') {
         if let Some(i) = s[..open].find(|c: char| !is_token_char(c) && !c.is_ascii_whitespace()) {
             warnings.push(
@@ -578,9 +597,10 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
             );
         }
         let name = s[..open].trim();
-        (Some(name.to_string()), Some(open))
+        let name_span = (!name.is_empty()).then(|| Span::within(input, name));
+        (name_span.map(|_| name.to_string()), name_span, Some(open))
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let span = Some(Span::new(lead..lead + s.len()));
@@ -614,10 +634,11 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         );
         let uri = parse_uri(text, at, &mut warnings)?;
         let addr = SipHeaderAddr {
-            display_name: display_name.filter(|n| !n.is_empty()),
+            display_name,
             params: HeaderParams::read(input, params, &mut warnings),
             span,
             uri_span: Some(Span::new(at..at + text.len())),
+            display_name_span: name_span,
             ..SipHeaderAddr::unchecked(uri)
         };
         return Ok(Parsed::new(addr, warnings));
@@ -643,11 +664,12 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     };
     let params = HeaderParams::read(input, &tail[params_start..], &mut warnings);
     let addr = SipHeaderAddr {
-        display_name: display_name.filter(|n| !n.is_empty()),
+        display_name,
         uri,
         params,
         span,
         uri_span: Some(Span::new(lead + start..lead + end)),
+        display_name_span: name_span,
     };
     Ok(Parsed::new(addr, warnings))
 }
@@ -1005,8 +1027,7 @@ mod tests {
                 .with_display_name(name)
                 .unwrap();
             let reparsed = SipHeaderAddr::parse(&addr.to_string()).unwrap();
-            let expected = if name.is_empty() { None } else { Some(name) };
-            assert_eq!(reparsed.display_name(), expected, "{name:?}");
+            assert_eq!(reparsed.display_name(), Some(name), "{name:?}");
         }
     }
 

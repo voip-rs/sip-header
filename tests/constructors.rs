@@ -68,7 +68,7 @@ fn addr_build_validates() -> R {
     assert_eq!(
         addr.with_display_name("")?
             .display_name(),
-        None
+        Some("")
     );
     Ok(())
 }

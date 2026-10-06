@@ -84,9 +84,10 @@ fn single_row<T: HeaderParse + Located>(rows: Vec<&str>) -> Result<Parsed<T>, Pa
 }
 
 /// The one table of typed headers: each value type, how it reads rows
-/// (`own` where its `FromRows` is written by hand), and its headers.
+/// (`own` where its `FromRows` is written by hand), and its headers; `as
+/// Box` boxes a variant that would bloat [`TypedValue`].
 macro_rules! typed_headers {
-    ($($(#[$doc:meta])* $Variant:ident($Type:ty, $reader:ident) => [$($header:ident),+ $(,)?];)+) => {
+    ($($(#[$doc:meta])* $Variant:ident($Type:ty $(as $Box:ident)?, $reader:ident) => [$($header:ident),+ $(,)?];)+) => {
         $(
             typed_headers!(@from_rows $Type, $reader);
 
@@ -101,7 +102,7 @@ macro_rules! typed_headers {
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         #[non_exhaustive]
         pub enum TypedValue {
-            $($(#[$doc])* $Variant($Type),)+
+            $($(#[$doc])* $Variant(typed_headers!(@held $Type $(, $Box)?)),)+
         }
 
         /// `name` read as the [`TypedHeader`] type that holds it.
@@ -113,7 +114,7 @@ macro_rules! typed_headers {
                 if <$Type as TypedHeader>::HEADERS.contains(&name) {
                     return store
                         .parse_header::<$Type>(name)
-                        .map(|p| p.map(|p| p.map(TypedValue::$Variant)));
+                        .map(|p| p.map(|p| p.map(|v| TypedValue::$Variant(v.into()))));
                 }
             )+
             Err(wrong_header())
@@ -138,11 +139,13 @@ macro_rules! typed_headers {
         }
     };
     (@from_rows $Type:ty, own) => {};
+    (@held $Type:ty) => { $Type };
+    (@held $Type:ty, $Box:ident) => { $Box<$Type> };
 }
 
 typed_headers! {
     /// From, To and the other single-address headers.
-    Addr(SipHeaderAddr, single) => [
+    Addr(SipHeaderAddr as Box, single) => [
         From, To, ReferTo, ReferredBy, ReplyTo, PCalledPartyId, PServedUser, PDcsTracePartyId,
     ];
     /// Route, P-Asserted-Identity and the other address lists.
