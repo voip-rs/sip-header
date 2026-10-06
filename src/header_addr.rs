@@ -1126,6 +1126,56 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_quoted_display_name_is_kept() {
+        let input = r#""" <sip:alice@example.com>"#;
+        let addr = SipHeaderAddr::parse(input).unwrap();
+        assert_eq!(addr.display_name(), Some(""));
+        assert_eq!(addr.to_string(), input);
+        assert_ne!(
+            addr,
+            SipHeaderAddr::parse("<sip:alice@example.com>").unwrap()
+        );
+        assert_eq!(
+            addr.redacted(&HeaderRedaction::default())
+                .to_string(),
+            r#""" <sip:***@example.com>"#
+        );
+        let built = SipHeaderAddr::new(
+            addr.uri()
+                .clone(),
+        )
+        .unwrap()
+        .with_display_name("")
+        .unwrap();
+        assert_eq!(built, addr);
+    }
+
+    #[test]
+    fn without_display_name_removes_it_and_clears_spans() {
+        let addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>"#)
+            .unwrap()
+            .without_display_name();
+        assert_eq!(addr.display_name(), None);
+        assert_eq!(addr.to_string(), "<sip:alice@example.com>");
+        assert_eq!(
+            (addr.span(), addr.uri_span(), addr.display_name_span()),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn params_mut_clears_the_display_name_span() {
+        let mut addr = SipHeaderAddr::parse(r#""Alice" <sip:alice@example.com>"#).unwrap();
+        assert!(addr
+            .display_name_span()
+            .is_some());
+        addr.params_mut()
+            .set("lr", None)
+            .unwrap();
+        assert_eq!(addr.display_name_span(), None);
+    }
+
+    #[test]
     fn with_tag_clears_spans() {
         let addr = SipHeaderAddr::parse("<sip:alice@example.com>").unwrap();
         let addr = addr

@@ -443,3 +443,80 @@ fn a_list_built_from_rows_spans_like_the_accessor() {
         Some(Ok(rows[1]))
     );
 }
+
+#[test]
+fn a_display_name_span_covers_the_name_as_received() {
+    let row = r#""Say \"Hi\"" <sip:a@example.com>"#;
+    let addr = SipHeaderAddr::parse(row).unwrap();
+    assert_eq!(text(addr.display_name_span(), row), Ok(r#""Say \"Hi\"""#));
+
+    let row = " Alice  Smith  <sip:a@example.com>";
+    let addr = SipHeaderAddr::parse(row).unwrap();
+    assert_eq!(text(addr.display_name_span(), row), Ok("Alice  Smith"));
+
+    let row = r#""" <sip:a@example.com>"#;
+    let addr = SipHeaderAddr::parse(row).unwrap();
+    assert_eq!(addr.display_name(), Some(""));
+    assert_eq!(text(addr.display_name_span(), row), Ok(r#""""#));
+
+    for row in [
+        "<sip:a@example.com>",
+        "sip:a@example.com",
+        "  <sip:a@example.com",
+    ] {
+        let addr = SipHeaderAddr::parse(row).unwrap();
+        assert_eq!(
+            (addr.display_name(), addr.display_name_span()),
+            (None, None),
+            "{row:?}"
+        );
+    }
+
+    let row = "\"Ali\r\n ce\" <sip:al\0ice@example.com>";
+    let addr = SipHeaderAddr::parse(row).unwrap();
+    assert_eq!(addr.display_name(), Some("Ali ce"));
+    assert_eq!(text(addr.display_name_span(), row), Ok("\"Ali\r\n ce\""));
+}
+
+#[test]
+fn a_display_name_span_names_its_row() {
+    let rows = [
+        "<sip:a@example.com>",
+        "\"\" <sip:b@example.com>, C <sip:c@example.com>",
+    ];
+    let list = SipHeaderAddrList::from_rows(rows).unwrap();
+    let names: Vec<_> = list
+        .entries()
+        .iter()
+        .map(|a| {
+            (
+                a.display_name(),
+                a.display_name_span()
+                    .map(|s| s.slice(&rows)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            (None, None),
+            (Some(""), Some(Ok(r#""""#))),
+            (Some("C"), Some(Ok("C")))
+        ]
+    );
+    let contact = ContactList::parse(rows[1]).unwrap();
+    assert_eq!(
+        text(contact.addrs()[0].display_name_span(), rows[1]),
+        Ok(r#""""#)
+    );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn serde_keeps_an_empty_display_name() {
+    let addr = SipHeaderAddr::parse(r#""" <sip:a@example.com>"#).unwrap();
+    let back: SipHeaderAddr = serde_json::from_value(serde_json::to_value(&addr).unwrap()).unwrap();
+    assert_eq!(back.display_name(), Some(""));
+    assert_eq!(back.display_name_span(), None);
+    same_value(&addr, &back);
+}
