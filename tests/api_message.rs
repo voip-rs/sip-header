@@ -4,7 +4,8 @@
 use sip_header::{
     extract_all_headers, extract_header, extract_header_block, extract_request_uri,
     extract_request_uri_with_warnings, ExtractedHeaders, ParseError, Parsed, SipHeader,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipMessageHeaders, WarningCode,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipHeaderRowsExt, SipMessageHeaders,
+    WarningCode,
 };
 
 const MSG: &str = concat!(
@@ -91,8 +92,8 @@ fn skipped_lines_are_reported_by_position() {
 #[test]
 fn a_refused_first_line_is_reported() {
     for (msg, rows) in [
-        ("X-A/B: 1\r\nCall-ID: x\r\n", vec![("Call-ID", "x")]),
-        ("<sip:a@example.com>", vec![]),
+        ("no colon\r\nCall-ID: x\r\n", vec![("Call-ID", "x")]),
+        (": no name", vec![]),
     ] {
         let rows = SipHeaderFields::from(rows);
         for headers in [
@@ -105,6 +106,45 @@ fn a_refused_first_line_is_reported() {
             assert_eq!((all.headers, all.skipped), (rows.clone(), vec![0]));
         }
     }
+}
+
+#[test]
+fn a_spaced_name_is_a_row_every_reader_warns_about() -> Result<(), ParseError> {
+    let msg = concat!(
+        "INVITE sip:bob@example.com SIP/2.0\r\n",
+        "Type d'appel: 911\r\n",
+        " folded\r\n",
+        "Incident ID: TEST1\r\n",
+        "Call-ID: a@example.com\r\n",
+        "\r\n",
+    );
+    let headers = SipMessageHeaders::new(msg);
+    assert_eq!(headers.sip_header_rows_str("incident id")?, ["TEST1"]);
+    assert_eq!(headers.sip_header_rows_str("Type d'appel")?, ["911 folded"]);
+    assert_eq!(
+        headers.sip_header(SipHeader::CallId)?,
+        Some("a@example.com")
+    );
+    let warned: Vec<(WarningCode, Option<usize>)> = headers
+        .warnings()
+        .iter()
+        .map(|w| (w.code, w.position))
+        .collect();
+    assert_eq!(
+        warned,
+        [
+            (WarningCode::HeaderNameWhitespace, msg.find(" d'appel")),
+            (WarningCode::HeaderNameWhitespace, msg.find(" ID")),
+        ]
+    );
+    let block = SipMessageHeaders::from_header_block(msg);
+    assert_eq!(block.warnings(), headers.warnings());
+    assert_eq!(block.fields(), headers.fields());
+    for all in [extract_all_headers(msg), extract_header_block(msg)] {
+        assert_eq!(all.warnings, headers.warnings());
+        assert_eq!(&all.headers, headers.fields());
+    }
+    Ok(())
 }
 
 fn rows() -> SipHeaderFields<'static> {
@@ -310,10 +350,15 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
 
 #[test]
 fn results_destructure_and_build() -> Result<(), ParseError> {
-    let ExtractedHeaders { headers, skipped } = extract_all_headers(MSG);
+    let ExtractedHeaders {
+        headers,
+        skipped,
+        warnings,
+    } = extract_all_headers(MSG);
     let rebuilt = ExtractedHeaders {
         headers: headers.clone(),
         skipped: skipped.clone(),
+        warnings: warnings.clone(),
     };
     assert_eq!(rebuilt, extract_all_headers(MSG));
     let Some(Parsed { value, warnings }) = extract_request_uri_with_warnings(MSG)? else {

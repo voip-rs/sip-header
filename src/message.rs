@@ -623,7 +623,7 @@ impl SipHeaderExtract for SipHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::HeaderParse;
+    use crate::{HeaderParse, WarningKind};
 
     const SAMPLE_INVITE: &str = "\
 INVITE sip:bob@biloxi.example.com SIP/2.0\r\n\
@@ -1361,16 +1361,116 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         assert!(borrowed(values[1]));
     }
 
+    /// Each warning as `(code, position, text its span covers in msg)`.
+    fn name_warnings<'m>(msg: &'m str) -> Vec<(WarningCode, Option<usize>, &'m str)> {
+        SipMessageHeaders::new(msg)
+            .warnings()
+            .iter()
+            .map(|w| {
+                assert_eq!((w.field, w.kind), (Field::Name, WarningKind::Recovered));
+                let text = w
+                    .span()
+                    .unwrap()
+                    .get(msg)
+                    .unwrap();
+                (w.code, w.position, text)
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_name_that_is_not_a_token_is_skipped() {
-        let msg = "SIP/2.0 200 OK\r\nX Bad: a\r\nVia : SIP/2.0/UDP h\r\n\r\n";
+    fn a_name_that_is_not_a_token_is_a_warned_row() {
+        let msg = "SIP/2.0 200 OK\r\nX Bad: a\r\nRémi-Champ: b\r\nX/Bad: c\r\nVia : SIP/2.0/UDP h\r\n\r\n";
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
         let headers = SipMessageHeaders::new(msg);
-        assert_eq!(headers.skipped(), [16]);
+        assert!(headers
+            .skipped()
+            .is_empty());
         assert_eq!(
             headers
                 .iter()
                 .collect::<Vec<_>>(),
-            [("Via", "SIP/2.0/UDP h")]
+            [
+                ("X Bad", "a"),
+                ("Rémi-Champ", "b"),
+                ("X/Bad", "c"),
+                ("Via", "SIP/2.0/UDP h")
+            ]
+        );
+        assert_eq!(
+            name_warnings(msg),
+            [
+                (
+                    WarningCode::HeaderNameWhitespace,
+                    Some(at("X Bad") + 1),
+                    "X Bad"
+                ),
+                (WarningCode::NonAscii, Some(at("Rémi") + 1), "Rémi-Champ"),
+                (WarningCode::InvalidToken, Some(at("X/Bad") + 1), "X/Bad"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_carries_one_warning_per_breach_class() {
+        let msg = "SIP/2.0 200 OK\r\nRémi Champ/x  y(z): 1\r\n\r\n";
+        let name = "Rémi Champ/x  y(z)";
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
+        assert_eq!(
+            name_warnings(msg),
+            [
+                (WarningCode::HeaderNameWhitespace, Some(at(" Champ")), name),
+                (WarningCode::NonAscii, Some(at("é")), name),
+                (WarningCode::InvalidToken, Some(at("/x")), name),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_that_cannot_be_bounded_is_skipped() {
+        let msg = "SIP/2.0 200 OK\r\n\
+                   no colon\r\n\
+                   : no name\r\n\
+                   X\u{1}Bad: a\r\n\
+                   X\u{7f}Bad: a\r\n\
+                   INVITE sip:bob@example.com SIP/2.0\r\n\
+                   \x20orphan\r\n\
+                   Spaced Name: a\r\n\
+                   \x20folded\r\n\
+                   \r\n";
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(
+            headers.skipped(),
+            [
+                at("no colon"),
+                at(": no name"),
+                at("X\u{1}"),
+                at("X\u{7f}"),
+                at("INVITE"),
+                at(" orphan")
+            ]
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .collect::<Vec<_>>(),
+            [("Spaced Name", "a folded")]
+        );
+        assert_eq!(
+            headers
+                .warnings()
+                .len(),
+            1
         );
     }
 
