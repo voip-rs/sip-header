@@ -114,8 +114,9 @@ between the two lists and changes only its `registry()` answer.
 
 Not every `SipHeader` variant needs a typed parser on `SipHeaderLookup`.
 Only headers with structured values (name-addr, comma-separated entries,
-etc.) get typed accessor methods. Simple string headers are accessed via
-`sip_header(SipHeader::Foo)` returning `Result<Option<&str>, _>`.
+etc.) or a number a caller acts on (Content-Length) get typed accessor
+methods. Free-text headers are accessed via `sip_header(SipHeader::Foo)`
+returning `Result<Option<&str>, _>`.
 
 ## API Boundary Rules
 

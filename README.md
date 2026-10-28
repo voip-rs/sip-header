@@ -159,9 +159,17 @@ assert_eq!(SipHeader::parse_name("v"), Ok(SipHeader::Via));
 
 ## Raw messages
 
-`extract_header()` matches both forms of a name: searching for `"From"` also matches `f:` lines, and vice versa.
+The `message` feature reads the text of one SIP message without a SIP stack: enough to log, inspect, test or route on headers.
 
-`SipMessageHeaders` reads a raw message's header block into rows in wire order, unfolded per RFC 3261 §7.3.1, and is a `SipHeaderRows` store, so every typed accessor reads it. Names stay as sent (compact forms are not expanded), and the byte offset of every line it could not read is reported. `extract_all_headers()` returns the same rows as owned strings:
+- `SipMessageHeaders` reads the header block into rows in wire order, unfolded per RFC 3261 §7.3.1, and is a `SipHeaderRows` store, so every typed accessor reads it. Names stay as sent (compact forms are not expanded); a name outside `token` stays a row and is reported in `warnings()`, and every line that is not a row is reported by offset in `skipped()`.
+- `extract_all_headers()` returns the same rows as owned strings, and `extract_header()` matches both forms of a name: searching for `"From"` also matches `f:` lines, and vice versa.
+- `extract_request_line()` splits the request line and parses its Request-URI; `extract_body()` returns what follows the blank line.
+
+It is not a SIP stack, and stops where the transport takes over:
+
+- **No Content-Length enforcement.** RFC 3261 §18.3 makes Content-Length mandatory on stream transports, where it ends the message, and optional on datagrams, where a body longer than it is truncated and a shorter one discards the message. Which rule applies depends on a transport this crate never sees, so `extract_body()` returns everything after the blank line; read the declared length with `content_length()` and apply your transport's rule.
+- **No framing.** It reads one message you hand it; splitting a TCP stream or a capture into messages is the caller's. [`examples/lint-message.rs`](examples/lint-message.rs) shows one caller doing it, reporting every byte it cannot place.
+- **No transactions, dialogs or body parsing.**
 
 ```rust
 use sip_header::{extract_all_headers, SipHeaderLookup, SipMessageHeaders};
@@ -229,7 +237,7 @@ Every type is at the crate root. The public modules carry what the root does not
 
 | Feature | Dependencies | Description |
 |---|---|---|
-| `message` | — | Raw SIP message extraction (`extract_header`, `extract_body`, `SipMessageHeaders`, …); on by default |
+| `message` | — | Raw SIP message reading (`SipMessageHeaders`, `extract_header`, `extract_body`, …), not a SIP stack; see [Raw messages](#raw-messages). On by default; `default-features = false` drops it for a smaller, faster build |
 | `serde` | serde | `SipHeader` as its canonical wire name; every header value type as its parts, read back through the checks a parse makes (Call-ID, a Reason cause and a wildcard Contact as strings); `serde_str` adapters for the wire text. Warnings, spans, errors, `QValue` and the catalog's holders have no serde |
 | `conference-info` | quick-xml, serde | RFC 4575 XML parsing |
 

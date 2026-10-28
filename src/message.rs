@@ -12,6 +12,13 @@
 //!
 //! Gated behind the `message` feature (enabled by default).
 //!
+//! The module reads the text of one message and stops at the header/body
+//! split. Framing belongs to whoever owns the transport: splitting a stream
+//! into messages, and the Content-Length rule, which RFC 3261 §18.3 makes
+//! a message boundary on streams and a truncate-or-discard check on
+//! datagrams. The body is therefore everything after the blank line, never
+//! cut to the declared length.
+//!
 //! The header readers and [`extract_body`] split at one boundary, the first
 //! empty line after `\r` stripping, so a bare-`\n` message this crate
 //! accepts loses neither its rows nor its body to a caller's own
