@@ -12,11 +12,11 @@ use sip_header::{
     Fault, FaultCode, Field, HeaderEquivalence, HeaderParams, HeaderParse, HeaderRedaction,
     HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact,
     RequestLine, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
-    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipGeolocation,
-    SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderFields,
-    SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason, SipReasonCause,
-    SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia,
-    SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
+    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipContentLength,
+    SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason,
+    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
+    SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
     UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
@@ -1781,6 +1781,8 @@ fn a_bracket_or_comma_inside_a_token_is_dropped() {
 const MORE_BASES: &[(&str, &str)] = &[
     ("call-id", "a84b4c76e66710@example.com"),
     ("call-id", "f81d4fae-7dec-11d0-a765@[2001:db8::1]"),
+    ("content-length", "0"),
+    ("content-length", "142"),
     ("tokens", "INVITE, 100rel, timer"),
     ("tokens", "a84b4c76e66710@example.com, en-ca"),
 ];
@@ -2062,6 +2064,7 @@ every_accessor! {
         sip_from From &["addr"], sip_to To &["addr"],
         refer_to ReferTo &["addr"], referred_by ReferredBy &["addr"];
     single::<SipCallId> => call_id CallId &["call-id"];
+    single::<SipContentLength> => content_length ContentLength &["content-length"];
     single::<SipReplaces> => replaces Replaces &["replaces"];
     single::<SipJoin> => join Join &["join"];
     single::<SipTargetDialog> => target_dialog TargetDialog &["target-dialog"];

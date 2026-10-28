@@ -197,8 +197,8 @@ mod serde_round_trip {
     use serde::Serialize;
     use serde_json::json;
     use sip_header::{
-        HeaderParse, ListParse, SipCallId, SipHeader, SipHeaderAddrList, SipJoin, SipReasonCause,
-        SipReasonList, TokenList, TypedHeader,
+        HeaderParse, ListParse, SipCallId, SipContentLength, SipHeader, SipHeaderAddrList, SipJoin,
+        SipReasonCause, SipReasonList, TokenList, TypedHeader,
     };
 
     fn token_list() -> TokenList {
@@ -667,6 +667,7 @@ mod serde_round_trip {
         )?));
         found.extend(leaks(&HistoryInfo::parse("<sip:a@example.com>;index=1")?));
         found.extend(leaks(&SipCallId::new("a@example.com")?));
+        found.extend(leaks(&SipContentLength::from(142)));
         found.extend(leaks(&SipReasonCause::new("16")?));
         found.extend(leaks(&DialogFraming::Header));
         found.extend(leaks(&DialogFraming::UriHeader));

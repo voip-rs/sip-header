@@ -1,9 +1,9 @@
 //! Typed accessors: one return shape, the generic parse, token lists.
 
 use sip_header::{
-    ContactList, FaultCode, Field, ParseError, SipAuthValue, SipCallId, SipHeader, SipHeaderAddr,
-    SipHeaderAddrList, SipHeaderLookup, SipHeaderRows, SipReasonList, SipVia, TokenList,
-    TypedHeader, UriInfo, WarningCode,
+    ContactList, FaultCode, Field, ParseError, SipAuthValue, SipCallId, SipContentLength,
+    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRows, SipReasonList,
+    SipVia, TokenList, TypedHeader, UriInfo, WarningCode,
 };
 use sip_header_catalog::RowError;
 
@@ -247,11 +247,14 @@ fn a_single_valued_header_twice_is_an_error() {
         ("f", "<sip:b@example.com>"),
         ("Call-ID", "a@example.com"),
         ("i", "b@example.com"),
+        ("Content-Length", "1"),
+        ("l", "2"),
     ]);
     let duplicate =
         ParseError::Malformed(sip_header::Fault::new(Field::Value, FaultCode::Duplicate));
     assert_eq!(m.sip_from(), Err(duplicate.clone()));
-    assert_eq!(m.call_id(), Err(duplicate));
+    assert_eq!(m.call_id(), Err(duplicate.clone()));
+    assert_eq!(m.content_length(), Err(duplicate));
 }
 
 #[test]
@@ -268,6 +271,7 @@ fn every_type_holds_headers_of_one_row_policy() {
     }
     single::<SipHeaderAddr>();
     single::<SipCallId>();
+    single::<SipContentLength>();
     single::<sip_header::SipReplaces>();
     single::<sip_header::SipJoin>();
     single::<sip_header::SipTargetDialog>();

@@ -1,8 +1,9 @@
 //! The address list, URI-header parsers, strict entries and the owned Call-ID.
 
 use sip_header::{
-    FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipHeaderAddrList, SipReason,
-    SipReasonList, SipReplaces, SipTargetDialog, SipVia, UriHeaderParse, WarningCode, WarningKind,
+    FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipContentLength,
+    SipHeaderAddrList, SipReason, SipReasonList, SipReplaces, SipTargetDialog, SipVia,
+    UriHeaderParse, WarningCode, WarningKind,
 };
 
 type R = Result<(), ParseError>;
@@ -158,6 +159,99 @@ fn call_id_serde_is_its_text() {
     assert_eq!(json, r#""abc@example.com""#);
     assert_eq!(serde_json::from_str::<SipCallId>(&json).unwrap(), id);
     assert!(serde_json::from_str::<SipCallId>(r#""a;b""#).is_err());
+}
+
+#[test]
+fn content_length_reads_digits_and_nothing_else_silently() -> R {
+    assert_eq!(SipContentLength::parse(" 318 ")?.get(), 318);
+    assert_eq!(SipContentLength::parse_strict("318")?.to_string(), "318");
+    let zeros = SipContentLength::parse_with_warnings("00318")?;
+    assert_eq!(
+        zeros
+            .value
+            .get(),
+        318
+    );
+    assert!(zeros
+        .warnings
+        .is_empty());
+    assert!(SipContentLength::parse_strict("00318").is_ok());
+    assert_eq!(SipContentLength::from(0).to_string(), "0");
+    Ok(())
+}
+
+#[test]
+fn content_length_keeps_the_digits_and_reports_the_dropped_text() -> R {
+    let raw = "318 bytes";
+    let parsed = SipContentLength::parse_with_warnings(raw)?;
+    assert_eq!(
+        parsed
+            .value
+            .get(),
+        318
+    );
+    assert_eq!(SipContentLength::parse(raw)?, SipContentLength::from(318));
+    assert_eq!(
+        parsed
+            .warnings
+            .len(),
+        1
+    );
+    let warning = &parsed.warnings[0];
+    assert_eq!(warning.field, Field::Value);
+    assert_eq!(warning.code, WarningCode::TrailingContent);
+    assert_eq!(warning.position, Some(3));
+    assert_eq!(
+        warning
+            .span()
+            .map(|s| s.get(raw)),
+        Some(Ok(" bytes"))
+    );
+    assert!(SipContentLength::parse_strict(raw).is_err());
+    Ok(())
+}
+
+#[test]
+fn content_length_without_a_usable_number_is_an_error() {
+    let overflow = "9".repeat(40);
+    for raw in ["abc", "-1", "+5", overflow.as_str()] {
+        for result in [
+            SipContentLength::parse(raw),
+            SipContentLength::parse_strict(raw),
+        ] {
+            match result {
+                Err(ParseError::Malformed(fault)) => {
+                    assert_eq!(fault.code, FaultCode::InvalidNumber, "{raw:?}");
+                    assert_eq!(fault.field, Field::Value, "{raw:?}");
+                }
+                other => panic!("{raw:?}: {other:?}"),
+            }
+        }
+    }
+    for raw in ["", "  "] {
+        assert_eq!(
+            SipContentLength::parse(raw),
+            Err(ParseError::Malformed(sip_header::Fault::new(
+                Field::Value,
+                FaultCode::Empty
+            ))),
+            "{raw:?}"
+        );
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn content_length_serde_is_a_number() {
+    let length = SipContentLength::from(318);
+    let json = serde_json::to_string(&length).unwrap();
+    assert_eq!(json, "318");
+    assert_eq!(
+        serde_json::from_str::<SipContentLength>(&json).unwrap(),
+        length
+    );
+    assert!(serde_json::from_str::<SipContentLength>(r#""318""#).is_err());
+    assert!(serde_json::from_str::<SipContentLength>("-1").is_err());
 }
 
 fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
