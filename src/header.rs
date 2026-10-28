@@ -8,6 +8,7 @@ use crate::accept_language::SipAcceptLanguage;
 use crate::auth::SipAuthValue;
 use crate::call_id::SipCallId;
 use crate::contact::ContactList;
+use crate::content_length::SipContentLength;
 use crate::diagnostic::{Field, Parsed};
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
@@ -177,6 +178,8 @@ typed_headers! {
     Reason(SipReasonList, list) => [Reason];
     /// Call-ID.
     CallId(SipCallId, single) => [CallId];
+    /// Content-Length.
+    ContentLength(SipContentLength, single) => [ContentLength];
     /// Replaces.
     Replaces(SipReplaces, single) => [Replaces];
     /// Join.
@@ -199,6 +202,8 @@ fn wrong_header() -> ParseError {
 }
 
 impl Located for SipCallId {}
+
+impl Located for SipContentLength {}
 
 /// One value per row, as the authentication headers carry them (RFC 3261
 /// §7.3.1); a warning's or error's entry index is the row, and a blank row
@@ -347,6 +352,11 @@ pub trait SipHeaderLookup: SipHeaderRows {
     /// `Call-ID` (RFC 3261 §20.8).
     fn call_id(&self) -> Result<Option<SipCallId>, ParseError> {
         lenient(self.parse_header(SipHeader::CallId))
+    }
+
+    /// `Content-Length` (RFC 3261 §20.14).
+    fn content_length(&self) -> Result<Option<SipContentLength>, ParseError> {
+        lenient(self.parse_header(SipHeader::ContentLength))
     }
 
     /// `Refer-To` (RFC 3515 §2.1).

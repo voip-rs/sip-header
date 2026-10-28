@@ -11,3 +11,123 @@
 //! Digits followed by other text keep the digits and drop the rest under
 //! `TrailingContent`; text that starts with no digit, or is empty, is an
 //! error. Leading zeros are `1*DIGIT` and raise nothing.
+
+use std::fmt;
+
+use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
+use crate::error::{FaultCode, ParseError};
+use crate::span::Span;
+use crate::traits::{sealed, HeaderParse};
+
+/// A `Content-Length` value: the length the sender declared, in bytes.
+///
+/// Parsed through [`HeaderParse`]. The length is a `usize`, so a value that
+/// does not fit the platform's is an error; comparing it with a body is the
+/// caller's (RFC 3261 section 18.3).
+///
+/// ```
+/// use sip_header::{HeaderParse, SipContentLength};
+///
+/// let length = SipContentLength::parse("318")?;
+/// assert_eq!(length.get(), 318);
+/// assert_eq!(length.to_string(), "318");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SipContentLength(usize);
+
+impl SipContentLength {
+    /// The declared length in bytes.
+    pub fn get(&self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for SipContentLength {
+    fn from(length: usize) -> Self {
+        SipContentLength(length)
+    }
+}
+
+impl fmt::Display for SipContentLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0
+            .fmt(f)
+    }
+}
+
+impl sealed::Sealed for SipContentLength {}
+
+impl HeaderParse for SipContentLength {
+    /// Parse leniently; whitespace around the value is the header's `LWS`.
+    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        crate::scrub::parse_scrubbed(input, |s| {
+            let trimmed = s.trim();
+            let start = crate::offset_in(s, trimmed);
+            if trimmed.is_empty() {
+                return Err(ParseError::empty(Field::Value));
+            }
+            let digits = trimmed
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+            let invalid =
+                || ParseError::malformed(Field::Value, FaultCode::InvalidNumber, Some(start));
+            let length = trimmed[..digits]
+                .parse::<usize>()
+                .map_err(|_| invalid())?;
+            let mut warnings = Vec::new();
+            if digits < trimmed.len() {
+                warnings.push(
+                    ParseWarning::new(Field::Value, WarningCode::TrailingContent)
+                        .at(start + digits)
+                        .covering(Span::new(start + digits..start + trimmed.len())),
+                );
+            }
+            Ok(Parsed::new(SipContentLength(length), warnings))
+        })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for SipContentLength {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(self.0 as u64)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SipContentLength {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::serde_parts::leaf(
+            deserializer,
+            "Content-Length",
+            "a non-negative integer",
+            <usize as serde::Deserialize>::deserialize,
+        )
+        .map(SipContentLength)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warning_positions_count_the_leading_whitespace() {
+        let parsed = SipContentLength::parse_with_warnings("  12 b").unwrap();
+        assert_eq!(parsed.warnings[0].position, Some(4));
+    }
+
+    #[test]
+    fn a_missing_digit_points_at_the_value() {
+        assert_eq!(
+            SipContentLength::parse(" x1"),
+            Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::InvalidNumber,
+                Some(1)
+            ))
+        );
+    }
+}

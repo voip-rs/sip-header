@@ -36,8 +36,8 @@
 //! - [`SipHeaderAddr`], [`SipHeaderAddrList`]: RFC 3261 `name-addr` with
 //!   header parameters (From, To, Refer-To, Route, P-Asserted-Identity, …)
 //! - [`ContactList`]: RFC 3261 Contact
-//! - [`SipVia`], [`SipWarning`], [`SipCallId`], [`SipAccept`],
-//!   [`SipAcceptEncoding`], [`SipAcceptLanguage`]: RFC 3261
+//! - [`SipVia`], [`SipWarning`], [`SipCallId`], [`SipContentLength`],
+//!   [`SipAccept`], [`SipAcceptEncoding`], [`SipAcceptLanguage`]: RFC 3261
 //! - [`SipAuthValue`]: Authorization, WWW-Authenticate and their proxy kin
 //! - [`UriInfo`]: Call-Info, Alert-Info, Error-Info
 //! - [`HistoryInfo`]: RFC 7044; [`SipReason`], [`SipReasonList`]: RFC 3326
@@ -89,6 +89,7 @@ mod check;
 #[cfg(feature = "conference-info")]
 pub mod conference_info;
 mod contact;
+mod content_length;
 mod diagnostic;
 mod equivalence;
 mod error;
@@ -120,6 +121,7 @@ pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
 pub use auth::SipAuthValue;
 pub use call_id::SipCallId;
 pub use contact::ContactList;
+pub use content_length::SipContentLength;
 pub use diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 pub use dialog_id::{DialogFraming, DialogKind};
 pub use equivalence::HeaderEquivalence;

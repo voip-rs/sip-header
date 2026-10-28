@@ -74,9 +74,10 @@ fn split_at_blank_line(message: &str) -> (&str, Option<usize>) {
 /// Uses the same boundary rule as [`SipMessageHeaders`]: the first empty
 /// line after `\r` stripping, so bare-`\n` messages behave the same as CRLF
 /// ones. The body is returned verbatim — no trimming, unfolding, or
-/// decoding — and `Content-Length` is not consulted; the body is the rest
-/// of the given text. Returns `None` when the message has no blank line or
-/// nothing follows it.
+/// decoding — and `Content-Length` is not consulted: read it with
+/// [`content_length`][crate::SipHeaderLookup::content_length] and apply
+/// the transport's rule. The body is the rest of the given text. Returns
+/// `None` when the message has no blank line or nothing follows it.
 ///
 /// # Examples
 ///

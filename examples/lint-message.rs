@@ -166,8 +166,8 @@ fn message_end(text: &str, start: usize) -> (usize, Option<String>) {
     let fallback = next_start(text, body).unwrap_or(text.len());
     let present = fallback - body;
     let headers = SipMessageHeaders::new(&text[start..body]);
-    let declared = match headers.sip_header(SipHeader::ContentLength) {
-        Ok(Some(value)) => value,
+    let length = match headers.content_length() {
+        Ok(Some(value)) => value.get(),
         Ok(None)
             if text[body..fallback]
                 .trim()
@@ -181,13 +181,7 @@ fn message_end(text: &str, start: usize) -> (usize, Option<String>) {
         }
         Err(e) => return (fallback, Some(format!("Content-Length: {}", chain(&e)))),
     };
-    let Ok(length) = declared.parse::<usize>() else {
-        return (
-            fallback,
-            Some(format!("Content-Length {declared:?} is not a number")),
-        );
-    };
-    let end = body + length;
+    let end = body.saturating_add(length);
     if text
         .get(..end)
         .is_some_and(|framed| end == text.len() || framed.ends_with('\n'))
@@ -557,6 +551,7 @@ fn rebuilt(value: &TypedValue, redact: Option<&HeaderRedaction>) -> Vec<String> 
         TypedValue::AcceptLanguage(v) => v.to_string(),
         TypedValue::Reason(v) => v.to_string(),
         TypedValue::CallId(v) => v.to_string(),
+        TypedValue::ContentLength(v) => v.to_string(),
         TypedValue::Replaces(v) => v.to_string(),
         TypedValue::Join(v) => v.to_string(),
         TypedValue::TargetDialog(v) => v.to_string(),
