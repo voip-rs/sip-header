@@ -32,6 +32,11 @@ message = []
 serde = ["dep:serde", "sip-header-catalog/serde", "sip-uri/serde"]
 conference-info = ["dep:quick-xml", "serde"]
 
+[[example]]
+name = "lint-message"
+required-features = ["message"]
+test = true
+
 [dependencies]
 sip-header-catalog = { version = "1.0.0-rc.1", path = "crates/sip-header-catalog" }
 sip-uri.workspace = true
