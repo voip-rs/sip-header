@@ -100,9 +100,12 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// reads it. The rows a parsed value's positions point into are these
 /// trimmed, unfolded rows, not the lines of the message.
 ///
-/// A line that is neither a header nor a continuation of one is skipped,
-/// and its byte offset reported by [`skipped`](Self::skipped), unless it is
-/// the request or status line [`new`](Self::new) exempts.
+/// A name outside `token` stays a row, each breach in it reported by
+/// [`warnings`](Self::warnings). A line that is neither a header nor a
+/// continuation of one is skipped, and its byte offset reported by
+/// [`skipped`](Self::skipped), unless it is the request or status line
+/// [`new`](Self::new) exempts. A message read with both empty is
+/// conformant as far as the rows go.
 ///
 /// The rows are a [`SipHeaderFields`], which [`fields`](Self::fields) and
 /// [`into_fields`](Self::into_fields) hand out.
@@ -124,6 +127,7 @@ pub fn extract_body(message: &str) -> Option<&str> {
 pub struct SipMessageHeaders<'a> {
     fields: SipHeaderFields<'a>,
     skipped: Vec<usize>,
+    warnings: Vec<ParseWarning>,
 }
 
 impl<'a> SipMessageHeaders<'a> {
@@ -143,6 +147,7 @@ impl<'a> SipMessageHeaders<'a> {
         let (block, _) = split_at_blank_line(message);
         let mut fields = SipHeaderFields::new();
         let mut skipped = Vec::new();
+        let mut warnings = Vec::new();
         // The last header row, still open to continuation lines.
         let mut open: Option<(&'a str, Cow<'a, str>)> = None;
         let mut offset = 0;
@@ -169,15 +174,22 @@ impl<'a> SipMessageHeaders<'a> {
                 fields.push(name, value);
             }
             match header_line(line) {
-                Some((name, value)) => open = Some((name, Cow::Borrowed(value))),
-                None if i == 0 && start_line && is_start_line(line) => {}
-                None => skipped.push(at),
+                Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
+                    warnings.extend(name_warnings(name, at));
+                    open = Some((name, Cow::Borrowed(value)));
+                }
+                _ if i == 0 && start_line && is_start_line(line) => {}
+                _ => skipped.push(at),
             }
         }
         if let Some((name, value)) = open {
             fields.push(name, value);
         }
-        SipMessageHeaders { fields, skipped }
+        SipMessageHeaders {
+            fields,
+            skipped,
+            warnings,
+        }
     }
 
     /// Every row as `(name as sent, value)`, in wire order.
@@ -203,17 +215,38 @@ impl<'a> SipMessageHeaders<'a> {
         &self.fields
     }
 
-    /// The rows, without the skipped offsets.
+    /// The rows, without the skipped offsets and warnings.
     pub fn into_fields(self) -> SipHeaderFields<'a> {
         self.fields
     }
 
     /// Byte offsets into the message of the lines that were skipped, in
-    /// order: a line without a `:` after a `token` name (RFC 3261 §7.3
-    /// `header-name = token`) other than a start line [`new`](Self::new)
-    /// exempts, or a continuation with no header above it.
+    /// order: a line with no `:`, with an empty name or a control character
+    /// in it, or shaped as a start line other than the one
+    /// [`new`](Self::new) exempts, or a continuation with no header above it.
     pub fn skipped(&self) -> &[usize] {
         &self.skipped
+    }
+
+    /// The breaches of RFC 3261 §7.3.1 `header-name = token` in the rows'
+    /// names, in line order: per row, at most one each of
+    /// [`WarningCode::HeaderNameWhitespace`], [`WarningCode::NonAscii`] and
+    /// [`WarningCode::InvalidToken`], in that order, on [`Field::Name`].
+    /// Positions are byte offsets into the message, at the first offending
+    /// character; the span covers the name.
+    ///
+    /// ```
+    /// use sip_header::{SipMessageHeaders, WarningCode};
+    ///
+    /// let msg = "SIP/2.0 200 OK\r\nIncident ID: TEST1\r\n\r\n";
+    /// let headers = SipMessageHeaders::new(msg);
+    /// assert_eq!(headers.iter().next(), Some(("Incident ID", "TEST1")));
+    /// let w = &headers.warnings()[0];
+    /// assert_eq!(w.code, WarningCode::HeaderNameWhitespace);
+    /// assert_eq!(w.span().unwrap().get(msg), Ok("Incident ID"));
+    /// ```
+    pub fn warnings(&self) -> &[ParseWarning] {
+        &self.warnings
     }
 }
 
@@ -224,11 +257,34 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
     }
 }
 
-/// `name: value` with a `token` name, SWS before the colon allowed.
+/// `name: value` with a bounded name: not empty and free of control
+/// characters but HTAB, SWS before the colon allowed.
 fn header_line(line: &str) -> Option<(&str, &str)> {
     let (name, value) = line.split_once(':')?;
     let name = name.trim_end_matches([' ', '\t']);
-    crate::is_token(name).then(|| (name, value.trim()))
+    let bounded = !name.is_empty() && !name.contains(|c: char| c.is_control() && c != '\t');
+    bounded.then(|| (name, value.trim()))
+}
+
+/// One warning per breach class in `name`, which starts at byte `at`.
+fn name_warnings(name: &str, at: usize) -> impl Iterator<Item = ParseWarning> + '_ {
+    let span = Span::new(at..at + name.len());
+    [
+        (WarningCode::HeaderNameWhitespace, name.find([' ', '\t'])),
+        (WarningCode::NonAscii, name.find(|c: char| !c.is_ascii())),
+        (
+            WarningCode::InvalidToken,
+            name.find(|c: char| c.is_ascii() && !crate::is_token_char(c) && c != ' ' && c != '\t'),
+        ),
+    ]
+    .into_iter()
+    .filter_map(move |(code, found)| {
+        found.map(|i| {
+            ParseWarning::new(Field::Name, code)
+                .at(at + i)
+                .covering(span)
+        })
+    })
 }
 
 /// Unfold a continuation line into `value`, replacing the folding LWS with
@@ -265,7 +321,8 @@ pub fn extract_header(message: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every header row of a message, owned, with the lines that were skipped.
+/// Every header row of a message, owned, with the lines that were skipped
+/// and the breaches in the rows' names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractedHeaders {
     /// `(name as sent, value)` in wire order; compact names stay compact.
@@ -273,6 +330,8 @@ pub struct ExtractedHeaders {
     /// Byte offsets of the skipped lines, as
     /// [`SipMessageHeaders::skipped`] reports them.
     pub skipped: Vec<usize>,
+    /// The name warnings [`SipMessageHeaders::warnings`] reports.
+    pub warnings: Vec<ParseWarning>,
 }
 
 /// Extract all headers from a raw SIP message as owned name-value pairs,
@@ -300,7 +359,7 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 /// ```
 /// use sip_header::extract_header_block;
 ///
-/// let all = extract_header_block("X-A/B: 1\r\nCall-ID: a@example.com\r\n");
+/// let all = extract_header_block("no colon\r\nCall-ID: a@example.com\r\n");
 /// assert_eq!(all.headers.iter().next(), Some(("Call-ID", "a@example.com")));
 /// assert_eq!(all.skipped, [0]);
 /// ```
@@ -309,10 +368,15 @@ pub fn extract_header_block(block: &str) -> ExtractedHeaders {
 }
 
 fn owned(headers: SipMessageHeaders<'_>) -> ExtractedHeaders {
-    let SipMessageHeaders { fields, skipped } = headers;
+    let SipMessageHeaders {
+        fields,
+        skipped,
+        warnings,
+    } = headers;
     ExtractedHeaders {
         headers: fields.into_owned(),
         skipped,
+        warnings,
     }
 }
 
@@ -1362,7 +1426,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     }
 
     /// Each warning as `(code, position, text its span covers in msg)`.
-    fn name_warnings<'m>(msg: &'m str) -> Vec<(WarningCode, Option<usize>, &'m str)> {
+    fn name_warnings(msg: &str) -> Vec<(WarningCode, Option<usize>, &str)> {
         SipMessageHeaders::new(msg)
             .warnings()
             .iter()

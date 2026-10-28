@@ -298,6 +298,8 @@ pub enum Field {
     Reference,
     /// The header value as a whole.
     Value,
+    /// A `header-name`.
+    Name,
 }
 
 impl fmt::Display for Field {
@@ -327,6 +329,7 @@ impl fmt::Display for Field {
             Field::Qvalue => "qvalue",
             Field::Reference => "location",
             Field::Value => "value",
+            Field::Name => "header-name",
         };
         f.write_str(name)
     }
@@ -413,6 +416,12 @@ pub enum WarningCode {
     /// A Via `sent-by` port outside RFC 3261 §25.1 `port = 1*DIGIT` or above
     /// the highest port; dropped.
     InvalidPort,
+    /// SP or HTAB inside a header name, which RFC 3261 §7.3.1 `header-name
+    /// = token` (§25.1) never admits; kept as sent.
+    HeaderNameWhitespace,
+    /// A non-ASCII character where RFC 3261 §25.1 `token` admits only
+    /// ASCII, as in a header name (§7.3.1); kept as sent.
+    NonAscii,
 }
 
 impl WarningCode {
@@ -461,6 +470,8 @@ impl WarningCode {
             WarningCode::RequestLineWhitespace => "request-line-whitespace",
             WarningCode::InvalidRport => "invalid-rport",
             WarningCode::InvalidPort => "invalid-port",
+            WarningCode::HeaderNameWhitespace => "header-name-whitespace",
+            WarningCode::NonAscii => "non-ascii",
         }
     }
 }
@@ -523,6 +534,8 @@ mod tests {
             WarningCode::RequestLineWhitespace,
             WarningCode::InvalidRport,
             WarningCode::InvalidPort,
+            WarningCode::HeaderNameWhitespace,
+            WarningCode::NonAscii,
         ];
         for code in &all {
             match code {
@@ -549,7 +562,9 @@ mod tests {
                 | WarningCode::TrailingComma
                 | WarningCode::RequestLineWhitespace
                 | WarningCode::InvalidRport
-                | WarningCode::InvalidPort => {}
+                | WarningCode::InvalidPort
+                | WarningCode::HeaderNameWhitespace
+                | WarningCode::NonAscii => {}
             }
         }
         all
