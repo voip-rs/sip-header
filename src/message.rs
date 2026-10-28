@@ -11,6 +11,24 @@
 //!   (RFC 3261 §7.4)
 //!
 //! Gated behind the `message` feature (enabled by default).
+//!
+//! The header readers and [`extract_body`] split at one boundary, the first
+//! empty line after `\r` stripping, so a bare-`\n` message this crate
+//! accepts loses neither its rows nor its body to a caller's own
+//! `"\r\n\r\n"` split. The splitter stays private: exposing it later is
+//! non-breaking, and exposing it now would freeze header-block slice
+//! semantics nothing has needed.
+//!
+//! A line with a `:` is a row when its name is bounded: not empty, free of
+//! control characters, and the line not shaped as a start line. A name
+//! outside RFC 3261 §7.3.1 `header-name = token` is kept as sent, since
+//! refusing it would turn one bad byte into a missing header, under one
+//! warning per breach class (inner whitespace, non-ASCII, any other
+//! non-token character), each raised once per row. The classes are separate
+//! codes so the caller chooses which it accepts, UTF-8 names but not
+//! separators for instance. Every other line is reported by offset in
+//! `skipped`; only a first line shaped as a request or status line is
+//! exempt, and only when reading a whole message.
 
 use std::borrow::Cow;
 

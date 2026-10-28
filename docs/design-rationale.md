@@ -26,10 +26,6 @@ Setting a key that exists replaces its value in place and drops its later repeat
 
 `quoted-pair` escaping and unescaping for Warning, auth params and display-name output share the `lib.rs` helpers. The name-addr parser's quoted-string reader is the exception: it tracks the position where the quoted string ends so parsing can continue after it, and bolting that onto the shared unescaper would give every other caller a return value it has no use for.
 
-## Body extraction shares the header boundary
-
-Callers re-deriving the header/body boundary as `split_once("\r\n\r\n")` silently lose the body on bare-`\n` messages this crate accepts, so `extract_body` and the header extractors share one boundary helper. The splitter stays private: a public one would freeze header-block slice semantics we haven't needed to define, and exposing it later is non-breaking. Every line the header reader does not turn into a row is reported by offset; only a first line recognized as a request or status line is exempt.
-
 ## Replaces framing is an explicit constructor
 
 `SipReplaces` (and `SipTargetDialog`) parse both the wire header value and the hnv-encoded (hnv = RFC 3261 section 25 `hname`/`hvalue` charset) URI-header form found inside a Refer-To, where `@`, `;` and `=` remain percent-encoded after sip-uri's canonicalisation. `%` is a legal call-id `word` character, so a value cannot reveal which framing it is in: `parse` and `parse_uri_header` are separate constructors, and Display re-emits the framing the instance was parsed from. The encoded framing re-encodes to canonical hnv form (uppercase hex), matching sip-uri's canonicalised output, so round-trip is against that form rather than the producer's original hex casing.

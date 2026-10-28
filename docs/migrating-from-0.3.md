@@ -58,7 +58,7 @@ let parsed = SipHeaderAddr::parse_with_warnings(s)?;   // value + warnings
 let addr = SipHeaderAddr::parse_strict(s)?;             // refuses any breach
 ```
 
-A proxy often cannot refuse a call over a malformed header, yet the sender only gets fixed through a report naming the breach. `parse` keeps whatever value the input yields; `parse_with_warnings` returns it with the breaches found; `parse_strict` turns the first one into the error. A warning names the field, a code, a byte position and, for lists, the entry index; its `kind`, a `WarningKind` re-exported from sip-uri at the crate root, says whether the value still holds what was sent. It never carries the text, which may be a caller's number. `Parsed { value, warnings }` destructures, as sip-uri's does, and so does `ExtractedHeaders { headers, skipped }`.
+A proxy often cannot refuse a call over a malformed header, yet the sender only gets fixed through a report naming the breach. `parse` keeps whatever value the input yields; `parse_with_warnings` returns it with the breaches found; `parse_strict` turns the first one into the error. A warning names the field, a code, a byte position and, for lists, the entry index; its `kind`, a `WarningKind` re-exported from sip-uri at the crate root, says whether the value still holds what was sent. It never carries the text, which may be a caller's number. `Parsed { value, warnings }` destructures, as sip-uri's does, and so does `ExtractedHeaders { headers, skipped, warnings }`.
 
 `Err` from `parse` now means there is no usable value: empty where the grammar needs content, or a structure the RFC tells a receiver to reject outright, such as a second Replaces.
 
@@ -217,7 +217,7 @@ Every typed accessor returns `Result<Option<T>, ParseError>`. Token lists (`allo
 | 0.3 | 1.0 |
 |---|---|
 | `SipHeader::extract_from` inherent | `SipHeaderExtract` trait |
-| `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped }`, `headers` a `SipHeaderFields<'static>` |
+| `extract_all_headers() -> Vec<(String, String)>` | `ExtractedHeaders { headers, skipped, warnings }`, `headers` a `SipHeaderFields<'static>` |
 | a private `Vec<(String, String)>` store | sip-header-catalog's `SipHeaderFields`, or `SipMessageHeaders::new(msg)` as a store over the message; `SipMessageHeaders::from_header_block(block)` and `extract_header_block(block)` for header lines with no start line |
 | `extract_request_uri() -> Option<String>` | `Result<Option<sip_uri::Uri>, ParseError>`; `extract_request_line` for the method, URI text and version as received, whose `uri()`, `uri_with_warnings()` and `uri_strict()` parse the URI beside its `uri_span()` |
 
@@ -247,7 +247,7 @@ Value types serialize as their parts and deserialize through the same checks a p
 - **A validity check.** `parse` accepts non-conformant input and discards the warnings, so code that relied on it refusing a malformed header passes it on unreported. Use `parse_strict` to refuse, or `parse_with_warnings` to report the breach and keep the value.
 - **Forwarding received text.** `to_string()` prints the canonical form (escape hex upper-cased, parameters re-quoted per the type's rule). Forward the text as received through the value's span.
 - **Comparing headers.** `==` compares as held. Token case and parameter order count; use `equivalent` for the RFC's comparison.
-- **Lines that are not headers.** A line whose name is not a `token`, and a continuation after such a line, is reported by offset in `skipped` instead of becoming a row. Only a first line shaped as a request or status line is exempt, and only when reading a whole message.
+- **Header names that are not tokens.** A row whose name holds a space, a non-ASCII character or another character outside `token` is kept as sent, with one warning per kind of breach in `warnings`; filter by code to refuse the ones you do not accept. A line without a `:`, with an empty name or a control character in it, or shaped as a start line, and a continuation after such a line, is reported by offset in `skipped` instead of becoming a row. Only a first line shaped as a request or status line is exempt, and only when reading a whole message.
 
 ## sip-uri 0.3
 
