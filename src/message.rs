@@ -324,6 +324,7 @@ pub fn extract_header(message: &str, name: &str) -> Vec<String> {
 /// Every header row of a message, owned, with the lines that were skipped
 /// and the breaches in the rows' names.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ExtractedHeaders {
     /// `(name as sent, value)` in wire order; compact names stay compact.
     pub headers: SipHeaderFields<'static>,

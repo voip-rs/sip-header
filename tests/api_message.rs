@@ -349,18 +349,16 @@ fn received_text_is_reached_through_spans() -> Result<(), ParseError> {
 }
 
 #[test]
-fn results_destructure_and_build() -> Result<(), ParseError> {
+fn results_destructure() -> Result<(), ParseError> {
     let ExtractedHeaders {
         headers,
         skipped,
         warnings,
+        ..
     } = extract_all_headers(MSG);
-    let rebuilt = ExtractedHeaders {
-        headers: headers.clone(),
-        skipped: skipped.clone(),
-        warnings: warnings.clone(),
-    };
-    assert_eq!(rebuilt, extract_all_headers(MSG));
+    assert_eq!(headers, rows());
+    assert_eq!(skipped.len(), 2);
+    assert!(warnings.is_empty());
     let Some(Parsed { value, warnings }) = extract_request_uri_with_warnings(MSG)? else {
         panic!("no Request-URI");
     };

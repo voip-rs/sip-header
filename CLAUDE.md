@@ -79,7 +79,8 @@ The pre-commit hook runs gitleaks to enforce this.
 All public enums and public-field structs get `#[non_exhaustive]`.
 Single-field error newtypes (`pub struct ParseFooError(pub String)`) are
 exempt, and so are an enum whose variant set the rationale fixes and a
-plain result pair callers destructure (`Parsed`, `ExtractedHeaders`).
+plain result pair callers destructure (`Parsed`). A result struct that
+can gain fields (`ExtractedHeaders`) is not exempt.
 
 ## SipHeader Enum — IANA Registry Sync
 
