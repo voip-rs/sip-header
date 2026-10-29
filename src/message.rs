@@ -1117,10 +1117,6 @@ impl SipHeaderExtract for SipHeader {
 }
 
 #[cfg(test)]
-#[path = "message_reference.rs"]
-mod reference;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{HeaderParse, WarningKind};
