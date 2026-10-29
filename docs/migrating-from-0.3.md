@@ -62,6 +62,8 @@ A proxy often cannot refuse a call over a malformed header, yet the sender only 
 
 `Err` from `parse` now means there is no usable value: empty where the grammar needs content, or a structure the RFC tells a receiver to reject outright, such as a second Replaces.
 
+Whitespace 0.3 trimmed silently is still trimmed, but anything other than SP and HTAB is reported: a control character such as VT or FF as `ControlChar`, NBSP and the other Unicode spaces as `NonLwsWhitespace`. `parse_strict` therefore refuses a value padded with them, which 0.3 accepted.
+
 Received text that would reframe a header is cleaned under a warning:
 
 - A folded line (CRLF followed by a space or tab) is one space. Any other CR, LF or NUL is dropped with `ControlChar`, and lists split the text as the entries read it, so a dropped character never moves an entry boundary.

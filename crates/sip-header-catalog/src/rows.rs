@@ -1,4 +1,14 @@
 //! The raw row lookup a header store implements.
+//!
+//! A store that fails for its own reason hands its error to the row error,
+//! which shares it behind an `Arc`: the error stays `Clone`, and its
+//! `source()` gives the caller the store's own object to print or
+//! downcast. Equality and hashing compare what the error says about the
+//! rows (kind, counts, row) and ignore the cause, since two arbitrary errors
+//! cannot be compared; both promises hold for the life of 1.x. The cause
+//! must be `Send + Sync + 'static`, which keeps every error built on this
+//! one `Send + Sync`. Its `Display` and `Debug` reach logs through this
+//! error, so a store keeps header text out of both.
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
@@ -149,6 +159,9 @@ impl std::error::Error for RowError {}
 ///   looks it up directly.
 /// - A store that decodes its own framing reports a failure as
 ///   [`RowError`] rather than returning undecoded text.
+/// - A store bridging another protocol's headers keeps that protocol's
+///   framing names out of its rows: a typed accessor reads whatever the
+///   store holds under a SIP name, its own Content-Length included.
 ///
 /// ```
 /// use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderRows, SipHeaderRowsExt};

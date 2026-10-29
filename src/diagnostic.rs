@@ -68,7 +68,12 @@ pub struct ParseWarning {
     /// [`row`](Self::row).
     pub position: Option<usize>,
     /// Index of the row the breach is in, among the rows or entries a value
-    /// was built from; `None` for a value parsed from one string.
+    /// was built from; `None` for a value parsed from one string, and for a
+    /// warning a message reader raises about a line rather than a value.
+    ///
+    /// It sets the frame of [`position`](Self::position) and
+    /// [`span`](Self::span): with a row, both are relative to that row;
+    /// without one, to the text handed to the parser or the reader.
     pub row: Option<usize>,
     /// Index of the list entry the breach is in, for list-valued headers.
     pub entry: Option<usize>,

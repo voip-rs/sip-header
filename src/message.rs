@@ -33,9 +33,22 @@
 //! warning per breach class (inner whitespace, non-ASCII, any other
 //! non-token character), each raised once per row. The classes are separate
 //! codes so the caller chooses which it accepts, UTF-8 names but not
-//! separators for instance. Every other line is reported by offset in
+//! separators for instance. Every other line is reported by its extent in
 //! `skipped`; only a first line shaped as a request or status line is
 //! exempt, and only when reading a whole message.
+//!
+//! A row value is trimmed of the whitespace `str::trim` removes, so every
+//! row reaches a store clean, typed header or not; a trimmed run holding
+//! anything but SP or HTAB is reported here, once, and a value parser over
+//! that row never sees it. The reader's own warnings carry `row: None` and
+//! message offsets, as the request line's do: a warning's `row` indexes
+//! value rows, and a name or the padding around a value is in none.
+//!
+//! The reader reports where things are instead: each row's extent (name
+//! through its last continuation line, so a folded row's extent holds the
+//! raw fold, not the unfolded value), each skipped line's extent, and the
+//! offset where it stopped. A caller keys warnings and skipped lines to rows
+//! from those extents, so no second line rule exists outside this file.
 
 use std::borrow::Cow;
 
