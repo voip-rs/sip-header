@@ -3,7 +3,7 @@
 
 use proptest::prelude::*;
 use sip_header::{
-    Field, MessageLine, MessageLines, NameMatcher, ParseWarning, SipHeader, SipMessageHeaders, Span,
+    MessageLine, MessageLines, NameMatcher, ParseWarning, SipHeader, SipMessageHeaders, Span,
 };
 
 const LINES: &[&str] = &[
@@ -91,9 +91,6 @@ fn from_walker(mut lines: MessageLines<'_>, len: usize) -> Reading {
                     .warnings
                     .extend(row.name_warnings());
                 reading
-                    .warnings
-                    .extend(row.value_warnings());
-                reading
                     .rows
                     .push((
                         row.name()
@@ -145,22 +142,6 @@ proptest! {
             prop_assert_eq!(name, row.name());
             prop_assert_eq!(value, row.value());
             prop_assert_eq!(headers.row_spans()[row.index()], row.span());
-            let warned = headers
-                .warnings()
-                .iter()
-                .any(|w| {
-                    w.field == Field::Value
-                        && row
-                            .span()
-                            .range()
-                            .contains(&w.position.unwrap())
-                });
-            prop_assert_eq!(
-                row.value_warnings()
-                    .next()
-                    .is_some(),
-                warned
-            );
         }
     }
 }

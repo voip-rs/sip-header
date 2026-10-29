@@ -39,9 +39,6 @@ fn allocations(msg: &str) -> usize {
                     .value()
                     .len()
                 + row
-                    .value_warnings()
-                    .count()
-                + row
                     .name_warnings()
                     .count();
         }

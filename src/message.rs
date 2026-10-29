@@ -1930,7 +1930,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     }
 
     #[test]
-    fn a_last_continuation_reports_a_cr_beyond_its_ending() {
+    fn a_last_continuation_keeps_a_cr_beyond_its_ending() {
         let msg = "Subject: a\r\n b\r\r\n\r\n";
         let headers = SipMessageHeaders::new(msg);
         assert_eq!(
@@ -1938,14 +1938,9 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                 .fields()
                 .iter()
                 .next(),
-            Some(("Subject", "a b"))
+            Some(("Subject", "a b\r"))
         );
-        let codes: Vec<_> = headers
-            .warnings()
-            .iter()
-            .map(|w| (w.code, w.position))
-            .collect();
-        assert_eq!(codes, [(WarningCode::ControlChar, Some(14))]);
+        assert_eq!(headers.warnings(), []);
     }
 
     #[test]

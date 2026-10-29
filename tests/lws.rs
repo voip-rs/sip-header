@@ -477,56 +477,39 @@ fn token_list() {
 }
 
 /// A row the reader trimmed arrives clean: reported once, by the reader.
+/// What a typed read over the `Content-Length` rows of `headers` reports,
+/// as `(field, code, kind, row, position)`.
+fn content_length_warnings(
+    headers: &SipMessageHeaders<'_>,
+) -> Vec<(
+    Field,
+    WarningCode,
+    WarningKind,
+    Option<usize>,
+    Option<usize>,
+)> {
+    headers
+        .parse_header::<SipContentLength>(SipHeader::ContentLength)
+        .unwrap()
+        .unwrap()
+        .warnings
+        .iter()
+        .map(|w| (w.field, w.code, w.kind, w.row, w.position))
+        .collect()
+}
+
 #[test]
-fn the_reader_reports_what_it_trims_once() {
+fn padding_beyond_lws_stays_in_the_row_for_its_parser() {
     for pad in PADS {
         let message =
-            format!("INVITE sip:a@example.com SIP/2.0\r\nContent-ID:{pad}<x@example.com>{pad}\r\nContent-Length:{pad}12{pad}\r\n\r\n");
+            format!("INVITE sip:a@example.com SIP/2.0\r\nContent-ID:{pad}<x@example.com>{pad}\r\nContent-Length: {pad}12{pad}\t\r\n\r\n");
         let headers = SipMessageHeaders::new(&message);
+        assert_eq!(headers.warnings(), [], "{pad:?}");
         assert_eq!(
             headers
                 .sip_header(SipHeader::ContentId)
                 .unwrap(),
-            Some("<x@example.com>")
-        );
-        let (code, kind) = expected(pad);
-        let got: Vec<_> = headers
-            .warnings()
-            .iter()
-            .map(|w| {
-                (
-                    w.field,
-                    w.code,
-                    w.kind,
-                    w.row,
-                    w.position,
-                    w.span()
-                        .and_then(|s| {
-                            s.get(&message)
-                                .ok()
-                        }),
-                )
-            })
-            .collect();
-        let lead_cid = message
-            .find("Content-ID:")
-            .unwrap()
-            + "Content-ID:".len();
-        let trail_cid = lead_cid + pad.len() + "<x@example.com>".len();
-        let lead_cl = message
-            .find("Content-Length:")
-            .unwrap()
-            + "Content-Length:".len();
-        let trail_cl = lead_cl + pad.len() + "12".len();
-        assert_eq!(
-            got,
-            [
-                (Field::Value, code, kind, None, Some(lead_cid), Some(pad)),
-                (Field::Value, code, kind, None, Some(trail_cid), Some(pad)),
-                (Field::Value, code, kind, None, Some(lead_cl), Some(pad)),
-                (Field::Value, code, kind, None, Some(trail_cl), Some(pad)),
-            ],
-            "{pad:?}"
+            Some(format!("{pad}<x@example.com>{pad}").as_str())
         );
         assert_eq!(
             headers
@@ -534,17 +517,21 @@ fn the_reader_reports_what_it_trims_once() {
                 .unwrap(),
             Some(SipContentLength::parse("12").unwrap())
         );
-        let typed = headers
+        let (code, kind) = expected(pad);
+        assert_eq!(
+            content_length_warnings(&headers),
+            [
+                (Field::Value, code, kind, Some(0), Some(0)),
+                (Field::Value, code, kind, Some(0), Some(pad.len() + 2)),
+            ],
+            "{pad:?}"
+        );
+        assert!(headers
             .parse_header::<SipContentLength>(SipHeader::ContentLength)
             .unwrap()
-            .unwrap();
-        assert!(
-            typed
-                .warnings
-                .is_empty(),
-            "{pad:?}: {:?}",
-            typed.warnings
-        );
+            .unwrap()
+            .into_strict()
+            .is_err());
     }
 }
 
@@ -568,61 +555,46 @@ fn a_value_parser_reports_text_handed_to_it_directly() {
 fn a_second_cr_at_a_line_end_is_a_control_character() {
     let message = "INVITE sip:a@example.com SIP/2.0\r\nContent-ID: <x@example.com>\r\r\n\r\n";
     let headers = SipMessageHeaders::new(message);
+    assert_eq!(headers.warnings(), []);
     assert_eq!(
         headers
             .sip_header(SipHeader::ContentId)
             .unwrap(),
-        Some("<x@example.com>")
+        Some("<x@example.com>\r")
     );
-    let [w] = headers.warnings() else {
-        panic!("{:?}", headers.warnings());
-    };
+    let parsed = SipHeaderAddr::parse_with_warnings("<x@example.com>\r").unwrap();
+    let codes: Vec<_> = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.code, w.position))
+        .collect();
     assert_eq!(
-        (w.field, w.code, w.row),
-        (Field::Value, WarningCode::ControlChar, None)
-    );
-    let at = message
-        .find("\r\r\n")
-        .unwrap();
-    assert_eq!(w.position, Some(at));
-    assert_eq!(
-        w.span()
-            .and_then(|s| s
-                .get(message)
-                .ok()),
-        Some("\r")
+        codes,
+        [(WarningCode::ControlChar, Some("<x@example.com>".len()))]
     );
 }
 
 #[test]
-fn a_continuation_line_reports_what_it_trims() {
-    let message = "INVITE sip:a@example.com SIP/2.0\r\nSubject: a\r\n \u{a0}b\u{a0}\r\n\r\n";
+fn a_continuation_line_is_trimmed_of_lws_only() {
+    let message =
+        "INVITE sip:a@example.com SIP/2.0\r\nContent-Length:\r\n \u{a0}12\u{a0}\t\r\n\r\n";
     let headers = SipMessageHeaders::new(message);
+    assert_eq!(headers.warnings(), []);
     assert_eq!(
         headers
-            .sip_header(SipHeader::Subject)
+            .sip_header(SipHeader::ContentLength)
             .unwrap(),
-        Some("a b")
+        Some("\u{a0}12\u{a0}")
     );
-    let codes: Vec<_> = headers
-        .warnings()
-        .iter()
-        .map(|w| {
-            (
-                w.code,
-                w.span()
-                    .and_then(|s| {
-                        s.get(message)
-                            .ok()
-                    }),
-            )
-        })
+    let codes: Vec<_> = content_length_warnings(&headers)
+        .into_iter()
+        .map(|(_, code, _, _, at)| (code, at))
         .collect();
     assert_eq!(
         codes,
         [
-            (WarningCode::NonLwsWhitespace, Some(" \u{a0}")),
-            (WarningCode::NonLwsWhitespace, Some("\u{a0}")),
+            (WarningCode::NonLwsWhitespace, Some(0)),
+            (WarningCode::NonLwsWhitespace, Some("\u{a0}12".len())),
         ]
     );
 }
