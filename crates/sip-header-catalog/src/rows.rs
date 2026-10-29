@@ -12,8 +12,9 @@
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
+use std::error::Error;
 use std::fmt;
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -63,10 +64,11 @@ enum Detail {
 /// assert_eq!(e.to_string(), "too-many-rows: 4001, limit 4000");
 /// assert_eq!(RowError::malformed().in_row(3).to_string(), "malformed in row 3");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct RowError {
     detail: Detail,
     row: Option<usize>,
+    cause: Option<Arc<dyn Error + Send + Sync>>,
 }
 
 impl RowError {
@@ -75,6 +77,7 @@ impl RowError {
         RowError {
             detail: Detail::TooManyRows { count, limit },
             row: None,
+            cause: None,
         }
     }
 
@@ -83,6 +86,43 @@ impl RowError {
         RowError {
             detail: Detail::Malformed,
             row: None,
+            cause: None,
+        }
+    }
+
+    /// The store's framing does not decode, for the reason `cause` gives.
+    ///
+    /// The cause is reachable, and downcastable, through
+    /// [`source()`](Error::source). Equality and hashing ignore it, so a
+    /// test that asserts a cause downcasts it. Its `Display` and `Debug`
+    /// reach logs through this error, so neither may carry header text.
+    ///
+    /// ```
+    /// use std::error::Error;
+    /// use std::fmt;
+    ///
+    /// use sip_header_catalog::RowError;
+    ///
+    /// #[derive(Debug)]
+    /// struct Corrupt(u32);
+    ///
+    /// impl fmt::Display for Corrupt {
+    ///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///         write!(f, "page {} corrupt", self.0)
+    ///     }
+    /// }
+    ///
+    /// impl Error for Corrupt {}
+    ///
+    /// let e = RowError::malformed_from(Corrupt(9));
+    /// let cause = e.source().and_then(|s| s.downcast_ref::<Corrupt>());
+    /// assert_eq!(cause.map(|c| c.0), Some(9));
+    /// assert_eq!(e, RowError::malformed());
+    /// ```
+    pub fn malformed_from(cause: impl Error + Send + Sync + 'static) -> Self {
+        RowError {
+            cause: Some(Arc::new(cause)),
+            ..RowError::malformed()
         }
     }
 
@@ -140,7 +180,30 @@ impl fmt::Display for RowError {
     }
 }
 
-impl std::error::Error for RowError {}
+impl PartialEq for RowError {
+    fn eq(&self, other: &Self) -> bool {
+        self.detail == other.detail && self.row == other.row
+    }
+}
+
+impl Eq for RowError {}
+
+impl Hash for RowError {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.detail
+            .hash(state);
+        self.row
+            .hash(state);
+    }
+}
+
+impl Error for RowError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.cause
+            .as_deref()
+            .map(|c| c as &(dyn Error + 'static))
+    }
+}
 
 /// Raw lookup of SIP header rows from any key-value store.
 ///
