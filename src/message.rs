@@ -417,7 +417,7 @@ pub struct ExtractedHeaders {
     pub skipped: Vec<Span>,
     /// The row extents [`SipMessageHeaders::row_spans`] reports.
     pub row_spans: Vec<Span>,
-    /// The name warnings [`SipMessageHeaders::warnings`] reports.
+    /// The warnings [`SipMessageHeaders::warnings`] reports.
     pub warnings: Vec<ParseWarning>,
     /// Where the reader stopped, as [`SipMessageHeaders::end`] reports it.
     pub end: usize,

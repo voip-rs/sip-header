@@ -10,7 +10,9 @@
 //! value that does not fit the platform's `usize` yields no usable value.
 //! Digits followed by other text keep the digits and drop the rest under
 //! `TrailingContent`; text that starts with no digit, or is empty, is an
-//! error. Leading zeros are `1*DIGIT` and raise nothing.
+//! error. Leading zeros are `1*DIGIT` and raise nothing. A control
+//! character between digits is an error too: the scrub would drop it and
+//! join the digits into a length that was never sent.
 
 use std::fmt;
 
@@ -57,11 +59,46 @@ impl fmt::Display for SipContentLength {
     }
 }
 
+/// The first control character with digits on both sides of it in the
+/// value's leading run of digits and control characters.
+fn control_inside_digits(input: &str) -> Option<usize> {
+    let lead = input.len()
+        - input
+            .trim_start()
+            .len();
+    let mut control = None;
+    let mut digit_seen = false;
+    for (i, b) in input
+        .bytes()
+        .enumerate()
+        .skip(lead)
+    {
+        if b.is_ascii_digit() {
+            if control.is_some() {
+                return control;
+            }
+            digit_seen = true;
+        } else if b.is_ascii_control() && b != b'\t' && digit_seen {
+            control = control.or(Some(i));
+        } else {
+            break;
+        }
+    }
+    None
+}
+
 impl sealed::Sealed for SipContentLength {}
 
 impl HeaderParse for SipContentLength {
     /// Parse leniently; whitespace around the value is the header's `LWS`.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        if let Some(at) = control_inside_digits(input) {
+            return Err(ParseError::malformed(
+                Field::Value,
+                FaultCode::InvalidNumber,
+                Some(at),
+            ));
+        }
         crate::scrub::parse_scrubbed(input, |s| {
             let mut warnings = Vec::new();
             let trimmed = lws::trim_in(s, s, Field::Value, &mut warnings);
@@ -122,7 +159,7 @@ mod tests {
 
     #[test]
     fn a_control_character_inside_the_digits_leaves_no_length() {
-        for (input, at) in [("3\018", 1), (" 3\r\n18", 2), ("31\u{b}8", 2)] {
+        for (input, at) in [("3\u{0}18", 1), (" 3\r\n18", 2), ("31\u{b}8", 2)] {
             assert_eq!(
                 SipContentLength::parse(input),
                 Err(ParseError::malformed(

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
-use crate::span::{Located, Relocation, Shift};
+use crate::span::{Located, Relocation, Shift, Span};
 
 /// Input with folds turned into one SP and every other CR, LF and NUL
 /// dropped, together with what was dropped.
@@ -52,7 +52,7 @@ pub(crate) fn scrub(input: &str) -> Scrubbed<'_> {
     }
     let mut out = String::with_capacity(input.len());
     let mut shifts = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<ParseWarning> = Vec::new();
     let mut removed = 0;
     let mut copied = 0;
     let mut last_drop_end = None;
@@ -91,8 +91,21 @@ pub(crate) fn scrub(input: &str) -> Scrubbed<'_> {
             removed += end - start - 1;
         } else {
             removed += end - start;
-            if last_drop_end != Some(start) && last_drop_end != Some(i) {
-                warnings.push(ParseWarning::new(Field::Value, WarningCode::ControlChar).at(i));
+            match warnings.last_mut() {
+                Some(w) if last_drop_end == Some(start) || last_drop_end == Some(i) => {
+                    let from = w
+                        .span()
+                        .map_or(start, |s| {
+                            s.range()
+                                .start
+                        });
+                    *w = w.covering(Span::new(from..end));
+                }
+                _ => warnings.push(
+                    ParseWarning::new(Field::Value, WarningCode::ControlChar)
+                        .at(i)
+                        .covering(Span::new(start..end)),
+                ),
             }
             last_drop_end = Some(end);
         }
