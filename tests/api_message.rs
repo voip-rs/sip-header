@@ -4,7 +4,7 @@
 use sip_header::{
     extract_all_headers, extract_header, extract_header_block, extract_request_uri,
     extract_request_uri_with_warnings, ExtractedHeaders, ParseError, Parsed, SipHeader,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipHeaderRowsExt, SipMessageHeaders,
+    SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipHeaderRowsExt, SipMessageHeaders, Span,
     WarningCode,
 };
 
@@ -59,6 +59,16 @@ fn message_headers_are_a_row_store() -> Result<(), ParseError> {
     Ok(())
 }
 
+fn starts(spans: &[Span]) -> Vec<usize> {
+    spans
+        .iter()
+        .map(|s| {
+            s.range()
+                .start
+        })
+        .collect()
+}
+
 #[test]
 fn skipped_lines_are_reported_by_position() {
     let not_a_header = MSG
@@ -68,11 +78,18 @@ fn skipped_lines_are_reported_by_position() {
         .find(" orphan")
         .unwrap();
     assert_eq!(
-        SipMessageHeaders::new(MSG).skipped(),
+        starts(SipMessageHeaders::new(MSG).skipped()),
         [not_a_header, orphan]
     );
     let all = extract_all_headers(MSG);
-    assert_eq!(all.skipped, [not_a_header, orphan]);
+    assert_eq!(starts(&all.skipped), [not_a_header, orphan]);
+    assert_eq!(
+        all.skipped
+            .iter()
+            .map(|s| s.get(MSG))
+            .collect::<Vec<_>>(),
+        [Ok("not a header"), Ok(" orphan continuation")]
+    );
     assert_eq!(
         all.headers
             .len(),
@@ -100,10 +117,12 @@ fn a_refused_first_line_is_reported() {
             SipMessageHeaders::new(msg),
             SipMessageHeaders::from_header_block(msg),
         ] {
-            assert_eq!((headers.fields(), headers.skipped()), (&rows, &[0][..]));
+            assert_eq!(headers.fields(), &rows);
+            assert_eq!(starts(headers.skipped()), [0]);
         }
         for all in [extract_all_headers(msg), extract_header_block(msg)] {
-            assert_eq!((all.headers, all.skipped), (rows.clone(), vec![0]));
+            assert_eq!(all.headers, rows);
+            assert_eq!(starts(&all.skipped), [0]);
         }
     }
 }
@@ -176,6 +195,22 @@ fn message_headers_hold_their_rows_as_fields() {
     );
     let all = extract_all_headers(MSG);
     assert_eq!(all.skipped, skipped);
+    assert_eq!(all.row_spans, headers.row_spans());
+    assert_eq!(all.end, headers.end());
+    assert_eq!(&MSG[all.end..], "v=0\r\n");
+    assert_eq!(
+        all.row_spans
+            .iter()
+            .map(|s| s.get(MSG))
+            .collect::<Vec<_>>(),
+        [
+            Ok("Via: SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1"),
+            Ok("v: SIP/2.0/TCP 203.0.113.5\r\n ;branch=z9hG4bK2"),
+            Ok("f: Alice <sip:alice@example.com>;tag=a"),
+            Ok("VIA: SIP/2.0/UDP 198.51.100.3;branch=z9hG4bK3"),
+            Ok("Supported: timer"),
+        ]
+    );
     assert_eq!(outlives_the_message(all.headers), rows());
 }
 

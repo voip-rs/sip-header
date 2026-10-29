@@ -1425,7 +1425,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             msg.find(s)
                 .unwrap()
         };
-        assert_eq!(all.skipped, [at("not a header"), at(" continued")]);
+        assert_eq!(starts(&all.skipped), [at("not a header"), at(" continued")]);
         assert_eq!(extract_header(msg, "f"), vec!["<sip:alice@example.com>"]);
     }
 
@@ -1462,6 +1462,152 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                 (w.code, w.position, text)
             })
             .collect()
+    }
+
+    fn starts(spans: &[Span]) -> Vec<usize> {
+        spans
+            .iter()
+            .map(|s| {
+                s.range()
+                    .start
+            })
+            .collect()
+    }
+
+    fn texts<'m>(spans: &[Span], msg: &'m str) -> Vec<&'m str> {
+        spans
+            .iter()
+            .map(|s| {
+                s.get(msg)
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn row_spans_cover_name_to_value_end() {
+        let msg = "INVITE sip:bob@example.com SIP/2.0\r\nVia: a  \r\nf:b\r\n\r\nbody: x\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(texts(headers.row_spans(), msg), ["Via: a  ", "f:b"]);
+        let bare = "Via: a\nf: b\n\nbody: x\n";
+        let block = SipMessageHeaders::from_header_block(bare);
+        assert_eq!(texts(block.row_spans(), bare), ["Via: a", "f: b"]);
+        assert_eq!(
+            block
+                .row_spans()
+                .len(),
+            block.len()
+        );
+    }
+
+    #[test]
+    fn a_folded_row_span_holds_the_raw_fold() {
+        let msg = "Subject: one\r\n  two\r\n\tthree\r\nTo: x\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(
+            texts(headers.row_spans(), msg),
+            ["Subject: one\r\n  two\r\n\tthree", "To: x"]
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .next(),
+            Some(("Subject", "one two three"))
+        );
+        let bare = "Subject: one\n two\n\n";
+        let headers = SipMessageHeaders::new(bare);
+        assert_eq!(texts(headers.row_spans(), bare), ["Subject: one\n two"]);
+    }
+
+    #[test]
+    fn skipped_spans_cover_the_line_without_its_ending() {
+        let msg = "SIP/2.0 200 OK\r\nno colon\r\n\x20orphan \r\nX\u{1}Bad: a\r\nTo: x\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(
+            texts(headers.skipped(), msg),
+            ["no colon", " orphan ", "X\u{1}Bad: a"]
+        );
+        let bare = "no colon\n\n";
+        let block = SipMessageHeaders::from_header_block(bare);
+        assert_eq!(texts(block.skipped(), bare), ["no colon"]);
+    }
+
+    #[test]
+    fn end_is_where_the_reader_stopped() {
+        let crlf = "A: b\r\n\r\nbody";
+        let lf = "A: b\n\nbody";
+        let open = "A: b\r\nC: d\r\n";
+        let blank_last = "A: b\r\n\r\n";
+        let blank_unended = "A: b\r\n\r";
+        for (msg, end) in [
+            (crlf, 8),
+            (lf, 6),
+            (open, open.len()),
+            (blank_last, blank_last.len()),
+            (blank_unended, blank_unended.len()),
+            ("", 0),
+        ] {
+            assert_eq!(
+                SipMessageHeaders::from_header_block(msg).end(),
+                end,
+                "{msg:?}"
+            );
+            assert_eq!(SipMessageHeaders::new(msg).end(), end, "{msg:?}");
+            assert_eq!(extract_header_block(msg).end, end, "{msg:?}");
+            assert_eq!(extract_all_headers(msg).end, end, "{msg:?}");
+        }
+        assert_eq!(&crlf[SipMessageHeaders::new(crlf).end()..], "body");
+        assert_eq!(extract_body(crlf), Some("body"));
+    }
+
+    #[test]
+    fn extracted_headers_carry_the_reader_extents() {
+        let msg = "INVITE sip:bob@example.com SIP/2.0\r\nno colon\r\nTo: x\r\n y\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        let all = extract_all_headers(msg);
+        assert_eq!(all.row_spans, headers.row_spans());
+        assert_eq!(all.skipped, headers.skipped());
+        assert_eq!(all.end, headers.end());
+    }
+
+    #[test]
+    fn a_name_warning_row_is_found_by_containment() {
+        let msg = "X Bad: a\r\nTo: x\r\n y\r\nRémi: b\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        let rows: Vec<usize> = headers
+            .warnings()
+            .iter()
+            .map(|w| {
+                let at = w
+                    .position
+                    .unwrap();
+                headers
+                    .row_spans()
+                    .iter()
+                    .position(|s| {
+                        s.range()
+                            .contains(&at)
+                    })
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(rows, [0, 2]);
+        let skipped = SipMessageHeaders::new("To: x\r\nno colon\r\nVia: y\r\nbad\r\n");
+        let following: Vec<usize> = skipped
+            .skipped()
+            .iter()
+            .map(|s| {
+                skipped
+                    .row_spans()
+                    .partition_point(|r| {
+                        r.range()
+                            .start
+                            < s.range()
+                                .start
+                    })
+            })
+            .collect();
+        assert_eq!(following, [1, 2]);
     }
 
     #[test]
@@ -1536,7 +1682,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         };
         let headers = SipMessageHeaders::new(msg);
         assert_eq!(
-            headers.skipped(),
+            starts(headers.skipped()),
             [
                 at("no colon"),
                 at(": no name"),

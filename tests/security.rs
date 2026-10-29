@@ -2250,39 +2250,66 @@ proptest! {
         let mut block_skipped = Vec::new();
         let mut refused = Vec::new();
         let mut warned = Vec::new();
+        let mut row_extents = Vec::new();
         if let Some(start) = &start {
-            block_skipped.push(0);
+            block_skipped.push(0..start.len());
             msg.push_str(start);
             msg.push_str(eol);
         }
         for (kind, line) in &lines {
+            let at = msg.len();
             match kind {
                 Ok(codes) => {
                     rows += 1;
                     let (name, _) = line.split_once(':').unwrap();
-                    let at = msg.len();
                     let name = at..at + name.trim_end_matches([' ', '\t']).len();
                     warned.extend(codes.iter().map(|&c| (c, name.clone())));
+                    row_extents.push(at..at + line.len());
                 }
                 Err(start_shaped) => {
-                    block_skipped.push(msg.len());
+                    block_skipped.push(at..at + line.len());
                     if !(msg.is_empty() && *start_shaped) {
-                        refused.push(msg.len());
+                        refused.push(at..at + line.len());
                     }
                 }
             }
             msg.push_str(line);
             msg.push_str(eol);
         }
+        let mut end = msg.len();
         if body {
             msg.push_str(eol);
+            end = msg.len();
             msg.push_str("not a header");
             msg.push_str(eol);
         }
+        let extents = |spans: &[Span]| -> Vec<Range<usize>> {
+            spans.iter().map(|s| s.range()).collect()
+        };
+        let line_texts = |spans: &[Span]| -> Vec<String> {
+            spans.iter().map(|s| s.get(&msg).unwrap().to_owned()).collect()
+        };
 
         let headers = SipMessageHeaders::new(&msg);
         prop_assert_eq!(headers.len(), rows, "{:?}", msg);
-        prop_assert_eq!(headers.skipped(), refused.as_slice(), "{:?}", msg);
+        prop_assert_eq!(extents(headers.skipped()), refused.clone(), "{:?}", msg);
+        prop_assert_eq!(headers.row_spans().len(), rows, "{:?}", msg);
+        prop_assert_eq!(extents(headers.row_spans()), row_extents.clone(), "{:?}", msg);
+        for (span, (_, line)) in headers
+            .row_spans()
+            .iter()
+            .zip(lines.iter().filter(|(kind, _)| kind.is_ok()))
+        {
+            prop_assert_eq!(span.get(&msg), Ok(line.as_str()), "{:?}", msg);
+        }
+        let refused_lines: Vec<String> = lines
+            .iter()
+            .filter(|(kind, _)| kind.is_err())
+            .map(|(_, line)| line.clone())
+            .skip(usize::from(lines.first().is_some_and(|(kind, _)| matches!(kind, Err(true))) && start.is_none()))
+            .collect();
+        prop_assert_eq!(line_texts(headers.skipped()), refused_lines, "{:?}", msg);
+        prop_assert_eq!(headers.end(), end, "{:?}", msg);
         let found: Vec<(WarningCode, Range<usize>)> = headers
             .warnings()
             .iter()
@@ -2290,16 +2317,22 @@ proptest! {
             .collect();
         prop_assert_eq!(&found, &warned, "{:?}", msg);
         let all = extract_all_headers(&msg);
-        prop_assert_eq!(&all.skipped, &refused);
+        prop_assert_eq!(extents(&all.skipped), refused.clone());
+        prop_assert_eq!(&all.row_spans, headers.row_spans());
+        prop_assert_eq!(all.end, end);
         prop_assert_eq!(&all.headers, headers.fields());
         prop_assert_eq!(all.warnings.as_slice(), headers.warnings());
 
         let block = SipMessageHeaders::from_header_block(&msg);
         prop_assert_eq!(block.fields(), headers.fields(), "{:?}", msg);
-        prop_assert_eq!(block.skipped(), block_skipped.as_slice(), "{:?}", msg);
+        prop_assert_eq!(extents(block.skipped()), block_skipped.clone(), "{:?}", msg);
+        prop_assert_eq!(extents(block.row_spans()), row_extents.clone(), "{:?}", msg);
+        prop_assert_eq!(block.end(), end, "{:?}", msg);
         prop_assert_eq!(block.warnings(), headers.warnings());
         let owned = extract_header_block(&msg);
-        prop_assert_eq!(&owned.skipped, &block_skipped);
+        prop_assert_eq!(extents(&owned.skipped), block_skipped.clone());
+        prop_assert_eq!(&owned.row_spans, block.row_spans());
+        prop_assert_eq!(owned.end, end);
         prop_assert_eq!(&owned.headers, block.fields());
         prop_assert_eq!(owned.warnings.as_slice(), block.warnings());
     }
