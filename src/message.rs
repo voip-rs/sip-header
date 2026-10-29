@@ -51,6 +51,7 @@
 //! from those extents, so no second line rule exists outside this file.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
@@ -124,7 +125,7 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// A name outside `token` stays a row, each breach in it reported by
 /// [`warnings`](Self::warnings). A line that is neither a header nor a
 /// continuation of one is skipped, and its byte offset reported by
-/// [`skipped`](Self::skipped), unless it is the request or status line
+/// [`skipped`](Self::skipped) by extent, unless it is the request or status line
 /// [`new`](Self::new) exempts. A message read with both empty is
 /// conformant as far as the rows go.
 ///
@@ -147,8 +148,10 @@ pub fn extract_body(message: &str) -> Option<&str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SipMessageHeaders<'a> {
     fields: SipHeaderFields<'a>,
-    skipped: Vec<usize>,
+    row_spans: Vec<Span>,
+    skipped: Vec<Span>,
     warnings: Vec<ParseWarning>,
+    end: usize,
 }
 
 impl<'a> SipMessageHeaders<'a> {
@@ -165,12 +168,14 @@ impl<'a> SipMessageHeaders<'a> {
     }
 
     fn read(message: &'a str, start_line: bool) -> Self {
-        let (block, _) = split_at_blank_line(message);
+        let (block, body_start) = split_at_blank_line(message);
         let mut fields = SipHeaderFields::new();
+        let mut row_spans = Vec::new();
         let mut skipped = Vec::new();
         let mut warnings = Vec::new();
-        // The last header row, still open to continuation lines.
-        let mut open: Option<(&'a str, Cow<'a, str>)> = None;
+        // The last header row, still open to continuation lines, and the
+        // byte range of its lines so far.
+        let mut open: Option<(&'a str, Cow<'a, str>, Range<usize>)> = None;
         let mut offset = 0;
         for (i, raw_line) in block
             .split('\n')
@@ -186,30 +191,37 @@ impl<'a> SipMessageHeaders<'a> {
             }
             if line.starts_with([' ', '\t']) {
                 match &mut open {
-                    Some((_, value)) => append_folded(value, line),
-                    None => skipped.push(at),
+                    Some((_, value, extent)) => {
+                        append_folded(value, line);
+                        extent.end = at + line.len();
+                    }
+                    None => skipped.push(Span::new(at..at + line.len())),
                 }
                 continue;
             }
-            if let Some((name, value)) = open.take() {
+            if let Some((name, value, extent)) = open.take() {
                 fields.push(name, value);
+                row_spans.push(Span::new(extent));
             }
             match header_line(line) {
                 Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
                     warnings.extend(name_warnings(name, at));
-                    open = Some((name, Cow::Borrowed(value)));
+                    open = Some((name, Cow::Borrowed(value), at..at + line.len()));
                 }
                 _ if i == 0 && start_line && is_start_line(line) => {}
-                _ => skipped.push(at),
+                _ => skipped.push(Span::new(at..at + line.len())),
             }
         }
-        if let Some((name, value)) = open {
+        if let Some((name, value, extent)) = open {
             fields.push(name, value);
+            row_spans.push(Span::new(extent));
         }
         SipMessageHeaders {
             fields,
+            row_spans,
             skipped,
             warnings,
+            end: body_start.unwrap_or(message.len()),
         }
     }
 
@@ -241,12 +253,51 @@ impl<'a> SipMessageHeaders<'a> {
         self.fields
     }
 
-    /// Byte offsets into the message of the lines that were skipped, in
-    /// order: a line with no `:`, with an empty name or a control character
-    /// in it, or shaped as a start line other than the one
-    /// [`new`](Self::new) exempts, or a continuation with no header above it.
-    pub fn skipped(&self) -> &[usize] {
+    /// Where each row sits in the message, in the order of
+    /// [`fields`](Self::fields): from the first byte of the name to the end
+    /// of its last continuation line, that line's CR and LF excluded.
+    ///
+    /// A folded row's span holds the raw fold, CRLF and indent included, so
+    /// [`Span::get`] on the message returns the lines as sent, not the
+    /// unfolded value. A name warning's row is the span containing its
+    /// position, and a skipped line's following row is found by
+    /// `partition_point` on the span starts.
+    ///
+    /// ```
+    /// use sip_header::SipMessageHeaders;
+    ///
+    /// let msg = "To: x\r\n y\r\nIncident ID: TEST1\r\nno colon\r\nVia: z\r\n\r\n";
+    /// let headers = SipMessageHeaders::new(msg);
+    /// assert_eq!(headers.row_spans()[0].get(msg), Ok("To: x\r\n y"));
+    /// let at = headers.warnings()[0].position.unwrap();
+    /// let row = headers
+    ///     .row_spans()
+    ///     .iter()
+    ///     .position(|s| s.range().contains(&at));
+    /// assert_eq!(row, Some(1));
+    /// let at = headers.skipped()[0].range().start;
+    /// let next = headers
+    ///     .row_spans()
+    ///     .partition_point(|s| s.range().start < at);
+    /// assert_eq!(next, 2);
+    /// ```
+    pub fn row_spans(&self) -> &[Span] {
+        &self.row_spans
+    }
+
+    /// Where each skipped line sits in the message, in order, CR and LF
+    /// excluded: a line with no `:`, with an empty name or a control
+    /// character in it, or shaped as a start line other than the one
+    /// [`new`](Self::new) exempts, or a continuation with no header above
+    /// it, whose span includes its leading SP or HTAB.
+    pub fn skipped(&self) -> &[Span] {
         &self.skipped
+    }
+
+    /// Byte offset where the reader stopped: just after the blank line that
+    /// ends the header block, or the text's length when there is none.
+    pub fn end(&self) -> usize {
+        self.end
     }
 
     /// The breaches of RFC 3261 §7.3.1 `header-name = token` in the rows'
@@ -349,11 +400,14 @@ pub fn extract_header(message: &str, name: &str) -> Vec<String> {
 pub struct ExtractedHeaders {
     /// `(name as sent, value)` in wire order; compact names stay compact.
     pub headers: SipHeaderFields<'static>,
-    /// Byte offsets of the skipped lines, as
-    /// [`SipMessageHeaders::skipped`] reports them.
-    pub skipped: Vec<usize>,
+    /// The skipped lines, as [`SipMessageHeaders::skipped`] reports them.
+    pub skipped: Vec<Span>,
+    /// The row extents [`SipMessageHeaders::row_spans`] reports.
+    pub row_spans: Vec<Span>,
     /// The name warnings [`SipMessageHeaders::warnings`] reports.
     pub warnings: Vec<ParseWarning>,
+    /// Where the reader stopped, as [`SipMessageHeaders::end`] reports it.
+    pub end: usize,
 }
 
 /// Extract all headers from a raw SIP message as owned name-value pairs,
@@ -368,7 +422,7 @@ pub struct ExtractedHeaders {
 ///            \r\n";
 /// let all = extract_all_headers(msg);
 /// assert_eq!(all.headers.iter().next(), Some(("f", "Alice <sip:alice@example.com>")));
-/// assert_eq!(all.skipped, [msg.find("not").unwrap()]);
+/// assert_eq!(all.skipped[0].get(msg), Ok("not a header"));
 /// ```
 pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
     owned(SipMessageHeaders::new(message))
@@ -383,7 +437,7 @@ pub fn extract_all_headers(message: &str) -> ExtractedHeaders {
 ///
 /// let all = extract_header_block("no colon\r\nCall-ID: a@example.com\r\n");
 /// assert_eq!(all.headers.iter().next(), Some(("Call-ID", "a@example.com")));
-/// assert_eq!(all.skipped, [0]);
+/// assert_eq!(all.skipped[0].range(), 0..8);
 /// ```
 pub fn extract_header_block(block: &str) -> ExtractedHeaders {
     owned(SipMessageHeaders::from_header_block(block))
@@ -392,13 +446,17 @@ pub fn extract_header_block(block: &str) -> ExtractedHeaders {
 fn owned(headers: SipMessageHeaders<'_>) -> ExtractedHeaders {
     let SipMessageHeaders {
         fields,
+        row_spans,
         skipped,
         warnings,
+        end,
     } = headers;
     ExtractedHeaders {
         headers: fields.into_owned(),
         skipped,
+        row_spans,
         warnings,
+        end,
     }
 }
 

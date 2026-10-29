@@ -341,15 +341,17 @@ fn lint(
     if let Some(framing) = framing {
         start.finding(format!("framing: {framing}"));
     }
-    for &at in headers.skipped() {
+    for span in headers.skipped() {
+        let at = span
+            .range()
+            .start;
         let skipped_line = line
             + message[..at]
                 .matches('\n')
                 .count();
         let text = shown(
-            message[at..]
-                .lines()
-                .next(),
+            span.get(message)
+                .ok(),
             redact.is_some(),
         );
         start.finding(format!(
