@@ -2,7 +2,8 @@
 //!
 //! - [`SipMessageHeaders`]: the header rows of a raw message, a
 //!   [`SipHeaderRows`] store every typed accessor reads
-//! - [`MessageLines`]: the same rows and skipped lines, read lazily
+//! - [`MessageLines`]: the same rows and skipped lines, read lazily, from
+//!   text or from bytes
 //! - [`extract_header`], [`extract_all_headers`], [`extract_header_block`]:
 //!   the same rows as owned strings
 //! - [`extract_request_line`]: the request line's parts as received, which
@@ -59,6 +60,14 @@
 //! caller after one header pays, on every other row, only for that, and a
 //! value allocates only to unfold. The start-line check, which runs only for
 //! a name outside `token`, allocates nothing either.
+//!
+//! The walk reads bytes and acts only on ASCII ones (LF, CR, SP, HTAB, `:`,
+//! the token and control bytes of a name), none of which occurs inside a
+//! multi-byte UTF-8 sequence. Bytes and text therefore split alike, and
+//! invalid UTF-8 never moves a row boundary; a byte row is validated alone,
+//! when the caller asks for its text. The one exception reads text: the
+//! start-line check on a name outside `token`, which reads a line that is
+//! not UTF-8 lossily.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -371,9 +380,33 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
 ///     .unwrap();
 /// assert_eq!((row.index(), &*row.value()), (1, "42"));
 /// ```
-#[derive(Clone)]
-pub struct MessageLines<'a> {
-    message: &'a str,
+///
+/// Over bytes, the walk is the same: every delimiter it reads is ASCII,
+/// which never occurs inside a multi-byte UTF-8 sequence, so bytes and text
+/// split alike and invalid UTF-8 never moves a row boundary. A row's
+/// [`text`](MessageRow::text) validates that row alone. A `Vec<u8>` is
+/// passed as a slice.
+///
+/// ```
+/// use sip_header::{MessageLines, NameMatcher, SipHeader};
+///
+/// let buf: Vec<u8> = b"Via: SIP/2.0/TCP 198.51.100.1\r\nl: 42\r\n\r\nv=0".to_vec();
+/// let content_length = NameMatcher::from(SipHeader::ContentLength);
+/// let mut lines = MessageLines::from_header_block(buf.as_slice());
+/// let row = lines
+///     .by_ref()
+///     .filter_map(|line| match line {
+///         sip_header::MessageLine::Row(row) => Some(row),
+///         _ => None,
+///     })
+///     .find(|row| std::str::from_utf8(row.name()).is_ok_and(|n| content_length.matches(n)))
+///     .unwrap();
+/// assert_eq!(&*row.value(), b"42");
+/// assert_eq!(row.text()?.value(), "42");
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub struct MessageLines<'a, T: ?Sized + MessageText = str> {
+    message: &'a T,
     lines: RawLines<'a>,
     /// The line read after a row that did not continue it.
     ahead: Option<Range<usize>>,
@@ -383,23 +416,102 @@ pub struct MessageLines<'a> {
     done: bool,
 }
 
-impl<'a> MessageLines<'a> {
+/// What [`MessageLines`] walks: `str` or `[u8]`, and nothing else, since the
+/// walk relies on every delimiter being an ASCII byte of UTF-8 text.
+pub trait MessageText: text::Sealed {}
+
+impl MessageText for str {}
+
+impl MessageText for [u8] {}
+
+mod text {
+    use std::ops::Range;
+
+    pub trait Sealed: std::fmt::Debug + PartialEq + ToOwned {
+        fn bytes(&self) -> &[u8];
+        /// The text at `range`, a range the walk found, so on char
+        /// boundaries; empty if it is not.
+        fn slice(&self, range: Range<usize>) -> &Self;
+        fn with_capacity(capacity: usize) -> Self::Owned;
+        fn push(owned: &mut Self::Owned, part: &Self);
+        fn push_sp(owned: &mut Self::Owned);
+        /// Whether the line is shaped as a request or status line, read
+        /// lossily if it is not UTF-8.
+        fn is_start_line(&self) -> bool;
+    }
+
+    impl Sealed for str {
+        fn bytes(&self) -> &[u8] {
+            self.as_bytes()
+        }
+
+        fn slice(&self, range: Range<usize>) -> &Self {
+            self.get(range)
+                .unwrap_or_default()
+        }
+
+        fn with_capacity(capacity: usize) -> String {
+            String::with_capacity(capacity)
+        }
+
+        fn push(owned: &mut String, part: &str) {
+            owned.push_str(part);
+        }
+
+        fn push_sp(owned: &mut String) {
+            owned.push(' ');
+        }
+
+        fn is_start_line(&self) -> bool {
+            super::is_start_line(self)
+        }
+    }
+
+    impl Sealed for [u8] {
+        fn bytes(&self) -> &[u8] {
+            self
+        }
+
+        fn slice(&self, range: Range<usize>) -> &Self {
+            self.get(range)
+                .unwrap_or_default()
+        }
+
+        fn with_capacity(capacity: usize) -> Vec<u8> {
+            Vec::with_capacity(capacity)
+        }
+
+        fn push(owned: &mut Vec<u8>, part: &[u8]) {
+            owned.extend_from_slice(part);
+        }
+
+        fn push_sp(owned: &mut Vec<u8>) {
+            owned.push(b' ');
+        }
+
+        fn is_start_line(&self) -> bool {
+            super::is_start_line(&String::from_utf8_lossy(self))
+        }
+    }
+}
+
+impl<'a, T: ?Sized + MessageText> MessageLines<'a, T> {
     /// Walk the header block of `message`, exempting a first line that is a
     /// request or status line, as [`SipMessageHeaders::new`] does.
-    pub fn new(message: &'a str) -> Self {
+    pub fn new(message: &'a T) -> Self {
         Self::read(message, true)
     }
 
     /// Walk `block`, header lines with no start line, up to its first blank
     /// line, as [`SipMessageHeaders::from_header_block`] does.
-    pub fn from_header_block(block: &'a str) -> Self {
+    pub fn from_header_block(block: &'a T) -> Self {
         Self::read(block, false)
     }
 
-    fn read(message: &'a str, start_line: bool) -> Self {
+    fn read(message: &'a T, start_line: bool) -> Self {
         MessageLines {
             message,
-            lines: RawLines::new(message.as_bytes()),
+            lines: RawLines::new(message.bytes()),
             ahead: None,
             rows: 0,
             start_line,
@@ -430,16 +542,16 @@ impl<'a> MessageLines<'a> {
     }
 
     /// The rows alone, skipped lines dropped.
-    pub fn rows(self) -> impl Iterator<Item = MessageRow<'a>> {
+    pub fn rows(self) -> impl Iterator<Item = MessageRow<'a, T>> {
         self.filter_map(|line| match line {
             MessageLine::Row(row) => Some(row),
             MessageLine::Skipped(_) => None,
         })
     }
 
-    /// The next line of the header block, its CR stripped; `None` from the
-    /// blank line on.
-    fn line(&mut self) -> Option<(usize, &'a str)> {
+    /// The next line of the header block, its CR stripped, as a range of
+    /// the message; `None` from the blank line on.
+    fn line(&mut self) -> Option<Range<usize>> {
         if self.done {
             return None;
         }
@@ -460,63 +572,95 @@ impl<'a> MessageLines<'a> {
             self.blank_line_end = (body_start
                 <= self
                     .message
+                    .bytes()
                     .len())
             .then_some(body_start);
             return None;
         }
-        let line = self
-            .message
-            .get(range.clone())?;
-        Some((range.start, line))
+        Some(range)
+    }
+
+    /// Whether the line at `range` starts with SP or HTAB.
+    fn is_continuation(&self, range: &Range<usize>) -> bool {
+        matches!(
+            self.message
+                .bytes()
+                .get(range.start),
+            Some(b' ' | b'\t')
+        )
     }
 
     /// Consume the continuation lines after a header line, returning the
     /// end of the last one, or `end` when there is none.
     fn continuations(&mut self, mut end: usize) -> usize {
-        while let Some((at, line)) = self.line() {
-            if !line.starts_with([' ', '\t']) {
-                self.ahead = Some(at..at + line.len());
+        while let Some(line) = self.line() {
+            if !self.is_continuation(&line) {
+                self.ahead = Some(line);
                 break;
             }
-            end = at + line.len();
+            end = line.end;
         }
         end
     }
 }
 
-impl<'a> Iterator for MessageLines<'a> {
-    type Item = MessageLine<'a>;
+impl<'a, T: ?Sized + MessageText> Iterator for MessageLines<'a, T> {
+    type Item = MessageLine<'a, T>;
 
-    fn next(&mut self) -> Option<MessageLine<'a>> {
+    fn next(&mut self) -> Option<MessageLine<'a, T>> {
         loop {
-            let (at, line) = self.line()?;
-            if line.starts_with([' ', '\t']) {
-                return Some(MessageLine::Skipped(Span::new(at..at + line.len())));
+            let line = self.line()?;
+            let at = line.start;
+            if self.is_continuation(&line) {
+                return Some(MessageLine::Skipped(Span::new(line)));
             }
-            match header_line(line) {
-                Some((name, value, token)) if token || !is_start_line(line) => {
-                    let end = self.continuations(at + line.len());
+            let text = self
+                .message
+                .slice(line.clone());
+            match header_line(text.bytes()) {
+                Some((name_end, colon, token)) if token || !text.is_start_line() => {
+                    let end = self.continuations(line.end);
                     let index = self.rows;
                     self.rows += 1;
                     return Some(MessageLine::Row(MessageRow {
-                        message: self.message,
-                        name,
+                        text: self
+                            .message
+                            .slice(at..end),
                         at,
-                        value,
-                        end,
+                        name_end,
+                        value_start: colon + 1,
+                        first_end: line.len(),
                         index,
                     }));
                 }
-                _ if at == 0 && self.start_line && is_start_line(line) => {}
-                _ => return Some(MessageLine::Skipped(Span::new(at..at + line.len()))),
+                _ if at == 0 && self.start_line && text.is_start_line() => {}
+                _ => return Some(MessageLine::Skipped(Span::new(line))),
             }
         }
     }
 }
 
-impl std::iter::FusedIterator for MessageLines<'_> {}
+impl<T: ?Sized + MessageText> std::iter::FusedIterator for MessageLines<'_, T> {}
 
-impl std::fmt::Debug for MessageLines<'_> {
+impl<T: ?Sized + MessageText> Clone for MessageLines<'_, T> {
+    fn clone(&self) -> Self {
+        MessageLines {
+            message: self.message,
+            lines: self
+                .lines
+                .clone(),
+            ahead: self
+                .ahead
+                .clone(),
+            rows: self.rows,
+            start_line: self.start_line,
+            blank_line_end: self.blank_line_end,
+            done: self.done,
+        }
+    }
+}
+
+impl<T: ?Sized + MessageText> std::fmt::Debug for MessageLines<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MessageLines")
             .field(
@@ -532,31 +676,98 @@ impl std::fmt::Debug for MessageLines<'_> {
 }
 
 /// One line of a header block as [`MessageLines`] reads it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum MessageLine<'a> {
+pub enum MessageLine<'a, T: ?Sized + MessageText = str> {
     /// A header line with its continuation lines.
-    Row(MessageRow<'a>),
+    Row(MessageRow<'a, T>),
     /// A line [`SipMessageHeaders::skipped`] reports, by extent.
     Skipped(Span),
 }
 
-/// One row of a header block, read on demand from the message.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct MessageRow<'a> {
-    message: &'a str,
-    name: &'a str,
+impl<T: ?Sized + MessageText> Clone for MessageLine<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: ?Sized + MessageText> Copy for MessageLine<'_, T> {}
+
+impl<T: ?Sized + MessageText> PartialEq for MessageLine<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MessageLine::Row(a), MessageLine::Row(b)) => a == b,
+            (MessageLine::Skipped(a), MessageLine::Skipped(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl<T: ?Sized + MessageText> Eq for MessageLine<'_, T> {}
+
+impl<T: ?Sized + MessageText> std::fmt::Debug for MessageLine<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MessageLine::Row(row) => f
+                .debug_tuple("Row")
+                .field(row)
+                .finish(),
+            MessageLine::Skipped(span) => f
+                .debug_tuple("Skipped")
+                .field(span)
+                .finish(),
+        }
+    }
+}
+
+/// One row of a header block, read on demand from the message: `str` rows
+/// carry the text accessors, `[u8]` rows reach them through
+/// [`text`](MessageRow::text).
+pub struct MessageRow<'a, T: ?Sized + MessageText = str> {
+    /// The row's extent, from the name to the end of its last line.
+    text: &'a T,
+    /// Where `text` starts in the message.
     at: usize,
-    /// The first line's value, untrimmed.
-    value: &'a str,
-    end: usize,
+    // Offsets into `text`.
+    name_end: usize,
+    value_start: usize,
+    first_end: usize,
     index: usize,
 }
 
-impl<'a> MessageRow<'a> {
+impl<T: ?Sized + MessageText> Clone for MessageRow<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: ?Sized + MessageText> Copy for MessageRow<'_, T> {}
+
+impl<T: ?Sized + MessageText> PartialEq for MessageRow<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+            && (
+                self.at,
+                self.name_end,
+                self.value_start,
+                self.first_end,
+                self.index,
+            ) == (
+                other.at,
+                other.name_end,
+                other.value_start,
+                other.first_end,
+                other.index,
+            )
+    }
+}
+
+impl<T: ?Sized + MessageText> Eq for MessageRow<'_, T> {}
+
+impl<'a, T: ?Sized + MessageText> MessageRow<'a, T> {
     /// The name as sent, compact forms included.
-    pub fn name(&self) -> &'a str {
-        self.name
+    pub fn name(&self) -> &'a T {
+        self.text
+            .slice(0..self.name_end)
     }
 
     /// The row's index among the rows, as [`SipMessageHeaders::fields`]
@@ -568,86 +779,168 @@ impl<'a> MessageRow<'a> {
     /// Where the row sits in the message, as
     /// [`SipMessageHeaders::row_spans`] reports it.
     pub fn span(&self) -> Span {
-        Span::new(self.at..self.end)
+        Span::new(
+            self.at
+                ..self.at
+                    + self
+                        .text
+                        .bytes()
+                        .len(),
+        )
     }
 
     /// The value as [`SipMessageHeaders`] holds it: trimmed of SP and HTAB,
     /// each continuation line unfolded with one SP (RFC 3261 §7.3.1).
     /// Borrowed unless a continuation line holds more than SP and HTAB.
-    pub fn value(&self) -> Cow<'a, str> {
-        let first = trim_lws(self.value);
+    pub fn value(&self) -> Cow<'a, T> {
+        let first = self.trimmed(self.value_start..self.first_end);
         let mut folded = self
             .continuations()
-            .map(trim_lws)
+            .map(|line| self.trimmed(line))
             .filter(|line| !line.is_empty())
             .peekable();
         if folded
             .peek()
             .is_none()
         {
-            return Cow::Borrowed(first);
+            return Cow::Borrowed(
+                self.text
+                    .slice(first),
+            );
         }
         // The extent holds the value with each fold's CRLF and indent where
         // one SP goes, so this is the only allocation.
-        let mut value = String::with_capacity(self.end - self.at);
-        value.push_str(first);
+        let mut value = T::with_capacity(
+            self.text
+                .bytes()
+                .len(),
+        );
+        let mut empty = first.is_empty();
+        T::push(
+            &mut value,
+            self.text
+                .slice(first),
+        );
         for line in folded {
-            if !value.is_empty() {
-                value.push(' ');
+            if !empty {
+                T::push_sp(&mut value);
             }
-            value.push_str(line);
+            T::push(
+                &mut value,
+                self.text
+                    .slice(line),
+            );
+            empty = false;
         }
         Cow::Owned(value)
     }
 
-    /// The breaches of `header-name = token` in the name, as
-    /// [`SipMessageHeaders::warnings`] holds them on [`Field::Name`].
-    pub fn name_warnings(&self) -> impl Iterator<Item = ParseWarning> + 'a {
-        name_warnings(self.name, self.at)
+    /// `range` of the row without the SP and HTAB at either end (RFC 3261
+    /// §25.1 `WSP`).
+    fn trimmed(&self, range: Range<usize>) -> Range<usize> {
+        let bytes = self
+            .text
+            .bytes()
+            .get(range.clone())
+            .unwrap_or_default();
+        let lead = bytes
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
+        let trail = bytes[lead..]
+            .iter()
+            .rev()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
+        range.start + lead..range.end - trail
     }
 
-    /// The continuation lines, each without its CR.
-    fn continuations(&self) -> impl Iterator<Item = &'a str> {
-        let first_end = crate::offset_in(self.message, self.value)
-            + self
-                .value
-                .len();
-        self.message
-            .get(first_end..self.end)
-            .unwrap_or_default()
-            .split_inclusive('\n')
-            .skip(1)
-            .map(|line| match line.strip_suffix('\n') {
-                // The extent ends before the last line's ending, so only an
-                // earlier line still holds the CR its ending strips.
-                Some(line) => line
-                    .strip_suffix('\r')
-                    .unwrap_or(line),
-                None => line,
-            })
+    /// The continuation lines, each without its CR, as ranges of the row.
+    fn continuations(&self) -> impl Iterator<Item = Range<usize>> + 'a {
+        let bytes = self
+            .text
+            .bytes();
+        let mut pos = self.first_end;
+        std::iter::from_fn(move || {
+            let start = pos + memchr::memchr(b'\n', bytes.get(pos..)?)? + 1;
+            let rest = bytes.get(start..)?;
+            let ended = memchr::memchr(b'\n', rest);
+            pos = start + ended.unwrap_or(rest.len());
+            let line = &rest[..pos - start];
+            // The extent ends before the last line's ending, so only an
+            // earlier line still holds the CR its ending strips.
+            let len = match (ended, line) {
+                (Some(_), [.., b'\r']) => line.len() - 1,
+                _ => line.len(),
+            };
+            Some(start..start + len)
+        })
     }
 }
 
-impl std::fmt::Debug for MessageRow<'_> {
+impl<'a> MessageRow<'a, str> {
+    /// The breaches of `header-name = token` in the name, as
+    /// [`SipMessageHeaders::warnings`] holds them on [`Field::Name`].
+    pub fn name_warnings(&self) -> impl Iterator<Item = ParseWarning> + 'a {
+        name_warnings(self.name(), self.at)
+    }
+}
+
+impl<'a> MessageRow<'a, [u8]> {
+    /// The row as text, every accessor reading as over a `str` message.
+    ///
+    /// # Errors
+    ///
+    /// [`FaultCode::NotUtf8`] on [`Field::Name`] or [`Field::Value`],
+    /// positioned at the first byte that is not UTF-8 and spanning its
+    /// sequence, when the row's extent is not UTF-8.
+    pub fn text(&self) -> Result<MessageRow<'a, str>, ParseError> {
+        let text = std::str::from_utf8(self.text).map_err(|e| {
+            let bad = e.valid_up_to();
+            let field = if bad < self.name_end {
+                Field::Name
+            } else {
+                Field::Value
+            };
+            let len = e
+                .error_len()
+                .unwrap_or(
+                    self.text
+                        .len()
+                        - bad,
+                );
+            ParseError::Malformed(
+                Fault::new(field, FaultCode::NotUtf8)
+                    .at(self.at + bad)
+                    .to(self.at + bad + len),
+            )
+        })?;
+        Ok(MessageRow {
+            text,
+            at: self.at,
+            name_end: self.name_end,
+            value_start: self.value_start,
+            first_end: self.first_end,
+            index: self.index,
+        })
+    }
+}
+
+impl<T: ?Sized + MessageText> std::fmt::Debug for MessageRow<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MessageRow")
-            .field("name", &self.name)
+            .field("name", &self.name())
             .field("index", &self.index)
             .field("span", &self.span())
             .finish_non_exhaustive()
     }
 }
 
-/// `s` without the SP and HTAB at either end (RFC 3261 §25.1 `WSP`).
-fn trim_lws(s: &str) -> &str {
-    s.trim_matches([' ', '\t'])
-}
-
-/// `name: value` with a bounded name: not empty and free of control
-/// characters but HTAB, SWS before the colon allowed; the value untrimmed,
-/// and whether the name is a `token`. One pass over the name's bytes.
-fn header_line(line: &str) -> Option<(&str, &str, bool)> {
-    let bytes = line.as_bytes();
+/// `bytes`, a line, as `name: value` with a bounded name, not empty and free of
+/// control characters but HTAB, SWS before the colon allowed: where the name
+/// ends, where the colon is, and whether the name is a `token`. One pass
+/// over the name's bytes.
+fn header_line(bytes: &[u8]) -> Option<(usize, usize, bool)> {
     let mut name_end = 0;
     let mut first_non_token = None;
     let mut previous = 0;
@@ -656,9 +949,8 @@ fn header_line(line: &str) -> Option<(&str, &str, bool)> {
         .enumerate()
     {
         if b == b':' {
-            let token = name_end > 0 && first_non_token.map_or(true, |at| at >= name_end);
-            let name = line.get(..name_end)?;
-            return (name_end > 0).then_some((name, line.get(i + 1..)?, token));
+            let token = first_non_token.map_or(true, |at| at >= name_end);
+            return (name_end > 0).then_some((name_end, i, token));
         }
         // char::is_control in UTF-8: C0, DEL, and C1 as 0xC2 0x80..=0x9F.
         if (b < 0x20 && b != b'\t') || b == 0x7f || (previous == 0xc2 && (0x80..=0x9f).contains(&b))
