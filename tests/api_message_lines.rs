@@ -69,13 +69,14 @@ fn from_reader(headers: &SipMessageHeaders<'_>) -> Reading {
     }
 }
 
-fn from_walker(mut lines: MessageLines<'_>) -> Reading {
+/// The reading of `lines`, a walk over `len` bytes.
+fn from_walker(mut lines: MessageLines<'_>, len: usize) -> Reading {
     let mut reading = Reading {
         rows: Vec::new(),
         row_spans: Vec::new(),
         skipped: Vec::new(),
         warnings: Vec::new(),
-        end: lines.end(),
+        end: len,
     };
     for line in lines.by_ref() {
         match line {
@@ -110,7 +111,9 @@ fn from_walker(mut lines: MessageLines<'_>) -> Reading {
             _ => unreachable!("no other line kind exists yet"),
         }
     }
-    assert_eq!(lines.end(), reading.end);
+    if let Some(end) = lines.blank_line_end() {
+        reading.end = end;
+    }
     reading
 }
 
@@ -118,11 +121,11 @@ proptest! {
     #[test]
     fn walker_reads_as_the_reader(msg in message()) {
         prop_assert_eq!(
-            from_walker(MessageLines::new(&msg)),
+            from_walker(MessageLines::new(&msg), msg.len()),
             from_reader(&SipMessageHeaders::new(&msg))
         );
         prop_assert_eq!(
-            from_walker(MessageLines::from_header_block(&msg)),
+            from_walker(MessageLines::from_header_block(&msg), msg.len()),
             from_reader(&SipMessageHeaders::from_header_block(&msg))
         );
     }
@@ -173,4 +176,24 @@ fn a_folded_value_alone_is_owned() {
     assert!(matches!(values[0], std::borrow::Cow::Owned(_)));
     assert!(matches!(values[1], std::borrow::Cow::Borrowed(_)));
     assert!(matches!(values[2], std::borrow::Cow::Borrowed(_)));
+}
+
+#[test]
+fn blank_line_end_says_whether_the_block_is_complete() {
+    for (msg, end) in [
+        ("To: x\r\n\r\nbody", Some(9)),
+        ("To: x\r\n\r\n", Some(9)),
+        ("To: x\n\n", Some(7)),
+        ("\r\n", Some(2)),
+        ("To: x\r\n\r", None),
+        ("To: x\r\n", None),
+        ("To: x", None),
+        ("", None),
+    ] {
+        let mut lines = MessageLines::new(msg);
+        lines
+            .by_ref()
+            .for_each(drop);
+        assert_eq!(lines.blank_line_end(), end, "{msg:?}");
+    }
 }

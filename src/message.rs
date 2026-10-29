@@ -58,6 +58,7 @@
 //! start-line check keeps that: it runs on every name outside `token`.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
@@ -67,24 +68,61 @@ use crate::error::{Fault, FaultCode, ParseError};
 use crate::lws;
 use crate::span::Span;
 
+/// The lines of a text as byte ranges, each ending at LF or at the end of
+/// the text, one CR before the LF stripped; the text after a final LF is a
+/// last, empty line.
+#[derive(Debug, Clone)]
+struct RawLines<'a> {
+    bytes: &'a [u8],
+    next: usize,
+}
+
+impl<'a> RawLines<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        RawLines { bytes, next: 0 }
+    }
+
+    /// Where the line after the last one returned starts; past the end of
+    /// the text when that line had no LF.
+    fn next_start(&self) -> usize {
+        self.next
+    }
+}
+
+impl Iterator for RawLines<'_> {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Range<usize>> {
+        let at = self.next;
+        let rest = self
+            .bytes
+            .get(at..)?;
+        let len = memchr::memchr(b'\n', rest).unwrap_or(rest.len());
+        self.next = at + len + 1;
+        let len = match rest[..len] {
+            [.., b'\r'] => len - 1,
+            _ => len,
+        };
+        Some(at..at + len)
+    }
+}
+
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
 ///
 /// Returns the header block (blank line excluded) and the byte offset of
 /// the first body byte, or `None` when the message has no blank line.
 fn split_at_blank_line(message: &str) -> (&str, Option<usize>) {
-    let mut offset = 0;
-    for line in message.split('\n') {
-        let stripped = line
-            .strip_suffix('\r')
-            .unwrap_or(line);
-        if stripped.is_empty() {
-            let body_start = offset + line.len() + 1;
+    let mut lines = RawLines::new(message.as_bytes());
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            let body_start = lines.next_start();
             return (
-                &message[..offset],
+                message
+                    .get(..line.start)
+                    .unwrap_or(message),
                 (body_start <= message.len()).then_some(body_start),
             );
         }
-        offset += line.len() + 1;
     }
     (message, None)
 }
@@ -175,13 +213,12 @@ impl<'a> SipMessageHeaders<'a> {
     }
 
     fn read(message: &'a str, start_line: bool) -> Self {
-        let lines = MessageLines::read(message, start_line);
-        let end = lines.end();
+        let mut lines = MessageLines::read(message, start_line);
         let mut fields = SipHeaderFields::new();
         let mut row_spans = Vec::new();
         let mut skipped = Vec::new();
         let mut warnings = Vec::new();
-        for line in lines {
+        for line in lines.by_ref() {
             match line {
                 MessageLine::Row(row) => {
                     warnings.extend(row.name_warnings());
@@ -197,7 +234,9 @@ impl<'a> SipMessageHeaders<'a> {
             row_spans,
             skipped,
             warnings,
-            end,
+            end: lines
+                .blank_line_end()
+                .unwrap_or(message.len()),
         }
     }
 
@@ -340,11 +379,13 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
 #[derive(Clone)]
 pub struct MessageLines<'a> {
     message: &'a str,
-    block: &'a str,
-    next: usize,
+    lines: RawLines<'a>,
+    /// The line read after a row that did not continue it.
+    ahead: Option<Range<usize>>,
     rows: usize,
     start_line: bool,
-    end: usize,
+    blank_line_end: Option<usize>,
+    done: bool,
 }
 
 impl<'a> MessageLines<'a> {
@@ -361,21 +402,36 @@ impl<'a> MessageLines<'a> {
     }
 
     fn read(message: &'a str, start_line: bool) -> Self {
-        let (block, body_start) = split_at_blank_line(message);
         MessageLines {
             message,
-            block,
-            next: 0,
+            lines: RawLines::new(message.as_bytes()),
+            ahead: None,
             rows: 0,
             start_line,
-            end: body_start.unwrap_or(message.len()),
+            blank_line_end: None,
+            done: false,
         }
     }
 
-    /// Byte offset where the header block ends, as
-    /// [`SipMessageHeaders::end`] reports it.
-    pub fn end(&self) -> usize {
-        self.end
+    /// Byte offset of the first body byte, once the walk has passed the
+    /// blank line that ends the header block; `None` before that, and when
+    /// the text ends without one, so a stream reader knows whether the
+    /// block is complete.
+    ///
+    /// ```
+    /// use sip_header::MessageLines;
+    ///
+    /// let mut lines = MessageLines::new("To: x\r\n\r\nbody");
+    /// assert_eq!(lines.blank_line_end(), None);
+    /// lines.by_ref().for_each(drop);
+    /// assert_eq!(lines.blank_line_end(), Some(9));
+    ///
+    /// let mut partial = MessageLines::new("To: x\r\nVia: y\r\n");
+    /// partial.by_ref().for_each(drop);
+    /// assert_eq!(partial.blank_line_end(), None);
+    /// ```
+    pub fn blank_line_end(&self) -> Option<usize> {
+        self.blank_line_end
     }
 
     /// The rows alone, skipped lines dropped.
@@ -386,37 +442,50 @@ impl<'a> MessageLines<'a> {
         })
     }
 
-    /// The next line's offset and text, its CR stripped.
+    /// The next line of the header block, its CR stripped; `None` from the
+    /// blank line on.
     fn line(&mut self) -> Option<(usize, &'a str)> {
-        let at = self.next;
-        let rest = self
-            .block
-            .get(at..)?;
-        let len = rest
-            .find('\n')
-            .unwrap_or(rest.len());
-        self.next = at + len + 1;
-        let line = &rest[..len];
-        Some((
-            at,
-            line.strip_suffix('\r')
-                .unwrap_or(line),
-        ))
+        if self.done {
+            return None;
+        }
+        let range = match self
+            .ahead
+            .take()
+        {
+            Some(range) => range,
+            None => self
+                .lines
+                .next()?,
+        };
+        if range.is_empty() {
+            self.done = true;
+            let body_start = self
+                .lines
+                .next_start();
+            self.blank_line_end = (body_start
+                <= self
+                    .message
+                    .len())
+            .then_some(body_start);
+            return None;
+        }
+        let line = self
+            .message
+            .get(range.clone())?;
+        Some((range.start, line))
     }
 
     /// Consume the continuation lines after a header line, returning the
     /// end of the last one, or `end` when there is none.
     fn continuations(&mut self, mut end: usize) -> usize {
-        loop {
-            let resume = self.next;
-            match self.line() {
-                Some((at, line)) if line.starts_with([' ', '\t']) => end = at + line.len(),
-                _ => {
-                    self.next = resume;
-                    return end;
-                }
+        while let Some((at, line)) = self.line() {
+            if !line.starts_with([' ', '\t']) {
+                self.ahead = Some(at..at + line.len());
+                break;
             }
+            end = at + line.len();
         }
+        end
     }
 }
 
@@ -426,9 +495,6 @@ impl<'a> Iterator for MessageLines<'a> {
     fn next(&mut self) -> Option<MessageLine<'a>> {
         loop {
             let (at, line) = self.line()?;
-            if line.is_empty() {
-                continue;
-            }
             if line.starts_with([' ', '\t']) {
                 return Some(MessageLine::Skipped(Span::new(at..at + line.len())));
             }
@@ -458,9 +524,14 @@ impl std::iter::FusedIterator for MessageLines<'_> {}
 impl std::fmt::Debug for MessageLines<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MessageLines")
-            .field("next", &self.next)
+            .field(
+                "next",
+                &self
+                    .lines
+                    .next_start(),
+            )
             .field("rows", &self.rows)
-            .field("end", &self.end)
+            .field("blank_line_end", &self.blank_line_end)
             .finish_non_exhaustive()
     }
 }
