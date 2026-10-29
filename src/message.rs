@@ -38,12 +38,13 @@
 //! `skipped`; only a first line shaped as a request or status line is
 //! exempt, and only when reading a whole message.
 //!
-//! A row value is trimmed of the whitespace `str::trim` removes, so every
-//! row reaches a store clean, typed header or not; a trimmed run holding
-//! anything but SP or HTAB is reported here, once, and a value parser over
-//! that row never sees it. The reader's own warnings carry `row: None` and
-//! message offsets, as the request line's do: a warning's `row` indexes
-//! value rows, and a name or the padding around a value is in none.
+//! A row value is trimmed of SP and HTAB, the `WSP` of RFC 3261 `LWS`, and
+//! of nothing else. Other whitespace and control characters at its edges
+//! (NBSP, VT, a CR beyond the line ending) stay in the row, where the value
+//! parser that reads it trims and reports them at row positions; text read
+//! without a parser keeps them rather than losing them. The reader's own
+//! warnings carry `row: None` and message offsets, as the request line's do:
+//! a warning's `row` indexes value rows, and a name is in none.
 //!
 //! The reader reports where things are instead: each row's extent (name
 //! through its last continuation line, so a folded row's extent holds the
@@ -52,10 +53,12 @@
 //! from those extents, so no second line rule exists outside this file.
 //!
 //! [`MessageLines`] is that line rule; [`SipMessageHeaders`] and every
-//! extract function read through it. A row computes nothing until asked,
-//! so a caller after one header pays, on every other row, only for the line
-//! split and the name's bounds, and a value allocates only to unfold. The
-//! start-line check keeps that: it runs on every name outside `token`.
+//! extract function read through it. Each line is searched for its LF once,
+//! the blank line found during the walk, and a name bounded and classified
+//! in one pass over its bytes. A row computes nothing more until asked, so a
+//! caller after one header pays, on every other row, only for that, and a
+//! value allocates only to unfold. The start-line check, which runs only for
+//! a name outside `token`, allocates nothing either.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -65,7 +68,6 @@ use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{Fault, FaultCode, ParseError};
-use crate::lws;
 use crate::span::Span;
 
 /// The lines of a text as byte ranges, each ending at LF or at the end of
@@ -158,8 +160,8 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// Reads the lines up to the blank line that ends the header block. A
 /// continuation line (starting with SP or HTAB) unfolds into the row above
 /// it with one SP (RFC 3261 §7.3.1); only such rows are held owned, every
-/// other row borrows the message. Values are trimmed; names are kept as
-/// sent, compact forms included.
+/// other row borrows the message. Values are trimmed of SP and HTAB only;
+/// names are kept as sent, compact forms included.
 ///
 /// As a [`SipHeaderRows`] store it matches names as
 /// [`SipHeader::name_matches`] does, returning every spelling's rows in wire
@@ -222,7 +224,6 @@ impl<'a> SipMessageHeaders<'a> {
             match line {
                 MessageLine::Row(row) => {
                     warnings.extend(row.name_warnings());
-                    warnings.extend(row.value_warnings());
                     fields.push(row.name(), row.value());
                     row_spans.push(row.span());
                 }
@@ -320,13 +321,8 @@ impl<'a> SipMessageHeaders<'a> {
     /// [`WarningCode::HeaderNameWhitespace`], [`WarningCode::NonAscii`] and
     /// [`WarningCode::InvalidToken`], in that order, on [`Field::Name`].
     /// Positions are byte offsets into the message, at the first offending
-    /// character; the span covers the name.
-    ///
-    /// The same list holds, on [`Field::Value`], each run of whitespace the
-    /// reader trimmed from a value or a continuation line that holds more
-    /// than SP and HTAB: [`WarningCode::ControlChar`] for a C0 control
-    /// character, [`WarningCode::NonLwsWhitespace`] for any other, one each
-    /// per run, spanning the run.
+    /// character; the span covers the name. Whitespace beyond SP and HTAB
+    /// around a value stays in the row, for its value parser to report.
     ///
     /// ```
     /// use sip_header::{SipMessageHeaders, WarningCode};
@@ -374,7 +370,6 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
 ///     .find(|row| content_length.matches(row.name()))
 ///     .unwrap();
 /// assert_eq!((row.index(), &*row.value()), (1, "42"));
-/// assert!(row.value_warnings().next().is_none());
 /// ```
 #[derive(Clone)]
 pub struct MessageLines<'a> {
@@ -576,16 +571,14 @@ impl<'a> MessageRow<'a> {
         Span::new(self.at..self.end)
     }
 
-    /// The value as [`SipMessageHeaders`] holds it: trimmed, each
-    /// continuation line unfolded with one SP (RFC 3261 §7.3.1). Borrowed
-    /// unless a continuation line holds more than whitespace.
+    /// The value as [`SipMessageHeaders`] holds it: trimmed of SP and HTAB,
+    /// each continuation line unfolded with one SP (RFC 3261 §7.3.1).
+    /// Borrowed unless a continuation line holds more than SP and HTAB.
     pub fn value(&self) -> Cow<'a, str> {
-        let first = self
-            .value
-            .trim();
+        let first = trim_lws(self.value);
         let mut folded = self
             .continuations()
-            .map(str::trim)
+            .map(trim_lws)
             .filter(|line| !line.is_empty())
             .peekable();
         if folded
@@ -605,24 +598,6 @@ impl<'a> MessageRow<'a> {
             value.push_str(line);
         }
         Cow::Owned(value)
-    }
-
-    /// The warnings [`SipMessageHeaders::warnings`] holds on
-    /// [`Field::Value`] for this row: the trimmed runs that hold more than
-    /// SP and HTAB, in line order.
-    pub fn value_warnings(&self) -> impl Iterator<Item = ParseWarning> + 'a {
-        let message = self.message;
-        std::iter::once(self.value)
-            .chain(self.continuations())
-            .flat_map(move |line| {
-                let (head, rest) = lws::split_start(line);
-                let (_, tail) = lws::split_end(rest);
-                lws::run_warnings(message, head, Field::Value).chain(lws::run_warnings(
-                    message,
-                    tail,
-                    Field::Value,
-                ))
-            })
     }
 
     /// The breaches of `header-name = token` in the name, as
@@ -661,6 +636,11 @@ impl std::fmt::Debug for MessageRow<'_> {
             .field("span", &self.span())
             .finish_non_exhaustive()
     }
+}
+
+/// `s` without the SP and HTAB at either end (RFC 3261 §25.1 `WSP`).
+fn trim_lws(s: &str) -> &str {
+    s.trim_matches([' ', '\t'])
 }
 
 /// `name: value` with a bounded name: not empty and free of control

@@ -476,18 +476,17 @@ fn token_list() {
     check::<Allow>(&["¤a, b", "a¤, b", "a,¤b", "a, b¤"]);
 }
 
-/// A row the reader trimmed arrives clean: reported once, by the reader.
-/// What a typed read over the `Content-Length` rows of `headers` reports,
-/// as `(field, code, kind, row, position)`.
-fn content_length_warnings(
-    headers: &SipMessageHeaders<'_>,
-) -> Vec<(
+/// A warning as `(field, code, kind, row, position)`.
+type Reported = (
     Field,
     WarningCode,
     WarningKind,
     Option<usize>,
     Option<usize>,
-)> {
+);
+
+/// What a typed read over the `Content-Length` rows of `headers` reports.
+fn content_length_warnings(headers: &SipMessageHeaders<'_>) -> Vec<Reported> {
     headers
         .parse_header::<SipContentLength>(SipHeader::ContentLength)
         .unwrap()
@@ -553,24 +552,24 @@ fn a_value_parser_reports_text_handed_to_it_directly() {
 
 #[test]
 fn a_second_cr_at_a_line_end_is_a_control_character() {
-    let message = "INVITE sip:a@example.com SIP/2.0\r\nContent-ID: <x@example.com>\r\r\n\r\n";
+    let message = "INVITE sip:a@example.com SIP/2.0\r\nContent-Length: 12\r\r\n\r\n";
     let headers = SipMessageHeaders::new(message);
     assert_eq!(headers.warnings(), []);
     assert_eq!(
         headers
-            .sip_header(SipHeader::ContentId)
+            .sip_header(SipHeader::ContentLength)
             .unwrap(),
-        Some("<x@example.com>\r")
+        Some("12\r")
     );
-    let parsed = SipHeaderAddr::parse_with_warnings("<x@example.com>\r").unwrap();
-    let codes: Vec<_> = parsed
-        .warnings
-        .iter()
-        .map(|w| (w.code, w.position))
-        .collect();
     assert_eq!(
-        codes,
-        [(WarningCode::ControlChar, Some("<x@example.com>".len()))]
+        content_length_warnings(&headers),
+        [(
+            Field::Value,
+            WarningCode::ControlChar,
+            WarningKind::Lost,
+            Some(0),
+            Some(2)
+        )]
     );
 }
 
