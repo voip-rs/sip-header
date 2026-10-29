@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::lws;
 use crate::traits::{sealed, HeaderParse};
 
 /// RFC 3261 section 25.1 `word`.
@@ -165,11 +166,11 @@ impl HeaderParse for SipCallId {
     /// Parse leniently; whitespace around the value is the header's `LWS`.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
         crate::scrub::parse_scrubbed(input, |s| {
-            let trimmed = s.trim();
+            let mut warnings = Vec::new();
+            let trimmed = lws::trim_in(s, s, Field::CallId, &mut warnings);
             if trimmed.is_empty() {
                 return Err(ParseError::empty(Field::CallId));
             }
-            let mut warnings = Vec::new();
             let id = read(
                 trimmed.to_string(),
                 crate::offset_in(s, trimmed),

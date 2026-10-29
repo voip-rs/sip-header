@@ -399,7 +399,10 @@ pub enum WarningCode {
     AuthParamFlag,
     /// A CR or LF outside the fold of RFC 3261 §25.1 `LWS = [*WSP CRLF]
     /// 1*WSP`, which neither `qdtext` nor `quoted-pair` carries, or a NUL,
-    /// which only `quoted-pair` does; dropped, with a `\` escaping it.
+    /// which only `quoted-pair` does; dropped, with a `\` escaping it. Also a
+    /// control character (VT, FF, a second CR) in whitespace trimmed at a
+    /// value's edge or read as a separator, which `WSP = SP / HTAB` never
+    /// admits; trimmed or read as a separator, as it always was.
     ControlChar,
     /// A `warn-code` below 100, three digits as RFC 3261 §20.43 `warn-code =
     /// 3DIGIT` requires but in no class §27.2 defines by first digit; kept.
@@ -427,6 +430,13 @@ pub enum WarningCode {
     /// A non-ASCII character where RFC 3261 §25.1 `token` admits only
     /// ASCII, as in a header name (§7.3.1); kept as sent.
     NonAscii,
+    /// Whitespace other than SP and HTAB around a value, an entry, a
+    /// parameter or a token, or between two fields, which RFC 3261 §25.1
+    /// `LWS = [*WSP CRLF] 1*WSP` with `WSP = SP / HTAB` never admits (NBSP,
+    /// NEL and the other Unicode spaces and separators); trimmed, or read as
+    /// a separator, as it always was. The run stays reachable through the
+    /// warning's span.
+    NonLwsWhitespace,
 }
 
 impl WarningCode {
@@ -477,6 +487,7 @@ impl WarningCode {
             WarningCode::InvalidPort => "invalid-port",
             WarningCode::HeaderNameWhitespace => "header-name-whitespace",
             WarningCode::NonAscii => "non-ascii",
+            WarningCode::NonLwsWhitespace => "non-lws-whitespace",
         }
     }
 }
@@ -541,6 +552,7 @@ mod tests {
             WarningCode::InvalidPort,
             WarningCode::HeaderNameWhitespace,
             WarningCode::NonAscii,
+            WarningCode::NonLwsWhitespace,
         ];
         for code in &all {
             match code {
@@ -569,7 +581,8 @@ mod tests {
                 | WarningCode::InvalidRport
                 | WarningCode::InvalidPort
                 | WarningCode::HeaderNameWhitespace
-                | WarningCode::NonAscii => {}
+                | WarningCode::NonAscii
+                | WarningCode::NonLwsWhitespace => {}
             }
         }
         all

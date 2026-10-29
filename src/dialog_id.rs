@@ -7,6 +7,7 @@ use crate::call_id::SipCallId;
 use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::lws;
 use crate::params::HeaderParams;
 
 pub(crate) mod sealed {
@@ -414,14 +415,15 @@ where
 }
 
 fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseError> {
-    let trimmed = raw.trim();
+    let mut warnings = Vec::new();
+    let trimmed = lws::trim_in(raw, raw, Field::Value, &mut warnings);
     if trimmed.is_empty() {
         return Err(ParseError::empty(Field::Value));
     }
 
     // A call-id `word` may contain `"`, so it ends at the first raw `;`.
     let (call_id, rest) = crate::split_at_params(trimmed);
-    let call_id = call_id.trim();
+    let call_id = lws::trim_in(raw, call_id, Field::CallId, &mut warnings);
     if call_id.is_empty() {
         return Err(ParseError::malformed(
             Field::CallId,
@@ -429,7 +431,6 @@ fn parse_framed<K: DialogKind>(raw: &str) -> Result<Parsed<DialogFields>, ParseE
             Some(crate::offset_in(raw, trimmed)),
         ));
     }
-    let mut warnings = Vec::new();
     crate::call_id::report_breach(call_id, crate::offset_in(raw, call_id), &mut warnings);
 
     let mut first_tag: Option<String> = None;

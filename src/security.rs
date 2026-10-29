@@ -9,6 +9,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::lws;
 use crate::params::HeaderParams;
 
 /// A security mechanism entry: `mechanism-name *(SEMI mech-params)`.
@@ -128,7 +129,7 @@ fn parse_mechanism(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipSecurityMechanism, ParseError> {
-    let raw = entry.trim();
+    let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     if raw.is_empty() {
         return Err(ParseError::malformed(
             Field::Entry,
@@ -138,7 +139,7 @@ fn parse_mechanism(
     }
 
     let (raw_mechanism, params_part) = crate::split_at_params(raw);
-    let raw_mechanism = raw_mechanism.trim();
+    let raw_mechanism = lws::trim_in(entry, raw_mechanism, Field::Mechanism, warnings);
     let mechanism = crate::token_field(entry, raw_mechanism, Field::Mechanism, warnings);
 
     if mechanism.is_empty() {

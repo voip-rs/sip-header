@@ -8,6 +8,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
+use crate::lws;
 use crate::params::{HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::redact::Redact;
 use crate::span::Span;
@@ -437,14 +438,18 @@ impl HeaderParse for SipAuthValue {
 }
 
 fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthValue, ParseError> {
-    let s = input.trim();
+    let s = lws::trim_in(input, input, Field::Value, warnings);
     if s.is_empty() {
         return Err(ParseError::empty(Field::Value));
     }
 
-    let (raw_scheme, rest) = s
-        .split_once(|c: char| c.is_ascii_whitespace())
-        .map_or((s, ""), |(scheme, rest)| (scheme, rest.trim_start()));
+    let (raw_scheme, rest) = match s.find(|c: char| c.is_ascii_whitespace()) {
+        Some(i) => (
+            &s[..i],
+            lws::trim_start_in(input, &s[i..], Field::Scheme, warnings),
+        ),
+        None => (s, ""),
+    };
     let scheme = crate::token_field(input, raw_scheme, Field::Scheme, warnings);
     if scheme.is_empty() {
         return Err(ParseError::malformed(
@@ -470,7 +475,7 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
 
     let split = crate::split_entries(rest, crate::QuoteStart::AuthParam);
     for raw_param in split.entries {
-        let param_str = raw_param.trim();
+        let param_str = lws::trim_in(input, raw_param, Field::Credentials, warnings);
         if param_str.is_empty() {
             warnings.push(crate::empty_entry(
                 Field::Credentials,
@@ -497,8 +502,9 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             continue;
         };
 
-        let key = crate::token_field(input, param_str[..eq].trim(), Field::Credentials, warnings);
-        let value = param_str[eq + 1..].trim();
+        let raw_key = lws::trim_end_in(input, &param_str[..eq], Field::Credentials, warnings);
+        let key = crate::token_field(input, raw_key, Field::Credentials, warnings);
+        let value = lws::trim_in(input, &param_str[eq + 1..], Field::Credentials, warnings);
         let at = crate::offset_in(input, value);
         let span = Span::within(input, value);
         if !is_token(&key) {

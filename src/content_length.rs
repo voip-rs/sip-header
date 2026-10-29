@@ -16,6 +16,7 @@ use std::fmt;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
+use crate::lws;
 use crate::span::Span;
 use crate::traits::{sealed, HeaderParse};
 
@@ -62,7 +63,8 @@ impl HeaderParse for SipContentLength {
     /// Parse leniently; whitespace around the value is the header's `LWS`.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
         crate::scrub::parse_scrubbed(input, |s| {
-            let trimmed = s.trim();
+            let mut warnings = Vec::new();
+            let trimmed = lws::trim_in(s, s, Field::Value, &mut warnings);
             let start = crate::offset_in(s, trimmed);
             if trimmed.is_empty() {
                 return Err(ParseError::empty(Field::Value));
@@ -76,7 +78,6 @@ impl HeaderParse for SipContentLength {
             let length = trimmed[..digits]
                 .parse::<usize>()
                 .map_err(|_| invalid())?;
-            let mut warnings = Vec::new();
             if digits < trimmed.len() {
                 warnings.push(
                     ParseWarning::new(Field::Value, WarningCode::TrailingContent)

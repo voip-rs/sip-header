@@ -98,6 +98,7 @@ mod header;
 mod header_addr;
 mod history_info;
 mod join;
+mod lws;
 #[cfg(feature = "message")]
 mod message;
 mod reason;
@@ -325,6 +326,10 @@ pub(crate) struct RawParam<'a> {
     pub(crate) value: Option<&'a str>,
     /// Whether the value opens a quote that never closes.
     pub(crate) unterminated: bool,
+    /// The whitespace trimmed around it: before and after the `;`, after the
+    /// name, before and after the value; [`report_padding`](Self::report_padding)
+    /// raises what holds more than SP and HTAB.
+    pub(crate) padding: [&'a str; 5],
 }
 
 /// A parameter value without its surrounding quotes, `quoted-pair` unescaped.
@@ -344,9 +349,19 @@ impl<'a> RawParam<'a> {
     }
 
     /// Raise [`WarningCode::StrayDelimiter`] on what [`name`](Self::name)
-    /// removes, at its position in `input`.
+    /// removes, and what [`report_padding`](Self::report_padding) does, at
+    /// their position in `input`.
     pub(crate) fn report_name(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
+        self.report_padding(input, warnings);
         report_framing(input, self.key, Field::Param, warnings);
+    }
+
+    /// Raise the warnings of [`lws::report_run`] on each run of
+    /// [`padding`](Self::padding), at its position in `input`.
+    pub(crate) fn report_padding(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
+        for run in self.padding {
+            lws::report_run(input, run, Field::Param, warnings);
+        }
     }
 
     /// The value without its surrounding quotes and with `quoted-pair` unescaped.
@@ -406,17 +421,21 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
     let mut params = Vec::new();
     let mut rest = s;
     loop {
-        rest = rest.trim_start();
+        let (before, trimmed) = lws::split_start(rest);
+        rest = trimmed;
         if rest.is_empty() {
             return params;
         }
+        let mut padding = [before, "", "", "", ""];
         if let Some(after) = rest.strip_prefix(';') {
-            let next = after.trim_start();
+            let (run, next) = lws::split_start(after);
+            padding[1] = run;
             if next.is_empty() || next.starts_with(';') {
                 params.push(RawParam {
                     key: &rest[..0],
                     value: None,
                     unterminated: false,
+                    padding,
                 });
                 rest = next;
                 continue;
@@ -427,16 +446,21 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
             .find(';')
             .unwrap_or(rest.len());
         let Some(eq) = rest[..segment_end].find('=') else {
+            let (key, key_end) = lws::split_end(&rest[..segment_end]);
+            padding[2] = key_end;
             params.push(RawParam {
-                key: rest[..segment_end].trim_end(),
+                key,
                 value: None,
                 unterminated: false,
+                padding,
             });
             rest = &rest[segment_end..];
             continue;
         };
-        let key = rest[..eq].trim_end();
-        let value = rest[eq + 1..].trim_start();
+        let (key, key_end) = lws::split_end(&rest[..eq]);
+        let (value_start, value) = lws::split_start(&rest[eq + 1..]);
+        padding[2] = key_end;
+        padding[3] = value_start;
         let close = value
             .strip_prefix('"')
             .map(closing_quote);
@@ -452,10 +476,13 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
                 .find(';')
                 .unwrap_or(value.len()),
         };
+        let (text, value_end_run) = lws::split_end(&value[..value_end]);
+        padding[4] = value_end_run;
         params.push(RawParam {
             key,
-            value: Some(value[..value_end].trim_end()),
+            value: Some(text),
             unterminated: close == Some(None),
+            padding,
         });
         rest = &value[value_end..];
     }

@@ -20,6 +20,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header_addr::Rendered;
 use crate::list::CommaList;
+use crate::lws;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
@@ -228,7 +229,7 @@ pub(crate) fn read_uri_entry<'a>(
     entry: &'a str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<UriEntry<'a>, ParseError> {
-    let raw = entry.trim();
+    let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let at = crate::offset_in(entry, raw);
     let (data, params, recovered) = match raw
         .strip_prefix('<')
@@ -243,7 +244,7 @@ pub(crate) fn read_uri_entry<'a>(
                 WarningCode::MissingBrackets
             };
             (
-                data.trim()
+                lws::trim_in(entry, data, Field::Entry, warnings)
                     .trim_matches(|c| c == '<' || c == '>'),
                 params,
                 Some(code),
@@ -295,10 +296,11 @@ pub(crate) fn read_uri_entry<'a>(
 /// The parameter text in `tail`, what follows `>`, dropping text before
 /// its first `;` under [`WarningCode::TrailingContent`].
 fn after_bracket<'a>(entry: &str, tail: &'a str, warnings: &mut Vec<ParseWarning>) -> &'a str {
-    let junk = tail.trim_start();
+    let (padding, junk) = lws::split_start(tail);
     if junk.is_empty() || junk.starts_with(';') {
         return tail;
     }
+    lws::report_run(entry, padding, Field::Param, warnings);
     let (dropped, params) = junk.split_at(
         junk.find(';')
             .unwrap_or(junk.len()),

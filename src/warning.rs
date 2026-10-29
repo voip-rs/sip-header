@@ -8,6 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
+use crate::lws;
 use crate::span::Span;
 
 /// `warn-code = 3DIGIT` (RFC 3261 §20.43).
@@ -158,7 +159,7 @@ fn parse_warning_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipWarningEntry, ParseError> {
-    let s = entry.trim();
+    let s = lws::trim_in(entry, entry, Field::Entry, warnings);
     if s.is_empty() {
         return Err(ParseError::malformed(
             Field::Entry,
@@ -206,7 +207,7 @@ fn parse_warning_entry(
         .or_else(|| after_code.find('"'))
         .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
 
-    let raw_agent = after_code[..quote_pos].trim();
+    let raw_agent = lws::trim_in(entry, &after_code[..quote_pos], Field::Agent, warnings);
     let agent = crate::token_field(entry, raw_agent, Field::Agent, warnings);
     if agent.is_empty() {
         return Err(at(Field::Agent, FaultCode::Missing, rest));
@@ -283,7 +284,9 @@ fn parse_quoted_string(
             escaped = true;
         } else if c == '"' {
             let after = &content[i + 1..];
-            if let Some(junk) = Some(after.trim_start()).filter(|j| !j.is_empty()) {
+            if let Some(junk) = Some(lws::trim_start_in(entry, after, Field::Text, warnings))
+                .filter(|j| !j.is_empty())
+            {
                 warnings.push(
                     ParseWarning::new(Field::Text, WarningCode::TrailingContent)
                         .at(crate::offset_in(entry, junk))

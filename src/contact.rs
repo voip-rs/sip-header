@@ -11,6 +11,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
+use crate::lws;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 
 /// Contact header value: `STAR / (contact-param *(COMMA contact-param))`
@@ -222,6 +223,7 @@ impl CommaList for ContactList {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<Option<SipHeaderAddr>, ParseError> {
         if entry.trim() == "*" {
+            lws::trim_in(entry, entry, Field::Entry, warnings);
             return Ok(None);
         }
         parse_list_addr(entry, warnings).map(Some)

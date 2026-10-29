@@ -7,6 +7,7 @@ use sip_header_catalog::SipHeader;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header::TypedHeader;
+use crate::lws;
 use crate::scrub::scrub;
 use crate::{QuoteStart, RowEntry};
 
@@ -357,12 +358,13 @@ fn read_token(header: SipHeader, entry: &str, warnings: &mut Vec<ParseWarning>) 
     );
     let mut found = Vec::new();
     let text: &str = &scrubbed.text;
-    let token = crate::token_field(text, text.trim(), Field::Entry, &mut found).into_owned();
+    let trimmed = lws::trim_in(text, text, Field::Entry, &mut found);
+    let token = crate::token_field(text, trimmed, Field::Entry, &mut found).into_owned();
     if token.is_empty() {
         warnings.push(crate::empty_entry(Field::Entry, 0));
         return None;
     }
-    let at = crate::offset_in(text, text.trim());
+    let at = crate::offset_in(text, trimmed);
     if header == SipHeader::InReplyTo {
         crate::call_id::report_breach(&token, at, &mut found);
     } else if !crate::is_token(&token) {

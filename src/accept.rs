@@ -10,6 +10,7 @@ use crate::check::only;
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::lws;
 use crate::params::HeaderParams;
 use crate::{is_token, is_token_char};
 
@@ -158,9 +159,9 @@ fn parse_accept_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipAcceptEntry, ParseError> {
-    let raw = entry.trim();
+    let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let (media_part, params_part) = crate::split_at_params(raw);
-    let media_part = media_part.trim();
+    let media_part = lws::trim_in(entry, media_part, Field::MediaRange, warnings);
     let bad_range = || {
         ParseError::malformed(
             Field::MediaRange,
@@ -173,7 +174,8 @@ fn parse_accept_entry(
         .split_once('/')
         .ok_or_else(bad_range)?;
 
-    let (raw_type, raw_subtype) = (type_str.trim(), subtype_str.trim());
+    let raw_type = lws::trim_in(entry, type_str, Field::MediaRange, warnings);
+    let raw_subtype = lws::trim_in(entry, subtype_str, Field::MediaRange, warnings);
     let type_str = crate::token_field(entry, raw_type, Field::MediaRange, warnings);
     let subtype_str = crate::token_field(entry, raw_subtype, Field::MediaRange, warnings);
 
@@ -198,9 +200,9 @@ pub(crate) fn read_named_accept_entry(
     conforms: fn(&str) -> bool,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<(String, HeaderParams), ParseError> {
-    let raw = entry.trim();
+    let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let (raw_name, params_part) = crate::split_at_params(raw);
-    let raw_name = raw_name.trim();
+    let raw_name = lws::trim_in(entry, raw_name, field, warnings);
     let name = crate::token_field(entry, raw_name, field, warnings);
 
     if name.is_empty() {

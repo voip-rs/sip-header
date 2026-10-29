@@ -640,6 +640,7 @@ impl HeaderParams {
             && p.value
                 .is_none()
         {
+            p.report_padding(input, warnings);
             warnings.push(crate::empty_entry(Field::Param, at));
             return;
         }

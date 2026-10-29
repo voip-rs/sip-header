@@ -12,6 +12,7 @@ use sip_uri::{Host, UriParse};
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::lws;
 use crate::params::{checked_token, HeaderParams};
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
@@ -418,7 +419,7 @@ fn parse_via_entry(
     entry: &str,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<SipViaEntry, ParseError> {
-    let trimmed = entry.trim();
+    let trimmed = lws::trim_in(entry, entry, Field::Entry, warnings);
     if trimmed.is_empty() {
         return Err(ParseError::malformed(
             Field::Entry,
@@ -505,13 +506,16 @@ fn parse_sent_protocol<'a>(
     let (version_raw, after_slash) = rest
         .split_once('/')
         .ok_or_else(missing_slash)?;
-    let (name, version) = (name_raw.trim(), version_raw.trim());
-    let rest = after_slash.trim_start();
+    let field = Field::SentProtocol;
+    let name = lws::trim_in(entry, name_raw, field, warnings);
+    let version = lws::trim_in(entry, version_raw, field, warnings);
+    let rest = lws::trim_start_in(entry, after_slash, field, warnings);
     let (mut transport, mut sent_by) = rest.split_at(
         rest.find(char::is_whitespace)
             .unwrap_or(rest.len()),
     );
-    sent_by = sent_by.trim();
+    sent_by = lws::trim_start_in(entry, sent_by, field, warnings);
+    sent_by = lws::trim_end_in(entry, sent_by, Field::SentBy, warnings);
     // An empty transport directly before sent-by (`SIP/2.0/ host`) is kept.
     if sent_by.is_empty()
         && after_slash.starts_with(char::is_whitespace)
@@ -576,7 +580,7 @@ fn parse_host_port(
         let close = inner
             .find(']')
             .ok_or_else(|| at(FaultCode::Unterminated, sent_by))?;
-        let rest = inner[close + 1..].trim_start();
+        let rest = lws::trim_start_in(entry, &inner[close + 1..], Field::SentBy, warnings);
         let port = if rest.is_empty() {
             None
         } else {
@@ -591,7 +595,10 @@ fn parse_host_port(
             Some((_, port)) if port.contains(':') => {
                 return Err(at(FaultCode::Ambiguous, sent_by));
             }
-            Some((host, port)) => (host.trim_end(), Some(port)),
+            Some((host, port)) => (
+                lws::trim_end_in(entry, host, Field::SentBy, warnings),
+                Some(port),
+            ),
             None => (sent_by, None),
         }
     };
@@ -605,7 +612,7 @@ fn parse_host_port(
     let span = Span::new(at..at + host.len());
     let host = read_host(host, at, warnings)?;
     let port = port.and_then(|p| {
-        let p = p.trim_start();
+        let p = lws::trim_start_in(entry, p, Field::SentBy, warnings);
         let port = port_number(p);
         if port.is_none() {
             warnings.push(

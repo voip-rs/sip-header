@@ -7,6 +7,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
+use crate::lws;
 use crate::params::HeaderParams;
 use crate::span::Span;
 use crate::traits::{sealed, UriHeaderParse};
@@ -288,7 +289,7 @@ pub(crate) fn parse_reason(
         return Err(ParseError::empty(Field::Value));
     }
     let (protocol, rest) = crate::split_at_params(input);
-    let raw_protocol = protocol.trim();
+    let raw_protocol = lws::trim_in(input, protocol, Field::Protocol, warnings);
     let protocol = crate::token_field(input, raw_protocol, Field::Protocol, warnings);
     if protocol.is_empty() {
         return Err(ParseError::malformed(

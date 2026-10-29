@@ -58,6 +58,7 @@ use sip_uri::UriParse;
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{Fault, FaultCode, ParseError};
+use crate::lws;
 use crate::span::Span;
 
 /// Split at the first empty line (after `\r` stripping) per RFC 3261 §7.3.1.
@@ -192,7 +193,7 @@ impl<'a> SipMessageHeaders<'a> {
             if line.starts_with([' ', '\t']) {
                 match &mut open {
                     Some((_, value, extent)) => {
-                        append_folded(value, line);
+                        append_folded(value, line, message, &mut warnings);
                         extent.end = at + line.len();
                     }
                     None => skipped.push(Span::new(at..at + line.len())),
@@ -206,6 +207,7 @@ impl<'a> SipMessageHeaders<'a> {
             match header_line(line) {
                 Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
                     warnings.extend(name_warnings(name, at));
+                    let value = lws::trim_in(message, value, Field::Value, &mut warnings);
                     open = Some((name, Cow::Borrowed(value), at..at + line.len()));
                 }
                 _ if i == 0 && start_line && is_start_line(line) => {}
@@ -307,6 +309,12 @@ impl<'a> SipMessageHeaders<'a> {
     /// Positions are byte offsets into the message, at the first offending
     /// character; the span covers the name.
     ///
+    /// The same list holds, on [`Field::Value`], each run of whitespace the
+    /// reader trimmed from a value or a continuation line that holds more
+    /// than SP and HTAB: [`WarningCode::ControlChar`] for a C0 control
+    /// character, [`WarningCode::NonLwsWhitespace`] for any other, one each
+    /// per run, spanning the run.
+    ///
     /// ```
     /// use sip_header::{SipMessageHeaders, WarningCode};
     ///
@@ -330,12 +338,12 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
 }
 
 /// `name: value` with a bounded name: not empty and free of control
-/// characters but HTAB, SWS before the colon allowed.
+/// characters but HTAB, SWS before the colon allowed; the value untrimmed.
 fn header_line(line: &str) -> Option<(&str, &str)> {
     let (name, value) = line.split_once(':')?;
     let name = name.trim_end_matches([' ', '\t']);
     let bounded = !name.is_empty() && !name.contains(|c: char| c.is_control() && c != '\t');
-    bounded.then(|| (name, value.trim()))
+    bounded.then_some((name, value))
 }
 
 /// One warning per breach class in `name`, which starts at byte `at`.
@@ -361,8 +369,13 @@ fn name_warnings(name: &str, at: usize) -> impl Iterator<Item = ParseWarning> + 
 
 /// Unfold a continuation line into `value`, replacing the folding LWS with
 /// one SP (RFC 3261 §7.3.1).
-fn append_folded(value: &mut Cow<'_, str>, line: &str) {
-    let line = line.trim();
+fn append_folded(
+    value: &mut Cow<'_, str>,
+    line: &str,
+    message: &str,
+    warnings: &mut Vec<ParseWarning>,
+) {
+    let line = lws::trim_in(message, line, Field::Value, warnings);
     if line.is_empty() {
         return;
     }
