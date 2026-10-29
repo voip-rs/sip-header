@@ -554,6 +554,7 @@ fn rebuilt(value: &TypedValue, redact: Option<&HeaderRedaction>) -> Vec<String> 
         TypedValue::Reason(v) => v.to_string(),
         TypedValue::CallId(v) => v.to_string(),
         TypedValue::ContentLength(v) => v.to_string(),
+        TypedValue::ContentType(v) => v.to_string(),
         TypedValue::Replaces(v) => v.to_string(),
         TypedValue::Join(v) => v.to_string(),
         TypedValue::TargetDialog(v) => v.to_string(),

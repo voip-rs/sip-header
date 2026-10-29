@@ -9,6 +9,7 @@ use crate::auth::SipAuthValue;
 use crate::call_id::SipCallId;
 use crate::contact::ContactList;
 use crate::content_length::SipContentLength;
+use crate::content_type::SipContentType;
 use crate::diagnostic::{Field, Parsed};
 use crate::error::{FaultCode, ParseError};
 use crate::geolocation::SipGeolocation;
@@ -180,6 +181,8 @@ typed_headers! {
     CallId(SipCallId, single) => [CallId];
     /// Content-Length.
     ContentLength(SipContentLength, single) => [ContentLength];
+    /// Content-Type.
+    ContentType(SipContentType, single) => [ContentType];
     /// Replaces.
     Replaces(SipReplaces, single) => [Replaces];
     /// Join.
@@ -357,6 +360,11 @@ pub trait SipHeaderLookup: SipHeaderRows {
     /// `Content-Length` (RFC 3261 §20.14).
     fn content_length(&self) -> Result<Option<SipContentLength>, ParseError> {
         lenient(self.parse_header(SipHeader::ContentLength))
+    }
+
+    /// `Content-Type` (RFC 3261 §20.15).
+    fn content_type(&self) -> Result<Option<SipContentType>, ParseError> {
+        lenient(self.parse_header(SipHeader::ContentType))
     }
 
     /// `Refer-To` (RFC 3515 §2.1).

@@ -161,12 +161,29 @@ fn parse_accept_entry(
 ) -> Result<SipAcceptEntry, ParseError> {
     let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let (media_part, params_part) = crate::split_at_params(raw);
-    let media_part = lws::trim_in(entry, media_part, Field::MediaRange, warnings);
+    let (media_type, subtype) = read_media_type(entry, media_part, true, warnings)?;
+
+    Ok(SipAcceptEntry {
+        params: read_accept_params(entry, params_part, warnings),
+        ..SipAcceptEntry::unchecked(&media_type, &subtype)
+    })
+}
+
+/// Read `type/subtype` from `media_part`, a slice of `input`, as written
+/// and not lowercased; `*` is kept under [`WarningCode::InvalidToken`]
+/// unless `wildcard` allows it, which only an Accept range does.
+pub(crate) fn read_media_type(
+    input: &str,
+    media_part: &str,
+    wildcard: bool,
+    warnings: &mut Vec<ParseWarning>,
+) -> Result<(String, String), ParseError> {
+    let media_part = lws::trim_in(input, media_part, Field::MediaRange, warnings);
     let bad_range = || {
         ParseError::malformed(
             Field::MediaRange,
             FaultCode::Missing,
-            Some(crate::offset_in(entry, media_part)),
+            Some(crate::offset_in(input, media_part)),
         )
     };
 
@@ -174,22 +191,19 @@ fn parse_accept_entry(
         .split_once('/')
         .ok_or_else(bad_range)?;
 
-    let raw_type = lws::trim_in(entry, type_str, Field::MediaRange, warnings);
-    let raw_subtype = lws::trim_in(entry, subtype_str, Field::MediaRange, warnings);
-    let type_str = crate::token_field(entry, raw_type, Field::MediaRange, warnings);
-    let subtype_str = crate::token_field(entry, raw_subtype, Field::MediaRange, warnings);
+    let raw_type = lws::trim_in(input, type_str, Field::MediaRange, warnings);
+    let raw_subtype = lws::trim_in(input, subtype_str, Field::MediaRange, warnings);
+    let type_str = crate::token_field(input, raw_type, Field::MediaRange, warnings);
+    let subtype_str = crate::token_field(input, raw_subtype, Field::MediaRange, warnings);
 
     if type_str.is_empty() || subtype_str.is_empty() {
         return Err(bad_range());
     }
     for (raw, part) in [(raw_type, &type_str), (raw_subtype, &subtype_str)] {
-        flag_invalid_token(entry, raw, is_token(part), Field::MediaRange, warnings);
+        let conforms = is_token(part) && (wildcard || part.as_ref() != "*");
+        flag_invalid_token(input, raw, conforms, Field::MediaRange, warnings);
     }
-
-    Ok(SipAcceptEntry {
-        params: read_accept_params(entry, params_part, warnings),
-        ..SipAcceptEntry::unchecked(&type_str, &subtype_str)
-    })
+    Ok((type_str.into_owned(), subtype_str.into_owned()))
 }
 
 /// Read `name *(SEMI accept-param)` whose `name` is one `field`, raising
