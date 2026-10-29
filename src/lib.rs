@@ -190,18 +190,24 @@ pub(crate) fn unescape_quoted_pair_checked(s: &str) -> (String, bool) {
 
 /// RFC 3261 §25.1 `token` character.
 pub(crate) fn is_token_char(c: char) -> bool {
-    c.is_ascii_alphanumeric()
+    u8::try_from(c).is_ok_and(is_token_byte)
+}
+
+/// RFC 3261 §25.1 `token` byte; every byte of a non-ASCII character is
+/// outside it.
+pub(crate) fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
         || matches!(
-            c,
-            '-' | '.' | '!' | '%' | '*' | '_' | '+' | '`' | '\'' | '~'
+            b,
+            b'-' | b'.' | b'!' | b'%' | b'*' | b'_' | b'+' | b'`' | b'\'' | b'~'
         )
 }
 
 /// RFC 3261 §25.1 `token`.
 pub(crate) fn is_token(s: &str) -> bool {
     !s.is_empty()
-        && s.chars()
-            .all(is_token_char)
+        && s.bytes()
+            .all(is_token_byte)
 }
 
 /// Whether `value` opens a quoted-string that never closes.

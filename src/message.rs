@@ -499,7 +499,7 @@ impl<'a> Iterator for MessageLines<'a> {
                 return Some(MessageLine::Skipped(Span::new(at..at + line.len())));
             }
             match header_line(line) {
-                Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
+                Some((name, value, token)) if token || !is_start_line(line) => {
                     let end = self.continuations(at + line.len());
                     let index = self.rows;
                     self.rows += 1;
@@ -664,12 +664,36 @@ impl std::fmt::Debug for MessageRow<'_> {
 }
 
 /// `name: value` with a bounded name: not empty and free of control
-/// characters but HTAB, SWS before the colon allowed; the value untrimmed.
-fn header_line(line: &str) -> Option<(&str, &str)> {
-    let (name, value) = line.split_once(':')?;
-    let name = name.trim_end_matches([' ', '\t']);
-    let bounded = !name.is_empty() && !name.contains(|c: char| c.is_control() && c != '\t');
-    bounded.then_some((name, value))
+/// characters but HTAB, SWS before the colon allowed; the value untrimmed,
+/// and whether the name is a `token`. One pass over the name's bytes.
+fn header_line(line: &str) -> Option<(&str, &str, bool)> {
+    let bytes = line.as_bytes();
+    let mut name_end = 0;
+    let mut first_non_token = None;
+    let mut previous = 0;
+    for (i, &b) in bytes
+        .iter()
+        .enumerate()
+    {
+        if b == b':' {
+            let token = name_end > 0 && first_non_token.map_or(true, |at| at >= name_end);
+            let name = line.get(..name_end)?;
+            return (name_end > 0).then_some((name, line.get(i + 1..)?, token));
+        }
+        // char::is_control in UTF-8: C0, DEL, and C1 as 0xC2 0x80..=0x9F.
+        if (b < 0x20 && b != b'\t') || b == 0x7f || (previous == 0xc2 && (0x80..=0x9f).contains(&b))
+        {
+            return None;
+        }
+        if !matches!(b, b' ' | b'\t') {
+            name_end = i + 1;
+        }
+        if first_non_token.is_none() && !crate::is_token_byte(b) {
+            first_non_token = Some(i);
+        }
+        previous = b;
+    }
+    None
 }
 
 /// One warning per breach class in `name`, which starts at byte `at`.

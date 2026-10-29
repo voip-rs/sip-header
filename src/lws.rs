@@ -51,18 +51,17 @@ pub(crate) fn run_warnings(
     let clean = run
         .bytes()
         .all(|b| matches!(b, b' ' | b'\t'));
-    let found = |code, i: Option<usize>| {
-        i.filter(|_| !clean)
+    let found = |code, find: &dyn Fn(char) -> bool| {
+        if clean {
+            return None;
+        }
+        run.find(find)
             .map(|i| (i, code))
     };
-    let mut first = found(
-        WarningCode::ControlChar,
-        run.find(|c: char| c.is_ascii_control()),
-    );
-    let mut second = found(
-        WarningCode::NonLwsWhitespace,
-        run.find(|c: char| !matches!(c, ' ' | '\t') && !c.is_ascii_control()),
-    );
+    let mut first = found(WarningCode::ControlChar, &|c| c.is_ascii_control());
+    let mut second = found(WarningCode::NonLwsWhitespace, &|c| {
+        !matches!(c, ' ' | '\t') && !c.is_ascii_control()
+    });
     if matches!((first, second), (Some((i, _)), Some((j, _))) if j < i) {
         std::mem::swap(&mut first, &mut second);
     }
