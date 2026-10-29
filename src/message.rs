@@ -2,6 +2,7 @@
 //!
 //! - [`SipMessageHeaders`]: the header rows of a raw message, a
 //!   [`SipHeaderRows`] store every typed accessor reads
+//! - [`MessageLines`]: the same rows and skipped lines, read lazily
 //! - [`extract_header`], [`extract_all_headers`], [`extract_header_block`]:
 //!   the same rows as owned strings
 //! - [`extract_request_line`]: the request line's parts as received, which
@@ -49,9 +50,14 @@
 //! raw fold, not the unfolded value), each skipped line's extent, and the
 //! offset where it stopped. A caller keys warnings and skipped lines to rows
 //! from those extents, so no second line rule exists outside this file.
+//!
+//! [`MessageLines`] is that line rule; [`SipMessageHeaders`] and every
+//! extract function read through it. A row computes nothing until asked,
+//! so a caller after one header pays, on every other row, only for the line
+//! split and the name's bounds, and a value allocates only to unfold. The
+//! start-line check keeps that: it runs on every name outside `token`.
 
 use std::borrow::Cow;
-use std::ops::Range;
 
 use sip_header_catalog::{NameMatcher, RowError, SipHeader, SipHeaderFields, SipHeaderRows};
 use sip_uri::UriParse;
@@ -169,61 +175,29 @@ impl<'a> SipMessageHeaders<'a> {
     }
 
     fn read(message: &'a str, start_line: bool) -> Self {
-        let (block, body_start) = split_at_blank_line(message);
+        let lines = MessageLines::read(message, start_line);
+        let end = lines.end();
         let mut fields = SipHeaderFields::new();
         let mut row_spans = Vec::new();
         let mut skipped = Vec::new();
         let mut warnings = Vec::new();
-        // The last header row, still open to continuation lines, and the
-        // byte range of its lines so far.
-        let mut open: Option<(&'a str, Cow<'a, str>, Range<usize>)> = None;
-        let mut offset = 0;
-        for (i, raw_line) in block
-            .split('\n')
-            .enumerate()
-        {
-            let at = offset;
-            offset += raw_line.len() + 1;
-            let line = raw_line
-                .strip_suffix('\r')
-                .unwrap_or(raw_line);
-            if line.is_empty() {
-                continue;
-            }
-            if line.starts_with([' ', '\t']) {
-                match &mut open {
-                    Some((_, value, extent)) => {
-                        append_folded(value, line, message, &mut warnings);
-                        extent.end = at + line.len();
-                    }
-                    None => skipped.push(Span::new(at..at + line.len())),
+        for line in lines {
+            match line {
+                MessageLine::Row(row) => {
+                    warnings.extend(row.name_warnings());
+                    warnings.extend(row.value_warnings());
+                    fields.push(row.name(), row.value());
+                    row_spans.push(row.span());
                 }
-                continue;
+                MessageLine::Skipped(span) => skipped.push(span),
             }
-            if let Some((name, value, extent)) = open.take() {
-                fields.push(name, value);
-                row_spans.push(Span::new(extent));
-            }
-            match header_line(line) {
-                Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
-                    warnings.extend(name_warnings(name, at));
-                    let value = lws::trim_in(message, value, Field::Value, &mut warnings);
-                    open = Some((name, Cow::Borrowed(value), at..at + line.len()));
-                }
-                _ if i == 0 && start_line && is_start_line(line) => {}
-                _ => skipped.push(Span::new(at..at + line.len())),
-            }
-        }
-        if let Some((name, value, extent)) = open {
-            fields.push(name, value);
-            row_spans.push(Span::new(extent));
         }
         SipMessageHeaders {
             fields,
             row_spans,
             skipped,
             warnings,
-            end: body_start.unwrap_or(message.len()),
+            end,
         }
     }
 
@@ -532,8 +506,8 @@ impl<'a> MessageRow<'a> {
     }
 
     /// The value as [`SipMessageHeaders`] holds it: trimmed, each
-    /// continuation line unfolded with one SP. Borrowed unless a
-    /// continuation line holds more than whitespace.
+    /// continuation line unfolded with one SP (RFC 3261 §7.3.1). Borrowed
+    /// unless a continuation line holds more than whitespace.
     pub fn value(&self) -> Cow<'a, str> {
         let first = self
             .value
@@ -646,25 +620,6 @@ fn name_warnings(name: &str, at: usize) -> impl Iterator<Item = ParseWarning> + 
                 .covering(span)
         })
     })
-}
-
-/// Unfold a continuation line into `value`, replacing the folding LWS with
-/// one SP (RFC 3261 §7.3.1).
-fn append_folded(
-    value: &mut Cow<'_, str>,
-    line: &str,
-    message: &str,
-    warnings: &mut Vec<ParseWarning>,
-) {
-    let line = lws::trim_in(message, line, Field::Value, warnings);
-    if line.is_empty() {
-        return;
-    }
-    let value = value.to_mut();
-    if !value.is_empty() {
-        value.push(' ');
-    }
-    value.push_str(line);
 }
 
 /// Extract all occurrences of a header from a raw SIP message, one string
