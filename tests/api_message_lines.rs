@@ -3,7 +3,8 @@
 
 use proptest::prelude::*;
 use sip_header::{
-    MessageLine, MessageLines, NameMatcher, ParseWarning, SipHeader, SipMessageHeaders, Span,
+    Fault, FaultCode, Field, MessageLine, MessageLines, NameMatcher, ParseError, ParseWarning,
+    SipHeader, SipMessageHeaders, Span,
 };
 
 const LINES: &[&str] = &[
@@ -131,7 +132,7 @@ proptest! {
     fn rows_keep_the_reader_index_and_value(msg in message()) {
         let headers = SipMessageHeaders::from_header_block(&msg);
         let content_length = NameMatcher::from(SipHeader::ContentLength);
-        for row in MessageLines::from_header_block(&msg)
+        for row in MessageLines::from_header_block(msg.as_str())
             .rows()
             .filter(|row| content_length.matches(row.name()))
         {
@@ -177,4 +178,163 @@ fn blank_line_end_says_whether_the_block_is_complete() {
             .for_each(drop);
         assert_eq!(lines.blank_line_end(), end, "{msg:?}");
     }
+}
+
+/// Each item of a walk, with every byte and position it reports.
+#[derive(Debug, PartialEq)]
+enum Item {
+    Row {
+        name: Vec<u8>,
+        value: Vec<u8>,
+        index: usize,
+        span: Span,
+        name_warnings: Vec<ParseWarning>,
+    },
+    Skipped(Span),
+}
+
+fn text_items(lines: MessageLines<'_, str>) -> Vec<Item> {
+    lines
+        .map(|line| match line {
+            MessageLine::Row(row) => Item::Row {
+                name: row
+                    .name()
+                    .as_bytes()
+                    .to_vec(),
+                value: row
+                    .value()
+                    .as_bytes()
+                    .to_vec(),
+                index: row.index(),
+                span: row.span(),
+                name_warnings: row
+                    .name_warnings()
+                    .collect(),
+            },
+            MessageLine::Skipped(span) => Item::Skipped(span),
+            _ => unreachable!("no other line kind exists yet"),
+        })
+        .collect()
+}
+
+fn byte_items(lines: MessageLines<'_, [u8]>) -> Vec<Item> {
+    lines
+        .map(|line| match line {
+            MessageLine::Row(row) => {
+                let text = row
+                    .text()
+                    .unwrap();
+                assert_eq!(text.span(), row.span());
+                assert_eq!(text.index(), row.index());
+                Item::Row {
+                    name: row
+                        .name()
+                        .to_vec(),
+                    value: row
+                        .value()
+                        .into_owned(),
+                    index: row.index(),
+                    span: row.span(),
+                    name_warnings: text
+                        .name_warnings()
+                        .collect(),
+                }
+            }
+            MessageLine::Skipped(span) => Item::Skipped(span),
+            _ => unreachable!("no other line kind exists yet"),
+        })
+        .collect()
+}
+
+proptest! {
+    #[test]
+    fn bytes_walk_as_text_does(msg in message()) {
+        let bytes = msg.as_bytes();
+        prop_assert_eq!(
+            byte_items(MessageLines::new(bytes)),
+            text_items(MessageLines::new(msg.as_str()))
+        );
+        prop_assert_eq!(
+            byte_items(MessageLines::from_header_block(bytes)),
+            text_items(MessageLines::from_header_block(msg.as_str()))
+        );
+        let mut by_bytes = MessageLines::new(bytes);
+        by_bytes.by_ref().for_each(drop);
+        let mut by_text = MessageLines::new(msg.as_str());
+        by_text.by_ref().for_each(drop);
+        prop_assert_eq!(by_bytes.blank_line_end(), by_text.blank_line_end());
+    }
+}
+
+#[test]
+fn invalid_utf8_keeps_its_row_and_fails_only_its_text() {
+    let msg: &[u8] = b"INVITE sip:\xff@example.com SIP/2.0\r\n\
+        Via: a\r\n\
+        X\xffY: b\r\n\
+        To: c\xfe\r\n \xf0\x9f\r\n\
+        l: 0\r\n\
+        Y:\xfd\r\n\
+        Z: \xf0\x9f\r\n\
+        \r\nbody";
+    let at = |needle: &[u8]| {
+        msg.windows(needle.len())
+            .position(|w| w == needle)
+            .unwrap()
+    };
+    let rows: Vec<_> = MessageLines::new(msg)
+        .map(|line| match line {
+            MessageLine::Row(row) => row,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let names: Vec<&[u8]> = rows
+        .iter()
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(names, [&b"Via"[..], b"X\xffY", b"To", b"l", b"Y", b"Z"]);
+    assert_eq!(rows[2].value(), &b"c\xfe \xf0\x9f"[..]);
+    assert_eq!(
+        rows[1]
+            .text()
+            .unwrap_err(),
+        ParseError::Malformed(
+            Fault::new(Field::Name, FaultCode::NotUtf8)
+                .at(at(b"\xffY"))
+                .to(at(b"\xffY") + 1)
+        )
+    );
+    assert_eq!(
+        rows[2]
+            .text()
+            .unwrap_err(),
+        ParseError::Malformed(
+            Fault::new(Field::Value, FaultCode::NotUtf8)
+                .at(at(b"\xfe"))
+                .to(at(b"\xfe") + 1)
+        )
+    );
+    let text = rows[3]
+        .text()
+        .unwrap();
+    assert_eq!((text.name(), &*text.value()), ("l", "0"));
+    assert_eq!(
+        rows[4]
+            .text()
+            .unwrap_err(),
+        ParseError::Malformed(
+            Fault::new(Field::Value, FaultCode::NotUtf8)
+                .at(at(b"\xfd"))
+                .to(at(b"\xfd") + 1)
+        )
+    );
+    assert_eq!(
+        rows[5]
+            .text()
+            .unwrap_err(),
+        ParseError::Malformed(
+            Fault::new(Field::Value, FaultCode::NotUtf8)
+                .at(at(b"Z: ") + 3)
+                .to(at(b"Z: ") + 5)
+        )
+    );
 }

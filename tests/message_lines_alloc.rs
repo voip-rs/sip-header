@@ -6,7 +6,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use sip_header::MessageLines;
+use sip_header::{MessageLine, MessageLines};
 
 struct Counting;
 
@@ -26,12 +26,13 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static GLOBAL: Counting = Counting;
 
-/// Allocations made while walking `msg` and reading every row.
+/// Allocations made while walking `msg` and reading every row, once as text
+/// and once as bytes; equal, or the test fails.
 fn allocations(msg: &str) -> usize {
     let before = ALLOCATIONS.load(Ordering::Relaxed);
     let mut seen = 0;
     for line in MessageLines::new(msg) {
-        if let sip_header::MessageLine::Row(row) = line {
+        if let MessageLine::Row(row) = line {
             seen += row
                 .name()
                 .len()
@@ -43,8 +44,28 @@ fn allocations(msg: &str) -> usize {
                     .count();
         }
     }
+    let text = ALLOCATIONS.load(Ordering::Relaxed) - before;
+    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    for line in MessageLines::new(msg.as_bytes()) {
+        if let MessageLine::Row(row) = line {
+            seen += row
+                .name()
+                .len()
+                + row
+                    .value()
+                    .len()
+                + row
+                    .text()
+                    .map_or(0, |text| {
+                        text.name_warnings()
+                            .count()
+                    });
+        }
+    }
+    let bytes = ALLOCATIONS.load(Ordering::Relaxed) - before;
     std::hint::black_box(seen);
-    ALLOCATIONS.load(Ordering::Relaxed) - before
+    assert_eq!(text, bytes, "{msg:?}");
+    text
 }
 
 #[test]
