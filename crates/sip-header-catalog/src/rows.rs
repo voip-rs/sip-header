@@ -6,15 +6,18 @@
 //! downcast. Equality and hashing compare what the error says about the
 //! rows (kind, counts, row) and ignore the cause, since two arbitrary errors
 //! cannot be compared; both promises hold for the life of 1.x. The cause
-//! must be `Send + Sync + 'static`, which keeps every error built on this
-//! one `Send + Sync`. Its `Display` and `Debug` reach logs through this
-//! error, so a store keeps header text out of both.
+//! must be `Send + Sync + UnwindSafe + RefUnwindSafe + 'static`, which keeps
+//! every error built on this one all four: an error type holding a `Cell`
+//! or `RefCell` is wrapped by its store or reported through `malformed()`.
+//! Its `Display` and `Debug` reach logs through this error, so a store keeps
+//! header text out of both.
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -46,6 +49,9 @@ impl fmt::Display for RowErrorKind {
     }
 }
 
+/// A store's own error, as [`RowError::malformed_from`] keeps it.
+type Cause = dyn Error + Send + Sync + UnwindSafe + RefUnwindSafe;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Detail {
     TooManyRows { count: usize, limit: usize },
@@ -68,7 +74,7 @@ enum Detail {
 pub struct RowError {
     detail: Detail,
     row: Option<usize>,
-    cause: Option<Arc<dyn Error + Send + Sync>>,
+    cause: Option<Arc<Cause>>,
 }
 
 impl RowError {
@@ -95,7 +101,8 @@ impl RowError {
     /// The cause is reachable, and downcastable, through
     /// [`source()`](Error::source). Equality and hashing ignore it, so a
     /// test that asserts a cause downcasts it. Its `Display` and `Debug`
-    /// reach logs through this error, so neither may carry header text.
+    /// reach logs through this error, so neither may carry header text. It
+    /// must be unwind-safe, so this error stays so too.
     ///
     /// ```
     /// use std::error::Error;
@@ -119,7 +126,9 @@ impl RowError {
     /// assert_eq!(cause.map(|c| c.0), Some(9));
     /// assert_eq!(e, RowError::malformed());
     /// ```
-    pub fn malformed_from(cause: impl Error + Send + Sync + 'static) -> Self {
+    pub fn malformed_from(
+        cause: impl Error + Send + Sync + UnwindSafe + RefUnwindSafe + 'static,
+    ) -> Self {
         RowError {
             cause: Some(Arc::new(cause)),
             ..RowError::malformed()
