@@ -38,7 +38,7 @@ required-features = ["message"]
 test = true
 
 [dependencies]
-sip-header-catalog = { version = "1.0.0-rc.1", path = "crates/sip-header-catalog" }
+sip-header-catalog = { version = "1.0.0-rc.2", path = "crates/sip-header-catalog" }
 sip-uri.workspace = true
 percent-encoding = "2"
 serde = { version = "1.0", features = ["derive"], optional = true }
