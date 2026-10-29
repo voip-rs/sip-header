@@ -367,3 +367,9 @@ fn parse_error_stays_send_sync() {
     fn assert_send_sync<T: Send + Sync + 'static>() {}
     assert_send_sync::<ParseError>();
 }
+
+#[test]
+fn parse_error_stays_unwind_safe() {
+    fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    assert_unwind_safe::<ParseError>();
+}
