@@ -28,7 +28,7 @@
 //! between messages other than blank lines (a capture's banners and
 //! separators) is reported by line range.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::io::Read;
 use std::process::ExitCode;
 
@@ -358,31 +358,44 @@ fn lint(
             "line {skipped_line}: skipped, not a header row{text}"
         ));
     }
+    let (per_row, unplaced) = reader_warnings(&headers);
+    for w in &unplaced {
+        start.finding(w.to_string());
+    }
     let mut findings = start.emit();
 
-    let mut name_warnings = name_warnings(&headers, message);
+    let names: Vec<Option<SipHeader>> = headers
+        .iter()
+        .map(|(name, _)| SipHeader::parse_name(name).ok())
+        .collect();
     let mut seen = HashSet::new();
-    for (name, value) in headers.iter() {
-        let catalog = SipHeader::parse_name(name).ok();
+    for (i, (name, value)) in headers
+        .iter()
+        .enumerate()
+    {
+        let catalog = names[i];
         if let Some(header) = catalog {
             if seen.contains(&header) {
                 continue;
             }
-            if let Some(entry) = typed(&headers, header, redact) {
+            let of_header: Vec<ParseWarning> = names
+                .iter()
+                .zip(&per_row)
+                .filter(|(n, _)| **n == Some(header))
+                .flat_map(|(_, ws)| {
+                    ws.iter()
+                        .copied()
+                })
+                .collect();
+            if let Some(entry) = typed(&headers, header, &of_header, redact) {
                 seen.insert(header);
                 findings += entry.emit();
                 continue;
             }
         }
-        let warnings = match name_warnings.front() {
-            Some((text, _)) if *text == name => name_warnings
-                .pop_front()
-                .map(|(_, warnings)| warnings)
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        let mut entry = Entry::new(pair(name, masked(value, redact), status(&warnings)));
-        for w in &warnings {
+        let warnings = &per_row[i];
+        let mut entry = Entry::new(pair(name, masked(value, redact), status(warnings)));
+        for w in warnings {
             entry.finding(w.to_string());
         }
         entry.note(if catalog.is_some() {
@@ -437,29 +450,29 @@ fn start_line(message: &str, redact: Option<&HeaderRedaction>) -> Entry {
     }
 }
 
-/// The name warnings grouped per row, in row order, each group with the
-/// name its span covers.
-fn name_warnings<'m>(
-    headers: &SipMessageHeaders<'_>,
-    message: &'m str,
-) -> VecDeque<(&'m str, Vec<ParseWarning>)> {
-    let mut groups: VecDeque<(&str, Vec<ParseWarning>)> = VecDeque::new();
-    let mut last = None;
+/// The reader's warnings per row, keyed by the row extent holding their
+/// position, and those no row holds.
+fn reader_warnings(headers: &SipMessageHeaders<'_>) -> (Vec<Vec<ParseWarning>>, Vec<ParseWarning>) {
+    let spans = headers.row_spans();
+    let mut per_row = vec![Vec::new(); spans.len()];
+    let mut unplaced = Vec::new();
     for w in headers.warnings() {
-        let span = w.span();
-        let text = span
-            .and_then(|s| {
-                s.get(message)
-                    .ok()
-            })
-            .unwrap_or_default();
-        match groups.back_mut() {
-            Some((_, group)) if last == span.map(|s| s.range()) => group.push(*w),
-            _ => groups.push_back((text, vec![*w])),
+        let row = w
+            .position
+            .and_then(|at| {
+                spans
+                    .iter()
+                    .position(|s| {
+                        s.range()
+                            .contains(&at)
+                    })
+            });
+        match row {
+            Some(i) => per_row[i].push(*w),
+            None => unplaced.push(*w),
         }
-        last = span.map(|s| s.range());
     }
-    groups
+    (per_row, unplaced)
 }
 
 /// Every row of `header` as its typed value rebuilt; `None` when no typed
@@ -467,6 +480,7 @@ fn name_warnings<'m>(
 fn typed(
     headers: &SipMessageHeaders<'_>,
     header: SipHeader,
+    reader: &[ParseWarning],
     redact: Option<&HeaderRedaction>,
 ) -> Option<Entry> {
     let rows = match headers.sip_header_rows(header) {
@@ -496,10 +510,17 @@ fn typed(
                         .ok()
                 });
             entry.finding(format!("{}{}", chain(&e), shown(text, redact.is_some())));
+            for w in reader {
+                entry.finding(w.to_string());
+            }
             return Some(entry);
         }
     };
-    let status = status(&parsed.warnings);
+    let status = if reader.is_empty() {
+        status(&parsed.warnings)
+    } else {
+        "warning"
+    };
     let mut entry = Entry {
         heads: rebuilt(&parsed.value, redact)
             .into_iter()
@@ -515,6 +536,9 @@ fn typed(
                     .ok()
             });
         entry.finding(format!("{w}{}", shown(text, redact.is_some())));
+    }
+    for w in reader {
+        entry.finding(w.to_string());
     }
     Some(entry)
 }
