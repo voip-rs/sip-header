@@ -197,8 +197,8 @@ mod serde_round_trip {
     use serde::Serialize;
     use serde_json::json;
     use sip_header::{
-        HeaderParse, ListParse, SipCallId, SipContentLength, SipHeader, SipHeaderAddrList, SipJoin,
-        SipReasonCause, SipReasonList, TokenList, TypedHeader,
+        HeaderParse, ListParse, SipCallId, SipContentLength, SipContentType, SipHeader,
+        SipHeaderAddrList, SipJoin, SipReasonCause, SipReasonList, TokenList, TypedHeader,
     };
 
     fn token_list() -> TokenList {
@@ -291,6 +291,9 @@ mod serde_round_trip {
         round_trip(SipReason::new("SIP")?.with_cause(302));
         round_trip(replaces().with_framing(DialogFraming::UriHeader));
         round_trip(SipTargetDialog::new("a@example.com", "l", "r")?);
+        round_trip(
+            SipContentType::new("multipart", "mixed")?.with_quoted_param("boundary", "b 1")?,
+        );
         Ok(())
     }
 
@@ -517,6 +520,7 @@ mod serde_round_trip {
         }));
         rejects::<SipWarningEntry>(json!({"code": 1000, "agent": "example.com", "text": "secret"}));
         rejects::<SipAcceptEntry>(json!({"media_type": "a/b", "subtype": "secret"}));
+        rejects::<SipContentType>(json!({"media_type": "a/b", "subtype": "secret"}));
         rejects::<SipReason>(json!({"protocol": "S;IP", "params": [["text", "secret", true]]}));
         rejects::<SipReason>(json!({"protocol": "SIP", "params": [["cause", "secret", false]]}));
         rejects::<SipReason>(json!({"protocol": "SIP", "params": [["text", "secret", false]]}));
@@ -668,6 +672,9 @@ mod serde_round_trip {
         found.extend(leaks(&HistoryInfo::parse("<sip:a@example.com>;index=1")?));
         found.extend(leaks(&SipCallId::new("a@example.com")?));
         found.extend(leaks(&SipContentLength::from(142)));
+        found.extend(leaks(&SipContentType::parse(
+            "multipart/mixed;boundary=\"b1\";x=y",
+        )?));
         found.extend(leaks(&SipReasonCause::new("16")?));
         found.extend(leaks(&DialogFraming::Header));
         found.extend(leaks(&DialogFraming::UriHeader));
@@ -771,6 +778,7 @@ mod serde_round_trip {
         unknown(&first("gzip;q=0.5", SipAcceptEncoding::entries));
         unknown(&first("fr;q=0.8", SipAcceptLanguage::entries));
         unknown(&first("application/sdp", SipAccept::entries));
+        unknown(&SipContentType::parse("text/plain;charset=utf-8").unwrap());
         unknown(&first("<https://example.com/i.png>", UriInfo::entries));
         unknown(&first("SIP/2.0/UDP 198.51.100.1", SipVia::entries));
         unknown(&first(r#"399 example.com "x""#, SipWarning::entries));

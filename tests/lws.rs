@@ -9,8 +9,8 @@ use std::fmt::Display;
 
 use sip_header::{
     ContactList, Field, HeaderParse, HistoryInfo, ParseError, Parsed, SipAccept, SipAcceptEncoding,
-    SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength, SipGeolocation, SipHeader,
-    SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
+    SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength, SipContentType, SipGeolocation,
+    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
     SipMessageHeaders, SipReason, SipReasonList, SipReplaces, SipSecurity, SipTargetDialog, SipVia,
     SipWarning, TokenList, UriInfo, WarningCode, WarningKind,
 };
@@ -413,6 +413,21 @@ fn call_id() {
 #[test]
 fn content_length() {
     check::<SipContentLength>(&["¤120", "120¤"]);
+}
+
+#[test]
+fn content_type() {
+    check::<SipContentType>(&[
+        "¤multipart/mixed;boundary=b1",
+        "multipart/mixed;boundary=b1¤",
+        "multipart¤/mixed;boundary=b1",
+        "multipart/¤mixed;boundary=b1",
+        "multipart/mixed¤;boundary=b1",
+        "multipart/mixed;¤boundary=b1",
+        "multipart/mixed;boundary¤=b1",
+        "multipart/mixed;boundary=¤b1",
+        "multipart/mixed;boundary=b1¤;charset=utf-8",
+    ]);
 }
 
 #[test]

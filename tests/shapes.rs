@@ -428,10 +428,10 @@ mod equality_and_case {
         ContactList, Fault, HeaderEquivalence, HeaderParams, HeaderParse, HistoryInfo,
         HistoryInfoEntry, ParseError, ParseWarning, Parsed, QValue, SipAccept, SipAcceptEncoding,
         SipAcceptEncodingEntry, SipAcceptEntry, SipAcceptLanguage, SipAcceptLanguageEntry,
-        SipAuthValue, SipContentLength, SipGeolocation, SipGeolocationEntry, SipHeaderAddr,
-        SipHeaderLookup, SipJoin, SipReason, SipReasonCause, SipReplaces, SipSecurity,
-        SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry,
-        UriFault, UriHeaderParse, UriInfo, UriInfoEntry,
+        SipAuthValue, SipContentLength, SipContentType, SipGeolocation, SipGeolocationEntry,
+        SipHeaderAddr, SipHeaderLookup, SipJoin, SipReason, SipReasonCause, SipReplaces,
+        SipSecurity, SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning,
+        SipWarningEntry, UriFault, UriHeaderParse, UriInfo, UriInfoEntry,
     };
 
     type R = Result<(), ParseError>;
@@ -444,6 +444,7 @@ mod equality_and_case {
     fn every_value_type_is_send_sync_and_hashable() {
         value_type::<SipHeaderAddr>();
         value_type::<SipContentLength>();
+        value_type::<SipContentType>();
         value_type::<ContactList>();
         value_type::<SipVia>();
         value_type::<SipViaEntry>();

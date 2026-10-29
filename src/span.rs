@@ -879,6 +879,12 @@ mod tests {
         if let Ok(r) = SipReplaces::parse(&a) {
             param_spans(&rows[..1], r.params())?;
         }
+        if let Ok(c) = crate::SipContentType::parse(&a) {
+            param_spans(&rows[..1], c.params())?;
+            if let Ok(c) = c.with_param("x-added", Some("1")) {
+                no_value_spans(c.params())?;
+            }
+        }
         let auth_rows = [auth_a.as_str(), auth_b.as_str()];
         if let Ok(v) = SipAuthValue::parse(&auth_a) {
             param_spans(&auth_rows[..1], v.params())?;
@@ -893,6 +899,7 @@ mod tests {
             ),
             ("From".to_string(), vec![a.clone()]),
             ("Replaces".to_string(), vec![a.clone()]),
+            ("Content-Type".to_string(), vec![a.clone()]),
         ]);
         if let Ok(Some(values)) = store.authorization() {
             let rows = store
@@ -907,6 +914,9 @@ mod tests {
         }
         if let Ok(Some(r)) = store.replaces() {
             param_spans(&rows[..1], r.params())?;
+        }
+        if let Ok(Some(c)) = store.content_type() {
+            param_spans(&rows[..1], c.params())?;
         }
         Ok(())
     }

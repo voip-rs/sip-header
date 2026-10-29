@@ -2,8 +2,8 @@
 
 use sip_header::{
     FaultCode, Field, HeaderParse, ListParse, ParseError, SipCallId, SipContentLength,
-    SipHeaderAddrList, SipReason, SipReasonList, SipReplaces, SipTargetDialog, SipVia,
-    UriHeaderParse, WarningCode, WarningKind,
+    SipContentType, SipHeaderAddrList, SipReason, SipReasonList, SipReplaces, SipTargetDialog,
+    SipVia, UriHeaderParse, WarningCode, WarningKind,
 };
 
 type R = Result<(), ParseError>;
@@ -252,6 +252,229 @@ fn content_length_serde_is_a_number() {
     );
     assert!(serde_json::from_str::<SipContentLength>(r#""318""#).is_err());
     assert!(serde_json::from_str::<SipContentLength>("-1").is_err());
+}
+
+#[test]
+fn content_type_holds_the_media_type_lowercased_and_the_parameters_as_received() -> R {
+    let sdp = SipContentType::parse_strict("application/sdp")?;
+    assert_eq!((sdp.media_type(), sdp.subtype()), ("application", "sdp"));
+    assert_eq!(sdp.to_string(), "application/sdp");
+    let raw = r#"Multipart/Mixed;Boundary="UniqueBoundaryXyZ";charset=UTF-8"#;
+    let mixed = SipContentType::parse_strict(raw)?;
+    assert_eq!(
+        (mixed.media_type(), mixed.subtype()),
+        ("multipart", "mixed")
+    );
+    assert_eq!(mixed.param("boundary"), Some(Some("UniqueBoundaryXyZ")));
+    assert_eq!(mixed.param("CHARSET"), Some(Some("UTF-8")));
+    assert_eq!(
+        mixed.to_string(),
+        r#"multipart/mixed;boundary="UniqueBoundaryXyZ";charset=UTF-8"#
+    );
+    assert_eq!(SipContentType::parse(&mixed.to_string())?, mixed);
+    Ok(())
+}
+
+#[test]
+fn content_type_q_is_an_ordinary_parameter() -> R {
+    for raw in ["text/plain;q=x", r#"text/plain;q="1""#, "text/plain;q=1.5"] {
+        let parsed = SipContentType::parse_with_warnings(raw)?;
+        assert!(
+            parsed
+                .warnings
+                .is_empty(),
+            "{raw}: {:?}",
+            parsed.warnings
+        );
+        assert!(SipContentType::parse_strict(raw).is_ok(), "{raw}");
+        assert_eq!(
+            parsed
+                .value
+                .to_string(),
+            raw
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn content_type_keeps_a_wildcard_under_invalid_token() -> R {
+    for (raw, at) in [("*/*", vec![0, 2]), ("text/*", vec![5]), ("*/sdp", vec![0])] {
+        let parsed = SipContentType::parse_with_warnings(raw)?;
+        let got: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.position))
+            .collect();
+        let want: Vec<_> = at
+            .into_iter()
+            .map(|p| (Field::MediaRange, WarningCode::InvalidToken, Some(p)))
+            .collect();
+        assert_eq!(got, want, "{raw}");
+        assert_eq!(SipContentType::parse(raw)?.to_string(), raw);
+        assert!(SipContentType::parse_strict(raw).is_err(), "{raw}");
+    }
+    Ok(())
+}
+
+#[test]
+fn content_type_without_a_subtype_is_an_error() {
+    let missing = |at| {
+        Err(ParseError::Malformed(
+            sip_header::Fault::new(Field::MediaRange, FaultCode::Missing).at(at),
+        ))
+    };
+    for raw in ["text", "text/", "/plain", "text/;charset=x"] {
+        assert_eq!(SipContentType::parse(raw), missing(0), "{raw}");
+        assert_eq!(SipContentType::parse_strict(raw), missing(0), "{raw}");
+    }
+    assert_eq!(SipContentType::parse("  text/"), missing(2));
+    for raw in ["", "  "] {
+        assert_eq!(
+            SipContentType::parse(raw),
+            Err(ParseError::Malformed(sip_header::Fault::new(
+                Field::Value,
+                FaultCode::Empty
+            ))),
+            "{raw:?}"
+        );
+    }
+}
+
+#[test]
+fn content_type_reports_whitespace_beyond_lws() -> R {
+    let raw = "\u{a0}text/plain";
+    let parsed = SipContentType::parse_with_warnings(raw)?;
+    assert_eq!(
+        parsed
+            .warnings
+            .iter()
+            .map(|w| (w.code, w.position))
+            .collect::<Vec<_>>(),
+        [(WarningCode::NonLwsWhitespace, Some(0))]
+    );
+    assert!(SipContentType::parse_strict(raw).is_err());
+    assert_eq!(
+        parsed
+            .value
+            .to_string(),
+        "text/plain"
+    );
+    Ok(())
+}
+
+#[test]
+fn content_type_parameter_spans_point_into_the_text() -> R {
+    let raw = r#"multipart/mixed;boundary="b1";x=y"#;
+    let parsed = SipContentType::parse(raw)?;
+    let spans: Vec<_> = parsed
+        .params()
+        .value_spans("boundary")
+        .map(|s| {
+            s.and_then(|s| {
+                s.get(raw)
+                    .ok()
+            })
+        })
+        .collect();
+    assert_eq!(spans, [Some(r#""b1""#)]);
+    Ok(())
+}
+
+#[test]
+fn content_type_constructor_refuses_what_would_print_differently() -> R {
+    let built = SipContentType::new("Application", "SDP")?.with_quoted_param("charset", "x y")?;
+    assert_eq!(built.to_string(), r#"application/sdp;charset="x y""#);
+    assert_eq!(SipContentType::parse_strict(&built.to_string())?, built);
+    for (t, s) in [
+        ("", "sdp"),
+        ("application", ""),
+        ("*", "sdp"),
+        ("text", "*"),
+        ("a/b", "c"),
+        ("a", "b/c"),
+        ("a b", "c"),
+        ("a;b", "c"),
+        ("a\r\n", "c"),
+    ] {
+        match SipContentType::new(t, s) {
+            Err(ParseError::Malformed(fault)) => {
+                assert_eq!(fault.field, Field::MediaRange, "{t}/{s}")
+            }
+            other => panic!("{t}/{s}: {other:?}"),
+        }
+    }
+    let plain = SipContentType::new("text", "plain")?;
+    assert!(plain
+        .clone()
+        .with_param("a b", Some("x"))
+        .is_err());
+    assert!(plain
+        .clone()
+        .with_param("a", Some("x\r\ny"))
+        .is_err());
+    assert!(plain
+        .clone()
+        .with_quoted_param("a", "x\0")
+        .is_err());
+    assert_eq!(
+        plain
+            .with_param("q", Some("x"))?
+            .to_string(),
+        "text/plain;q=x"
+    );
+    Ok(())
+}
+
+#[test]
+fn content_type_params_guard_runs_the_builders_check() -> R {
+    let mut value = SipContentType::new("text", "plain")?;
+    value
+        .params_mut()
+        .set("charset", Some("utf-8"))?;
+    assert!(value
+        .params_mut()
+        .set("a b", Some("x"))
+        .is_err());
+    assert_eq!(value.to_string(), "text/plain;charset=utf-8");
+    Ok(())
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn content_type_serde_is_parts_read_back_through_the_parser() -> R {
+    let value = SipContentType::new("multipart", "mixed")?.with_quoted_param("boundary", "b 1")?;
+    let json = serde_json::to_value(&value).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "media_type": "multipart",
+            "subtype": "mixed",
+            "params": [["boundary", "b 1", true]],
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<SipContentType>(json).unwrap(),
+        value
+    );
+    let upper: SipContentType =
+        serde_json::from_value(serde_json::json!({"media_type": "TEXT", "subtype": "Plain"}))
+            .unwrap();
+    assert_eq!(upper.to_string(), "text/plain");
+    for bad in [
+        serde_json::json!({"media_type": "a/b", "subtype": "secret"}),
+        serde_json::json!({"media_type": "text", "subtype": ""}),
+        serde_json::json!({"media_type": "text", "subtype": "plain", "params": [["a;b", "secret", false]]}),
+        serde_json::json!({"media_type": "text", "subtype": "plain", "unknown": "secret"}),
+    ] {
+        let err = serde_json::from_value::<SipContentType>(bad).unwrap_err();
+        assert!(
+            !err.to_string()
+                .contains("secret"),
+            "{err}"
+        );
+    }
+    Ok(())
 }
 
 fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

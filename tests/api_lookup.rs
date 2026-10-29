@@ -2,8 +2,8 @@
 
 use sip_header::{
     ContactList, FaultCode, Field, ParseError, SipAuthValue, SipCallId, SipContentLength,
-    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRows, SipReasonList,
-    SipVia, TokenList, TypedHeader, UriInfo, WarningCode,
+    SipContentType, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRows,
+    SipReasonList, SipVia, TokenList, TypedHeader, UriInfo, WarningCode,
 };
 use sip_header_catalog::RowError;
 
@@ -249,12 +249,15 @@ fn a_single_valued_header_twice_is_an_error() {
         ("i", "b@example.com"),
         ("Content-Length", "1"),
         ("l", "2"),
+        ("Content-Type", "text/plain"),
+        ("c", "text/html"),
     ]);
     let duplicate =
         ParseError::Malformed(sip_header::Fault::new(Field::Value, FaultCode::Duplicate));
     assert_eq!(m.sip_from(), Err(duplicate.clone()));
     assert_eq!(m.call_id(), Err(duplicate.clone()));
-    assert_eq!(m.content_length(), Err(duplicate));
+    assert_eq!(m.content_length(), Err(duplicate.clone()));
+    assert_eq!(m.content_type(), Err(duplicate));
 }
 
 #[test]
@@ -272,6 +275,7 @@ fn every_type_holds_headers_of_one_row_policy() {
     single::<SipHeaderAddr>();
     single::<SipCallId>();
     single::<SipContentLength>();
+    single::<SipContentType>();
     single::<sip_header::SipReplaces>();
     single::<sip_header::SipJoin>();
     single::<sip_header::SipTargetDialog>();
@@ -372,6 +376,13 @@ fn every_typed_header_parses_through_one_dispatch() -> R {
                 .via()?
                 .unwrap()
         )
+    );
+    let content_type = HashMap::from([("c".to_string(), "application/sdp".to_string())])
+        .parse_typed(SipHeader::ContentType)?
+        .unwrap();
+    assert_eq!(
+        content_type.value,
+        TypedValue::ContentType(SipContentType::new("application", "sdp")?)
     );
     let allow = store
         .parse_typed(SipHeader::Allow)?

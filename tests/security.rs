@@ -13,11 +13,11 @@ use sip_header::{
     HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact,
     RequestLine, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
     SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipContentLength,
-    SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr, SipHeaderAddrList,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason,
-    SipReasonCause, SipReasonList, SipReplaces, SipSecurity, SipSecurityMechanism, SipTargetDialog,
-    SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span, TokenList, TypedHeader, UriHeaderParse,
-    UriInfo, UriInfoEntry, WarningCode,
+    SipContentType, SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr,
+    SipHeaderAddrList, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
+    SipMessageHeaders, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
+    SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
+    TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
 };
 use sip_uri::WarningKind;
 
@@ -478,6 +478,12 @@ proptest! {
             |e| SipAccept::new(vec![e]),
         )?;
         guard_ops_read_back(
+            SipContentType::new("multipart", "mixed").unwrap(),
+            &ops,
+            SipContentType::params_mut,
+            |c| c,
+        )?;
+        guard_ops_read_back(
             SipAcceptEncodingEntry::new("gzip").unwrap(),
             &ops,
             SipAcceptEncodingEntry::params_mut,
@@ -535,6 +541,7 @@ const CORPUS: &[(&str, &str)] = &[
     ("target-dialog", "abc@203.0.113.5;local-tag=l;remote-tag=r;x=\"a;b\""),
     ("join", "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only"),
     ("reason", r#"Q.850;cause=16;text="Normal; clearing";location=LN"#),
+    ("content-type", r#"Multipart/Mixed;Boundary="a b;c";charset=utf-8;q=x"#),
 ];
 
 /// Insert each of `snippets` at a char boundary chosen by its fraction.
@@ -699,6 +706,10 @@ fn check_kind(kind: &str, input: &str) -> Result<(), TestCaseError> {
         ),
         "reason" => serde_reads_back(
             lenient_is_stable(input, SipReason::parse_with_warnings)?,
+            input,
+        ),
+        "content-type" => serde_reads_back(
+            lenient_is_stable(input, SipContentType::parse_with_warnings)?,
             input,
         ),
         other => panic!("{other}"),
@@ -933,6 +944,11 @@ fn check_kind_through_holder(kind: &str, input: &str) -> Result<(), TestCaseErro
         "reason" => {
             lenient_is_stable(input, through_holder::<SipReasonList>(SipHeader::Reason)).map(drop)
         }
+        "content-type" => lenient_is_stable(
+            input,
+            through_holder::<SipContentType>(SipHeader::ContentType),
+        )
+        .map(drop),
         other => panic!("{other}"),
     }
 }
@@ -1083,6 +1099,9 @@ fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
         }
         "join" => in_their_rows::<SipJoin>(SipHeader::Join, &rows[..1], no_spans),
         "reason" => in_their_rows::<SipReasonList>(SipHeader::Reason, rows, no_spans),
+        "content-type" => {
+            in_their_rows::<SipContentType>(SipHeader::ContentType, &rows[..1], no_spans)
+        }
         other => panic!("{other}"),
     }
 }
@@ -1783,6 +1802,8 @@ const MORE_BASES: &[(&str, &str)] = &[
     ("call-id", "f81d4fae-7dec-11d0-a765@[2001:db8::1]"),
     ("content-length", "0"),
     ("content-length", "142"),
+    ("content-type", "application/sdp"),
+    ("content-type", "text/plain;charset=\"utf-8\""),
     ("tokens", "INVITE, 100rel, timer"),
     ("tokens", "a84b4c76e66710@example.com, en-ca"),
 ];
@@ -2065,6 +2086,7 @@ every_accessor! {
         refer_to ReferTo &["addr"], referred_by ReferredBy &["addr"];
     single::<SipCallId> => call_id CallId &["call-id"];
     single::<SipContentLength> => content_length ContentLength &["content-length"];
+    single::<SipContentType> => content_type ContentType &["content-type"];
     single::<SipReplaces> => replaces Replaces &["replaces"];
     single::<SipJoin> => join Join &["join"];
     single::<SipTargetDialog> => target_dialog TargetDialog &["target-dialog"];

@@ -143,6 +143,7 @@ macro_rules! assert_row_error {
 fn every_accessor_surfaces_the_row_error() {
     let addr = "<sip:a@example.com>";
     assert_row_error!(SipHeader::ContentLength, "142", content_length);
+    assert_row_error!(SipHeader::ContentType, "application/sdp", content_type);
     assert_row_error!(SipHeader::CallInfo, "<https://example.com/a>", call_info);
     assert_row_error!(SipHeader::HistoryInfo, addr, history_info);
     assert_row_error!(SipHeader::PAssertedIdentity, addr, p_asserted_identity);
