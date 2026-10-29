@@ -351,3 +351,82 @@ fn row_error_shape() {
     assert_eq!(copy, e);
     assert_ne!(copy, RowError::malformed());
 }
+
+#[derive(Debug, PartialEq, Eq)]
+struct StoreError(u32);
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "store fault {}", self.0)
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+fn cause_of(e: &RowError) -> Option<&StoreError> {
+    std::error::Error::source(e).and_then(|s| s.downcast_ref::<StoreError>())
+}
+
+#[test]
+fn malformed_from_keeps_the_cause() {
+    let e = RowError::malformed_from(StoreError(7));
+    assert_eq!(e.kind(), RowErrorKind::Malformed);
+    assert_eq!(cause_of(&e), Some(&StoreError(7)));
+    assert_eq!(e.to_string(), "malformed");
+    let in_row = e.in_row(3);
+    assert_eq!(in_row.row(), Some(3));
+    assert_eq!(cause_of(&in_row), Some(&StoreError(7)));
+    assert_eq!(in_row.to_string(), "malformed in row 3");
+}
+
+#[test]
+fn causeless_errors_have_no_source() {
+    use std::error::Error;
+    assert!(RowError::malformed()
+        .source()
+        .is_none());
+    assert!(RowError::too_many_rows(2, 1)
+        .source()
+        .is_none());
+}
+
+#[test]
+fn a_clone_shares_the_cause() {
+    use std::error::Error;
+    let e = RowError::malformed_from(StoreError(7));
+    let copy = e.clone();
+    let addr = |e: &RowError| {
+        e.source()
+            .map(|s| s as *const dyn Error as *const ())
+    };
+    assert!(addr(&e).is_some());
+    assert_eq!(addr(&e), addr(&copy));
+}
+
+#[test]
+fn equality_and_hash_ignore_the_cause() {
+    use std::hash::{Hash, Hasher};
+    fn hash(e: &RowError) -> u64 {
+        let mut h = DefaultHasher::new();
+        e.hash(&mut h);
+        h.finish()
+    }
+    let a = RowError::malformed_from(StoreError(1));
+    let b = RowError::malformed_from(StoreError(2));
+    assert_eq!(a, b);
+    assert_eq!(a, RowError::malformed());
+    assert_eq!(hash(&a), hash(&b));
+    assert_eq!(hash(&a), hash(&RowError::malformed()));
+    assert_ne!(
+        a.clone()
+            .in_row(1),
+        a
+    );
+    assert_ne!(a, RowError::too_many_rows(2, 1));
+}
+
+#[test]
+fn row_error_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync + 'static>() {}
+    assert_send_sync::<RowError>();
+}

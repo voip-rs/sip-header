@@ -319,3 +319,51 @@ fn an_error_in_decoded_text_has_no_span() {
     let e = SipReplaces::parse_uri_header("abc%3Bto-tag%3Dt1").unwrap_err();
     assert_eq!(e.span(), None);
 }
+
+#[derive(Debug)]
+struct StoreError;
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("backend fault")
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+struct FailingStore;
+
+impl SipHeaderRows for FailingStore {
+    fn sip_header_rows_str<'a>(&'a self, _name: &str) -> Result<Vec<&'a str>, RowError> {
+        Err(RowError::malformed_from(StoreError).in_row(1))
+    }
+}
+
+#[test]
+fn store_cause_is_reachable_through_the_parse_error_chain() {
+    use std::error::Error;
+    let e = FailingStore
+        .content_length()
+        .expect_err("store fails");
+    assert!(matches!(e, ParseError::Row(_)));
+    assert_eq!(e.to_string(), "row error");
+    let mut layers = vec![e.to_string()];
+    let mut found = false;
+    let mut next = e.source();
+    while let Some(s) = next {
+        layers.push(s.to_string());
+        found |= s
+            .downcast_ref::<StoreError>()
+            .is_some();
+        next = s.source();
+    }
+    assert!(found, "StoreError not in chain: {layers:?}");
+    assert_eq!(layers, ["row error", "malformed in row 1", "backend fault"]);
+    assert_eq!(e.clone(), e);
+}
+
+#[test]
+fn parse_error_stays_send_sync() {
+    fn assert_send_sync<T: Send + Sync + 'static>() {}
+    assert_send_sync::<ParseError>();
+}
