@@ -202,6 +202,23 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_run_is_spanned_whole() {
+        let input = "a\r\nb\\\0c";
+        let spans: Vec<_> = scrub(input)
+            .warnings
+            .iter()
+            .map(|w| {
+                w.span()
+                    .and_then(|s| {
+                        s.get(input)
+                            .ok()
+                    })
+            })
+            .collect();
+        assert_eq!(spans, [Some("\r\n"), Some("\\\0")]);
+    }
+
+    #[test]
     fn stray_controls_are_dropped_with_one_warning_per_run() {
         assert_eq!(scrubbed("a\r\nb"), ("ab".into(), vec![Some(1)]));
         assert_eq!(scrubbed("a\0b\nc"), ("abc".into(), vec![Some(1), Some(3)]));

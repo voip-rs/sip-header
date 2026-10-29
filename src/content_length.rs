@@ -121,6 +121,35 @@ mod tests {
     }
 
     #[test]
+    fn a_control_character_inside_the_digits_leaves_no_length() {
+        for (input, at) in [("3\018", 1), (" 3\r\n18", 2), ("31\u{b}8", 2)] {
+            assert_eq!(
+                SipContentLength::parse(input),
+                Err(ParseError::malformed(
+                    Field::Value,
+                    FaultCode::InvalidNumber,
+                    Some(at)
+                )),
+                "{input:?}"
+            );
+        }
+        let parsed = SipContentLength::parse_with_warnings("318\0").unwrap();
+        assert_eq!(
+            parsed
+                .value
+                .get(),
+            318
+        );
+        assert_eq!(parsed.warnings[0].code, WarningCode::ControlChar);
+        assert_eq!(
+            SipContentLength::parse("3\r\n 18")
+                .unwrap()
+                .get(),
+            3
+        );
+    }
+
+    #[test]
     fn a_missing_digit_points_at_the_value() {
         assert_eq!(
             SipContentLength::parse(" x1"),
