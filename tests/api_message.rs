@@ -156,13 +156,21 @@ fn a_spaced_name_is_a_row_every_reader_warns_about() -> Result<(), ParseError> {
             (WarningCode::HeaderNameWhitespace, msg.find(" ID")),
         ]
     );
+    let all = extract_all_headers(msg);
+    assert_eq!(all.warnings, headers.warnings());
+    assert_eq!(&all.headers, headers.fields());
+    // Read as a block, the request line is no start line but a spaced name.
     let block = SipMessageHeaders::from_header_block(msg);
-    assert_eq!(block.warnings(), headers.warnings());
-    assert_eq!(block.fields(), headers.fields());
-    for all in [extract_all_headers(msg), extract_header_block(msg)] {
-        assert_eq!(all.warnings, headers.warnings());
-        assert_eq!(&all.headers, headers.fields());
-    }
+    assert_eq!(block.len(), headers.len() + 1);
+    assert_eq!(
+        block
+            .iter()
+            .next(),
+        Some(("INVITE sip", "bob@example.com SIP/2.0"))
+    );
+    assert_eq!(block.warnings()[1..], *headers.warnings());
+    assert_eq!(block.warnings()[0].position, msg.find(" sip"));
+    assert_eq!(extract_header_block(msg).warnings, block.warnings());
     Ok(())
 }
 

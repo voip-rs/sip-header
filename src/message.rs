@@ -28,16 +28,15 @@
 //! non-breaking, and exposing it now would freeze header-block slice
 //! semantics nothing has needed.
 //!
-//! A line with a `:` is a row when its name is bounded: not empty, free of
-//! control characters, and the line not shaped as a start line. A name
-//! outside RFC 3261 §7.3.1 `header-name = token` is kept as sent, since
-//! refusing it would turn one bad byte into a missing header, under one
-//! warning per breach class (inner whitespace, non-ASCII, any other
-//! non-token character), each raised once per row. The classes are separate
-//! codes so the caller chooses which it accepts, UTF-8 names but not
-//! separators for instance. Every other line is reported by its extent in
-//! `skipped`; only a first line shaped as a request or status line is
-//! exempt, and only when reading a whole message.
+//! A line with a `:` after a non-empty name is a row. The name is kept as
+//! sent, since refusing a name outside RFC 3261 §7.3.1 `header-name = token`
+//! would turn one bad byte into a missing header; its breaches (whitespace,
+//! non-ASCII, other non-token characters, control characters) are reported
+//! once per class per row. The classes are separate codes so the caller
+//! chooses which it accepts, UTF-8 names but not separators for instance.
+//! Every other line is reported by its extent in `skipped`. Only the first
+//! line of a whole message is tested for a request or status line shape, and
+//! exempt when it has one; elsewhere such a line is a row if it holds a `:`.
 //!
 //! A row value is trimmed of SP and HTAB, the `WSP` of RFC 3261 `LWS`, and
 //! of nothing else. Other whitespace and control characters at its edges
@@ -55,19 +54,18 @@
 //!
 //! [`MessageLines`] is that line rule; [`SipMessageHeaders`] and every
 //! extract function read through it. Each line is searched for its LF once,
-//! the blank line found during the walk, and a name bounded and classified
-//! in one pass over its bytes. A row computes nothing more until asked, so a
-//! caller after one header pays, on every other row, only for that, and a
-//! value allocates only to unfold. The start-line check, which runs only for
-//! a name outside `token`, allocates nothing either.
+//! the blank line found during the walk, and a name bounded in one pass over
+//! its bytes. A row computes nothing more until asked, so a caller after one
+//! header pays, on every other row, only for that, and a value allocates only
+//! to unfold. The start-line check, which runs on the first line only,
+//! allocates nothing either.
 //!
-//! The walk reads bytes and acts only on ASCII ones (LF, CR, SP, HTAB, `:`,
-//! the token and control bytes of a name), none of which occurs inside a
-//! multi-byte UTF-8 sequence. Bytes and text therefore split alike, and
-//! invalid UTF-8 never moves a row boundary; a byte row is validated alone,
-//! when the caller asks for its text. The one exception reads text: the
-//! start-line check on a name outside `token`, which reads a line that is
-//! not UTF-8 lossily.
+//! The walk reads bytes and acts only on ASCII ones (LF, CR, SP, HTAB, `:`),
+//! none of which occurs inside a multi-byte UTF-8 sequence. Bytes and text
+//! therefore split alike, and invalid UTF-8 never moves a row boundary; a
+//! byte row is validated alone, when the caller asks for its text. The one
+//! exception reads text: the start-line check on the first line, which reads
+//! a line that is not UTF-8 lossily.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -179,11 +177,11 @@ pub fn extract_body(message: &str) -> Option<&str> {
 /// trimmed, unfolded rows, not the lines of the message.
 ///
 /// A name outside `token` stays a row, each breach in it reported by
-/// [`warnings`](Self::warnings). A line that is neither a header nor a
-/// continuation of one is skipped, and its byte offset reported by
-/// [`skipped`](Self::skipped) by extent, unless it is the request or status line
-/// [`new`](Self::new) exempts. A message read with both empty is
-/// conformant as far as the rows go.
+/// [`warnings`](Self::warnings). A line with no `:` after a non-empty name
+/// that is not a continuation of a row is skipped, and reported by extent by
+/// [`skipped`](Self::skipped), unless it is the request or status line
+/// [`new`](Self::new) exempts as the first line. A message read with both
+/// empty is conformant as far as the rows go.
 ///
 /// The rows are a [`SipHeaderFields`], which [`fields`](Self::fields) and
 /// [`into_fields`](Self::into_fields) hand out.
@@ -311,10 +309,10 @@ impl<'a> SipMessageHeaders<'a> {
     }
 
     /// Where each skipped line sits in the message, in order, CR and LF
-    /// excluded: a line with no `:`, with an empty name or a control
-    /// character in it, or shaped as a start line other than the one
-    /// [`new`](Self::new) exempts, or a continuation with no header above
-    /// it, whose span includes its leading SP or HTAB.
+    /// excluded: a line with no `:` or with an empty name before it, or a
+    /// continuation with no header above it, whose span includes its leading
+    /// SP or HTAB. The first line of a message read by [`new`](Self::new) is
+    /// left out when shaped as a request or status line.
     pub fn skipped(&self) -> &[Span] {
         &self.skipped
     }
@@ -327,11 +325,13 @@ impl<'a> SipMessageHeaders<'a> {
 
     /// The breaches of RFC 3261 §7.3.1 `header-name = token` in the rows'
     /// names, in line order: per row, at most one each of
-    /// [`WarningCode::HeaderNameWhitespace`], [`WarningCode::NonAscii`] and
-    /// [`WarningCode::InvalidToken`], in that order, on [`Field::Name`].
-    /// Positions are byte offsets into the message, at the first offending
-    /// character; the span covers the name. Whitespace beyond SP and HTAB
-    /// around a value stays in the row, for its value parser to report.
+    /// [`WarningCode::HeaderNameWhitespace`], [`WarningCode::NonAscii`],
+    /// [`WarningCode::InvalidToken`] and [`WarningCode::HeaderNameControl`],
+    /// in that order, on [`Field::Name`]; a control character raises only the
+    /// last. Positions are byte offsets into the message, at the first
+    /// offending character; the span covers the name. Whitespace beyond SP
+    /// and HTAB around a value stays in the row, for its value parser to
+    /// report.
     ///
     /// ```
     /// use sip_header::{SipMessageHeaders, WarningCode};
@@ -617,8 +617,11 @@ impl<'a, T: ?Sized + MessageText> Iterator for MessageLines<'a, T> {
             let text = self
                 .message
                 .slice(line.clone());
+            if at == 0 && self.start_line && text.is_start_line() {
+                continue;
+            }
             match header_line(text.bytes()) {
-                Some((name_end, colon, token)) if token || !text.is_start_line() => {
+                Some((name_end, colon)) => {
                     let end = self.continuations(line.end);
                     let index = self.rows;
                     self.rows += 1;
@@ -633,8 +636,7 @@ impl<'a, T: ?Sized + MessageText> Iterator for MessageLines<'a, T> {
                         index,
                     }));
                 }
-                _ if at == 0 && self.start_line && text.is_start_line() => {}
-                _ => return Some(MessageLine::Skipped(Span::new(line))),
+                None => return Some(MessageLine::Skipped(Span::new(line))),
             }
         }
     }
@@ -936,34 +938,19 @@ impl<T: ?Sized + MessageText> std::fmt::Debug for MessageRow<'_, T> {
     }
 }
 
-/// `bytes`, a line, as `name: value` with a bounded name, not empty and free of
-/// control characters but HTAB, SWS before the colon allowed: where the name
-/// ends, where the colon is, and whether the name is a `token`. One pass
-/// over the name's bytes.
-fn header_line(bytes: &[u8]) -> Option<(usize, usize, bool)> {
+/// `bytes`, a line, as `name: value` with a non-empty name, SWS before the
+/// colon allowed: where the name ends and where the colon is.
+fn header_line(bytes: &[u8]) -> Option<(usize, usize)> {
     let mut name_end = 0;
-    let mut first_non_token = None;
-    let mut previous = 0;
     for (i, &b) in bytes
         .iter()
         .enumerate()
     {
-        if b == b':' {
-            let token = first_non_token.map_or(true, |at| at >= name_end);
-            return (name_end > 0).then_some((name_end, i, token));
+        match b {
+            b':' => return (name_end > 0).then_some((name_end, i)),
+            b' ' | b'\t' => {}
+            _ => name_end = i + 1,
         }
-        // char::is_control in UTF-8: C0, DEL, and C1 as 0xC2 0x80..=0x9F.
-        if (b < 0x20 && b != b'\t') || b == 0x7f || (previous == 0xc2 && (0x80..=0x9f).contains(&b))
-        {
-            return None;
-        }
-        if !matches!(b, b' ' | b'\t') {
-            name_end = i + 1;
-        }
-        if first_non_token.is_none() && !crate::is_token_byte(b) {
-            first_non_token = Some(i);
-        }
-        previous = b;
     }
     None
 }
@@ -973,10 +960,22 @@ fn name_warnings(name: &str, at: usize) -> impl Iterator<Item = ParseWarning> + 
     let span = Span::new(at..at + name.len());
     [
         (WarningCode::HeaderNameWhitespace, name.find([' ', '\t'])),
-        (WarningCode::NonAscii, name.find(|c: char| !c.is_ascii())),
+        (
+            WarningCode::NonAscii,
+            name.find(|c: char| !c.is_ascii() && !c.is_control()),
+        ),
         (
             WarningCode::InvalidToken,
-            name.find(|c: char| c.is_ascii() && !crate::is_token_char(c) && c != ' ' && c != '\t'),
+            name.find(|c: char| {
+                c.is_ascii()
+                    && !crate::is_token_char(c)
+                    && !matches!(c, ' ' | '\t')
+                    && !c.is_control()
+            }),
+        ),
+        (
+            WarningCode::HeaderNameControl,
+            name.find(|c: char| c.is_control() && c != '\t'),
         ),
     ]
     .into_iter()
@@ -2457,7 +2456,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             [
                 (WarningCode::HeaderNameWhitespace, Some(at(" B")), name),
                 (WarningCode::NonAscii, Some(at("é")), name),
-                (WarningCode::InvalidToken, Some(at("/")), name),
+                (WarningCode::InvalidToken, Some(at("é/") + 2), name),
                 (WarningCode::HeaderNameControl, Some(at("\u{1}")), name),
             ]
         );
