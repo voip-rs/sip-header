@@ -51,6 +51,8 @@ use crate::Framing;
 pub(crate) enum Grammar {
     /// `type "/" subtype *(";" parameter)`: a quote opens a parameter value.
     MediaType,
+    /// A lone token, as `mechanism`: no quote opens.
+    Mechanism,
 }
 
 /// A value with its comments blanked.
@@ -77,6 +79,7 @@ impl Seen {
                 Grammar::MediaType => self
                     .param
                     .is_some_and(|p| crate::opens_param_quote(&before[p..])),
+                Grammar::Mechanism => false,
             }
     }
 }

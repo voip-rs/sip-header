@@ -305,6 +305,8 @@ pub enum Field {
     Value,
     /// A `header-name`.
     Name,
+    /// A body part's Content-Transfer-Encoding `mechanism` (RFC 2045 §6.1).
+    TransferEncoding,
 }
 
 impl fmt::Display for Field {
@@ -335,6 +337,7 @@ impl fmt::Display for Field {
             Field::Reference => "location",
             Field::Value => "value",
             Field::Name => "header-name",
+            Field::TransferEncoding => "transfer-encoding",
         };
         f.write_str(name)
     }

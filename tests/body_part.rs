@@ -431,25 +431,42 @@ fn placed_in(input: &str, warnings: &[ParseWarning]) -> Result<(), TestCaseError
     Ok(())
 }
 
+/// A body-part read of `input` with its warnings placed in it, whose print
+/// carries no CR, LF or NUL and reads back as the same value.
+fn body_part_is_stable<T>(input: &str) -> Result<(), TestCaseError>
+where
+    T: BodyPartParse + std::fmt::Display + std::fmt::Debug + PartialEq,
+{
+    let Ok(parsed) = T::parse_body_part_with_warnings(input) else {
+        return Ok(());
+    };
+    placed_in(input, &parsed.warnings)?;
+    let wire = parsed
+        .value
+        .to_string();
+    prop_assert!(!wire.contains(['\r', '\n', '\0']), "{:?}", wire);
+    prop_assert_eq!(
+        T::parse_body_part(&wire),
+        Ok(parsed.value),
+        "{:?} -> {:?}",
+        input,
+        wire
+    );
+    Ok(())
+}
+
 proptest! {
     #[test]
     fn content_type_body_part_reads_back_its_print(raw in body_text()) {
-        let wrapped = format!("text/plain;a={raw}");
-        for input in [raw.as_str(), wrapped.as_str()] {
-            let Ok(parsed) = SipContentType::parse_body_part_with_warnings(input) else {
-                continue;
-            };
-            placed_in(input, &parsed.warnings)?;
-            let wire = parsed.value.to_string();
-            prop_assert!(!wire.contains(['\r', '\n', '\0']), "{:?}", wire);
-            prop_assert_eq!(
-                SipContentType::parse_body_part(&wire),
-                Ok(parsed.value),
-                "{:?} -> {:?}",
-                input,
-                wire
-            );
-        }
+        body_part_is_stable::<SipContentType>(&raw)?;
+        body_part_is_stable::<SipContentType>(&format!("text/plain;a={raw}"))?;
+    }
+
+    #[test]
+    fn transfer_encoding_reads_back_its_print(raw in body_text()) {
+        body_part_is_stable::<SipContentTransferEncoding>(&raw)?;
+        let sip = SipContentTransferEncoding::parse_with_warnings(&raw);
+        prop_assert_eq!(sip, SipContentTransferEncoding::parse_body_part_with_warnings(&raw));
     }
 
     #[test]
