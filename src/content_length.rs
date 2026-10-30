@@ -90,6 +90,21 @@ fn control_inside_digits(input: &str) -> Option<usize> {
 impl sealed::Sealed for SipContentLength {}
 
 impl SipContentLength {
+    /// The length of an input of ASCII digits alone that fits a `usize`,
+    /// which [`parse_full`](Self::parse_full) accepts with no warning.
+    fn plain_digits(input: &str) -> Option<usize> {
+        if input.is_empty()
+            || !input
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        input
+            .parse()
+            .ok()
+    }
+
     fn parse_full(input: &str) -> Result<Parsed<Self>, ParseError> {
         if let Some(at) = control_inside_digits(input) {
             return Err(ParseError::malformed(
@@ -129,6 +144,12 @@ impl SipContentLength {
 impl HeaderParse for SipContentLength {
     /// Parse leniently; whitespace around the value is the header's `LWS`.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        if let Some(length) = Self::plain_digits(input) {
+            return Ok(Parsed {
+                value: SipContentLength(length),
+                warnings: Vec::new(),
+            });
+        }
         Self::parse_full(input)
     }
 }
