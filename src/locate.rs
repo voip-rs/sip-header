@@ -317,6 +317,62 @@ mod tests {
     }
 
     #[test]
+    fn a_bracket_holds_commas_only_at_an_addr_spec_and_when_it_closes() {
+        for (grammar, text, entries) in [
+            (
+                ListGrammar::Token,
+                r#"text/plain<;>p="a, b""#,
+                &[r#"text/plain<;>p="a, b""#][..],
+            ),
+            (
+                ListGrammar::Token,
+                "SIP/2.0/UDP <a, b>",
+                &["SIP/2.0/UDP <a", " b>"],
+            ),
+            (
+                ListGrammar::NameAddr,
+                "<sip:a@example.com>;p=<x, y>",
+                &["<sip:a@example.com>;p=<x", " y>"],
+            ),
+            (
+                ListGrammar::NameAddr,
+                "<sip:a@example.com, sip:b@example.com",
+                &["<sip:a@example.com", " sip:b@example.com"],
+            ),
+            (
+                ListGrammar::NameAddr,
+                "<sip:a<b>, <sip:c@example.com>",
+                &["<sip:a<b>", " <sip:c@example.com>"],
+            ),
+            (
+                ListGrammar::NameAddr,
+                "\u{a0}\"a<b\" <sip:x@example.com>, <sip:y@example.com>",
+                &["\u{a0}\"a<b\" <sip:x@example.com>", " <sip:y@example.com>"],
+            ),
+            (
+                ListGrammar::NameAddr,
+                "<sip:a@example.com>;p=\u{a0}\"<\", <sip:b@example.com>",
+                &["<sip:a@example.com>;p=\u{a0}\"<\"", " <sip:b@example.com>"],
+            ),
+            (ListGrammar::Auth, "uri=<x, y=z", &["uri=<x", " y=z"]),
+            (
+                ListGrammar::Uri,
+                "<urn:example:1>;purpose=<b, c>",
+                &["<urn:example:1>;purpose=<b", " c>"],
+            ),
+            (
+                ListGrammar::Uri,
+                "<urn:example:1, urn:example:2",
+                &["<urn:example:1", " urn:example:2"],
+            ),
+            (ListGrammar::Anywhere, "<a, b", &["<a", " b"]),
+            (ListGrammar::Anywhere, "<a<b>, c>", &["<a<b>", " c>"]),
+        ] {
+            assert_eq!(split(text, grammar), entries, "{grammar:?} {text:?}");
+        }
+    }
+
+    #[test]
     fn params_mark_segments_values_and_quotes() {
         assert_eq!(
             Locator::params(r#";p="x" ", y";q= "a\";r"#).collect::<Vec<_>>(),

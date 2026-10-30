@@ -915,3 +915,100 @@ fn a_final_escaped_quote_never_closes_a_value() {
     assert_eq!(auth.realm(), Some(r#""a b\""#));
     assert_eq!(seen, [(WarningCode::UnterminatedQuote, Some(13), None)]);
 }
+
+#[test]
+fn a_bracket_holds_commas_only_at_an_addr_spec_and_when_it_closes() {
+    let (accept, seen) = reported::<SipAccept>(r#"text/plain<;>p="a, b""#);
+    let [entry] = accept.entries() else {
+        panic!("{accept:?}");
+    };
+    assert_eq!(entry.param("p"), Some(Some("a, b")));
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::StrayDelimiter, Some(10), Some(0)),
+            (WarningCode::StrayDelimiter, Some(12), Some(0))
+        ]
+    );
+
+    let (contacts, seen) = reported::<ContactList>("<sip:a@example.com>;p=<x, y>");
+    assert_eq!(contacts.len(), 2, "{contacts:?}");
+    assert_eq!(contacts.addrs()[0].param("p"), Some(Some("<x")));
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::InvalidToken, Some(22), Some(0)),
+            (
+                WarningCode::Uri(sip_header::sip_uri::WarningCode::MissingScheme),
+                Some(26),
+                Some(1)
+            )
+        ]
+    );
+
+    let (contacts, seen) = reported::<ContactList>("<sip:a@example.com, sip:b@example.com");
+    assert_eq!(
+        contacts
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>(),
+        ["<sip:a@example.com>", "<sip:b@example.com>"]
+    );
+    assert_eq!(seen, [(WarningCode::UnclosedBracket, Some(0), Some(0))]);
+
+    let (addrs, seen) = reported::<SipHeaderAddrList>("<sip:a<b>, <sip:c@example.com>");
+    assert_eq!(
+        addrs
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>(),
+        ["<sip:a%3Cb>", "<sip:c@example.com>"]
+    );
+    assert_eq!(
+        seen,
+        [(
+            WarningCode::Uri(sip_header::sip_uri::WarningCode::InvalidChar),
+            Some(6),
+            Some(0)
+        )]
+    );
+
+    let (addrs, seen) =
+        reported::<SipHeaderAddrList>("\u{a0}\"a<b\" <sip:x@example.com>, <sip:y@example.com>");
+    assert_eq!(
+        addrs
+            .iter()
+            .map(|a| a.display_name())
+            .collect::<Vec<_>>(),
+        [Some("a<b"), None]
+    );
+    assert_eq!(seen, [(WarningCode::NonLwsWhitespace, Some(0), Some(0))]);
+
+    let (contacts, seen) =
+        reported::<ContactList>("<sip:a@example.com>;p=\u{a0}\"<\", <sip:b@example.com>");
+    assert_eq!(contacts.len(), 2, "{contacts:?}");
+    assert_eq!(contacts.addrs()[0].param("p"), Some(Some("<")));
+    assert_eq!(seen, [(WarningCode::NonLwsWhitespace, Some(22), Some(0))]);
+
+    let (auth, seen) = reported::<SipAuthValue>("Digest uri=<x, y=z");
+    assert_eq!(
+        auth.params()
+            .iter()
+            .collect::<Vec<_>>(),
+        [("uri", Some("<x")), ("y", Some("z"))]
+    );
+    assert_eq!(seen, [(WarningCode::InvalidToken, Some(11), None)]);
+
+    let (info, seen) = reported::<UriInfo>("<urn:example:1, urn:example:2");
+    assert_eq!(info.len(), 2, "{info:?}");
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::UnclosedBracket, Some(0), Some(0)),
+            (WarningCode::MissingBrackets, Some(16), Some(1))
+        ]
+    );
+
+    assert_eq!(split_comma_entries("<a, b"), ["<a", " b"]);
+    assert_eq!(split_comma_entries("<a<b>, c>"), ["<a<b>", " c>"]);
+}
