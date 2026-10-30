@@ -1133,3 +1133,22 @@ fn warn_text_opens_only_after_whitespace_past_the_code_and_nothing_after_it() {
         ]
     );
 }
+
+#[test]
+fn a_final_escaped_quote_never_closes_warn_text() {
+    use sip_header::SipWarningEntry;
+
+    let unterminated = |r: Result<_, ParseError>| {
+        matches!(
+            r,
+            Err(ParseError::Malformed(f))
+                if (f.field, f.code, f.position) == (Field::Text, FaultCode::Unterminated, Some(6))
+        )
+    };
+    assert!(unterminated(
+        SipWarningEntry::parse(r#"399 h "a b\""#).map(|_| ())
+    ));
+    assert!(unterminated(
+        SipWarning::parse(r#"399 h "a b\""#).map(|_| ())
+    ));
+}
