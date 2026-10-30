@@ -7,7 +7,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
-use crate::locate::ListGrammar;
+use crate::locate::{ListGrammar, Locator, Mark};
 use crate::params::{HeaderParams, ParamsMut};
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{Located, Relocation, Span};
@@ -216,8 +216,7 @@ impl CommaList for HistoryInfo {
         warnings: &mut Vec<ParseWarning>,
     ) -> Result<HistoryInfoEntry, ParseError> {
         let addr = parse_list_addr(entry, warnings)?;
-        // A successful parse without `<` is the bare addr-spec branch.
-        if !entry.contains('<') {
+        if !Locator::entry(entry, Self::GRAMMAR).any(|m| matches!(m, Mark::Bracket { .. })) {
             warnings.push(
                 ParseWarning::new(Field::Addr, WarningCode::NotNameAddr)
                     .at(crate::offset_in(entry, entry.trim_start())),

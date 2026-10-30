@@ -10,7 +10,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::join::SipJoin;
 use crate::list::CommaList;
-use crate::locate::ListGrammar;
+use crate::locate::{ListGrammar, Locator, Mark};
 use crate::lws;
 use crate::params::{any_value, HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::reason::SipReason;
@@ -491,47 +491,6 @@ impl Redact for SipHeaderAddrList {
     }
 }
 
-/// Read the quoted string opening `s`, returning its unescaped content and
-/// the byte index just past the closing quote; `None` when it never closes.
-fn parse_quoted_string(s: &str) -> Option<(String, usize)> {
-    let mut result = String::new();
-    let mut chars = s
-        .char_indices()
-        .skip(1);
-
-    while let Some((i, c)) = chars.next() {
-        match c {
-            '"' => return Some((result, i + 1)),
-            '\\' => result.push(
-                chars
-                    .next()?
-                    .1,
-            ),
-            _ => result.push(c),
-        }
-    }
-    None
-}
-
-/// Byte range of the URI inside the `<...>` opening `s[open..]`, and the
-/// index just past `>`; `None` when the `<` never closes.
-fn angle_uri(
-    s: &str,
-    open: usize,
-    offset: usize,
-) -> Result<Option<(usize, usize, usize)>, ParseError> {
-    if !s[open..].starts_with('<') {
-        return Err(ParseError::malformed(
-            Field::Addr,
-            FaultCode::Missing,
-            Some(offset + open),
-        ));
-    }
-    Ok(s[open..]
-        .find('>')
-        .map(|i| (open + 1, open + i, open + i + 1)))
-}
-
 /// Parse the URI at `text`, which starts `offset` bytes into the caller's
 /// input, forwarding its warnings.
 fn parse_uri(
@@ -550,27 +509,8 @@ fn parse_uri(
     Ok(parsed.value)
 }
 
-/// Where the header parameters of a bare addr-spec start: the first `;`
-/// (RFC 3261 §20), past a SIP userinfo, whose `user` may hold `;`.
-fn bare_params_at(s: &str) -> usize {
-    let scheme = s
-        .split_once(':')
-        .map_or("", |(scheme, _)| scheme);
-    let from = if scheme.eq_ignore_ascii_case("sip") || scheme.eq_ignore_ascii_case("sips") {
-        let quote = s
-            .find('"')
-            .unwrap_or(s.len());
-        s[..quote]
-            .find('@')
-            .map_or(0, |at| at + 1)
-    } else {
-        0
-    };
-    s[from..]
-        .find(';')
-        .map_or(s.len(), |i| from + i)
-}
-
+/// Read one `(name-addr / addr-spec) *(SEMI generic-param)`, its display
+/// name, bracket and first parameter where [`Locator::entry`] puts them.
 fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
     let mut warnings = Vec::new();
     let lead = input.len()
@@ -582,38 +522,51 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         return Err(ParseError::empty(Field::Addr));
     }
 
-    let (display_name, name_span, open) = if s.starts_with('"') {
-        let (name, end) = parse_quoted_string(s).ok_or_else(|| {
-            ParseError::malformed(Field::DisplayName, FaultCode::Unterminated, Some(lead))
-        })?;
-        let after = lws::trim_start_in(input, &s[end..], Field::DisplayName, &mut warnings);
-        let open = s.len() - after.len();
-        (Some(name), Some(Span::new(lead..lead + end)), Some(open))
-    } else if let Some(open) = s.find('<') {
-        let invalid = s[..open].find(|c: char| !is_token_char(c) && !c.is_ascii_whitespace());
-        if let Some(i) = invalid {
-            warnings.push(
-                ParseWarning::new(Field::DisplayName, WarningCode::InvalidToken).at(lead + i),
-            );
+    let mut marks = Locator::entry(s, ListGrammar::NameAddr);
+    let first = marks.next();
+    let (display_name, name_span, bracket) = match first {
+        Some(Mark::Quote { close, .. }) => {
+            let close = close.ok_or_else(|| {
+                ParseError::malformed(Field::DisplayName, FaultCode::Unterminated, Some(lead))
+            })?;
+            let name = crate::unescape_quoted_pair(&s[1..close]);
+            let after =
+                lws::trim_start_in(input, &s[close + 1..], Field::DisplayName, &mut warnings);
+            if !after.starts_with('<') {
+                return Err(ParseError::malformed(
+                    Field::Addr,
+                    FaultCode::Missing,
+                    Some(lead + s.len() - after.len()),
+                ));
+            }
+            let name_span = Span::new(lead..lead + close + 1);
+            (Some(name), Some(name_span), marks.next())
         }
-        let (name, gap) = lws::split_end(&s[..open]);
-        // InvalidToken already names the first character it flags.
-        let mut padding = Vec::new();
-        lws::report_run(input, gap, Field::DisplayName, &mut padding);
-        warnings.extend(
-            padding
-                .into_iter()
-                .filter(|w| w.position != invalid.map(|i| lead + i)),
-        );
-        let name_span = (!name.is_empty()).then(|| Span::within(input, name));
-        (name_span.map(|_| name.to_string()), name_span, Some(open))
-    } else {
-        (None, None, None)
+        Some(Mark::Bracket { open, .. }) => {
+            let invalid = s[..open].find(|c: char| !is_token_char(c) && !c.is_ascii_whitespace());
+            if let Some(i) = invalid {
+                warnings.push(
+                    ParseWarning::new(Field::DisplayName, WarningCode::InvalidToken).at(lead + i),
+                );
+            }
+            let (name, gap) = lws::split_end(&s[..open]);
+            // InvalidToken already names the first character it flags.
+            let mut padding = Vec::new();
+            lws::report_run(input, gap, Field::DisplayName, &mut padding);
+            warnings.extend(
+                padding
+                    .into_iter()
+                    .filter(|w| w.position != invalid.map(|i| lead + i)),
+            );
+            let name_span = (!name.is_empty()).then(|| Span::within(input, name));
+            (name_span.map(|_| name.to_string()), name_span, first)
+        }
+        _ => (None, None, None),
     };
 
     let span = Some(Span::new(lead..lead + s.len()));
-    let Some(open) = open else {
-        let (text, params) = s.split_at(bare_params_at(s));
+    let Some(Mark::Bracket { open, close }) = bracket else {
+        let (text, params) = s.split_at(crate::first_param(first).unwrap_or(s.len()));
         let uri = parse_uri(text, lead, &mut warnings)?;
         if let Some(i) = text.find([',', ';', '?']) {
             warnings.push(
@@ -630,10 +583,9 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         };
         return Ok(Parsed::new(addr, warnings));
     };
-    let Some((start, end, after)) = angle_uri(s, open, lead)? else {
-        let rest = &s[open + 1..];
-        let (text, params) = rest.split_at(bare_params_at(rest));
-        let text = lws::trim_end_in(input, text, Field::Addr, &mut warnings);
+    let param = crate::first_param(marks).unwrap_or(s.len());
+    let Some(close) = close else {
+        let text = lws::trim_end_in(input, &s[open + 1..param], Field::Addr, &mut warnings);
         let at = lead + open + 1;
         warnings.push(
             ParseWarning::new(Field::Addr, WarningCode::UnclosedBracket)
@@ -643,7 +595,7 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         let uri = parse_uri(text, at, &mut warnings)?;
         let addr = SipHeaderAddr {
             display_name,
-            params: HeaderParams::read(input, params, &mut warnings),
+            params: HeaderParams::read(input, &s[param..], &mut warnings),
             span,
             uri_span: Some(Span::new(at..at + text.len())),
             display_name_span: name_span,
@@ -651,33 +603,25 @@ fn parse_addr(input: &str) -> Result<Parsed<SipHeaderAddr>, ParseError> {
         };
         return Ok(Parsed::new(addr, warnings));
     };
-    let uri = parse_uri(&s[start..end], lead + start, &mut warnings)?;
-    let tail = &s[after..];
-    let junk = tail.len()
-        - tail
-            .trim_start()
-            .len();
-    let params_start = if tail[junk..].is_empty() || tail[junk..].starts_with(';') {
-        0
+    let uri = parse_uri(&s[open + 1..close], lead + open + 1, &mut warnings)?;
+    let (junk_run, junk) = lws::split_start(&s[close + 1..param]);
+    let params = if junk.is_empty() {
+        &s[close + 1..]
     } else {
-        lws::report_run(input, &tail[..junk], Field::Param, &mut warnings);
-        let params_start = tail
-            .find(';')
-            .unwrap_or(tail.len());
+        lws::report_run(input, junk_run, Field::Param, &mut warnings);
         warnings.push(
             ParseWarning::new(Field::Param, WarningCode::TrailingContent)
-                .at(lead + after + junk)
-                .covering(Span::within(input, tail[junk..params_start].trim_end())),
+                .at(crate::offset_in(input, junk))
+                .covering(Span::within(input, junk.trim_end())),
         );
-        params_start
+        &s[param..]
     };
-    let params = HeaderParams::read(input, &tail[params_start..], &mut warnings);
     let addr = SipHeaderAddr {
         display_name,
         uri,
-        params,
+        params: HeaderParams::read(input, params, &mut warnings),
         span,
-        uri_span: Some(Span::new(lead + start..lead + end)),
+        uri_span: Some(Span::new(lead + open + 1..lead + close)),
         display_name_span: name_span,
     };
     Ok(Parsed::new(addr, warnings))

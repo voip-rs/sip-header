@@ -46,10 +46,31 @@ pub(crate) enum Mark {
 enum Part {
     /// Before the addr-spec's bracket and the parameters.
     Lead,
-    /// After the addr-spec's `>`, before the parameters.
-    AfterBracket,
+    /// A bare SIP URI after a `;` at this position that is the userinfo's
+    /// if an `@` follows before any `"`, else the first parameter's.
+    Userinfo(usize),
+    /// In or after the addr-spec, where only a `;` opens anything.
+    Addr,
     /// The `*(SEMI generic-param)` tail.
     Params,
+}
+
+/// What a bare addr-spec has shown so far, for the rule that a SIP URI's
+/// `user` may hold `;` (RFC 3261 §25.1 `userinfo`).
+#[derive(Debug, Default, Clone, Copy)]
+struct BareUri {
+    start: Option<usize>,
+    /// Whether the scheme, once its `:` is read, is `sip` or `sips`.
+    sip: Option<bool>,
+    at: bool,
+    quoted: bool,
+}
+
+impl BareUri {
+    /// Whether a `;` read next may still be the userinfo's.
+    fn userinfo_may_follow(&self) -> bool {
+        self.sip == Some(true) && !self.at && !self.quoted
+    }
 }
 
 /// The marks of a text read under one [`ListGrammar`].
@@ -61,6 +82,7 @@ pub(crate) struct Locator<'a> {
     i: usize,
     part: Part,
     segment: Segment,
+    bare: BareUri,
     /// Whether a bracket opened in the entry, closed or not.
     bracketed: bool,
     /// Whether the entry so far holds anything but whitespace.
@@ -84,6 +106,7 @@ impl<'a> Locator<'a> {
             i: 0,
             part,
             segment: Segment::default(),
+            bare: BareUri::default(),
             bracketed: false,
             begun: false,
             after_space: false,
@@ -146,11 +169,42 @@ impl<'a> Locator<'a> {
         if !blank {
             self.after_equal = c == '=';
         }
+        if self.grammar == ListGrammar::NameAddr && self.part == Part::Lead {
+            self.read_bare(at, c);
+        }
         let value = self
             .segment
             .push(c);
         (value && (self.part == Part::Params || self.grammar == ListGrammar::Auth))
             .then_some(Mark::Value(at))
+    }
+
+    /// Record `c`, read at `at` in a name-addr's lead, as the bare URI
+    /// it may turn out to be.
+    fn read_bare(&mut self, at: usize, c: char) {
+        let bare = &mut self.bare;
+        if bare
+            .start
+            .is_none()
+            && !is_trimmed(c)
+        {
+            bare.start = Some(at);
+        }
+        match c {
+            ':' if bare
+                .sip
+                .is_none() =>
+            {
+                let scheme = &self.text[bare
+                    .start
+                    .unwrap_or(at)..at];
+                bare.sip =
+                    Some(scheme.eq_ignore_ascii_case("sip") || scheme.eq_ignore_ascii_case("sips"));
+            }
+            '@' => bare.at |= !bare.quoted,
+            '"' => bare.quoted = true,
+            _ => {}
+        }
     }
 
     /// The quote opening at `at`, skipped to its close.
@@ -168,7 +222,8 @@ impl<'a> Locator<'a> {
         Mark::Quote { open: at, close }
     }
 
-    /// The bracket opening at `at`, skipped to its close.
+    /// The bracket opening at `at`, skipped to its close; one that never
+    /// closes starts the URI after it.
     fn bracket(&mut self, at: usize) -> Mark {
         let close = if self.brackets_unclosed {
             None
@@ -180,14 +235,28 @@ impl<'a> Locator<'a> {
         self.brackets_unclosed = close.is_none();
         self.bracketed = true;
         self.read(at, '<');
-        if let Some(close) = close {
-            self.i = close + 1;
-            self.read(close, '>');
-            if self.part == Part::Lead {
-                self.part = Part::AfterBracket;
+        match close {
+            Some(close) => {
+                self.i = close + 1;
+                self.read(close, '>');
+                if self.part == Part::Lead {
+                    self.part = Part::Addr;
+                }
+            }
+            None => {
+                self.bare = BareUri {
+                    start: Some(at + 1),
+                    ..BareUri::default()
+                }
             }
         }
         Mark::Bracket { open: at, close }
+    }
+
+    /// Read again from the `;` at `semi`, as the first parameter's.
+    fn params_from(&mut self, semi: usize) {
+        self.i = semi;
+        self.part = Part::Addr;
     }
 }
 
@@ -195,22 +264,47 @@ impl Iterator for Locator<'_> {
     type Item = Mark;
 
     fn next(&mut self) -> Option<Mark> {
-        while let Some(c) = self.text[self.i..]
-            .chars()
-            .next()
-        {
+        loop {
+            let Some(c) = self.text[self.i..]
+                .chars()
+                .next()
+            else {
+                let Part::Userinfo(semi) = self.part else {
+                    return None;
+                };
+                self.params_from(semi);
+                continue;
+            };
             let at = self.i;
             self.i += c.len_utf8();
-            match c {
-                '"' if self.quote_opens() => return Some(self.quote(at)),
-                '<' if self.bracket_opens() => return Some(self.bracket(at)),
-                ';' if self.grammar != ListGrammar::Auth => {
+            match (c, self.part) {
+                ('"', Part::Userinfo(semi)) => {
+                    self.params_from(semi);
+                    continue;
+                }
+                (',', Part::Userinfo(semi)) if self.split => {
+                    self.params_from(semi);
+                    continue;
+                }
+                ('@', Part::Userinfo(_)) => self.part = Part::Addr,
+                ('"', _) if self.quote_opens() => return Some(self.quote(at)),
+                ('<', _) if self.bracket_opens() => return Some(self.bracket(at)),
+                (';', Part::Userinfo(_)) => {}
+                (';', Part::Lead)
+                    if self.grammar == ListGrammar::NameAddr
+                        && self
+                            .bare
+                            .userinfo_may_follow() =>
+                {
+                    self.part = Part::Userinfo(at);
+                }
+                (';', _) if self.grammar != ListGrammar::Auth => {
                     self.read(at, c);
                     self.part = Part::Params;
                     self.segment = Segment::default();
                     return Some(Mark::Param(at));
                 }
-                ',' if self.split => {
+                (',', _) if self.split => {
                     *self = Locator {
                         i: self.i,
                         quotes_unclosed: self.quotes_unclosed,
@@ -225,7 +319,6 @@ impl Iterator for Locator<'_> {
                 return Some(mark);
             }
         }
-        None
     }
 }
 
