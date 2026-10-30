@@ -427,6 +427,10 @@ pub enum WarningCode {
     /// SP or HTAB inside a header name, which RFC 3261 §7.3.1 `header-name
     /// = token` (§25.1) never admits; kept as sent.
     HeaderNameWhitespace,
+    /// A control character (`char::is_control`, HTAB excluded) in a header
+    /// name, which lies outside RFC 3261 §25.1 `token` (`header-name =
+    /// token`, §7.3.1); kept as sent.
+    HeaderNameControl,
     /// A non-ASCII character where RFC 3261 §25.1 `token` admits only
     /// ASCII, as in a header name (§7.3.1); kept as sent.
     NonAscii,
@@ -486,6 +490,7 @@ impl WarningCode {
             WarningCode::InvalidRport => "invalid-rport",
             WarningCode::InvalidPort => "invalid-port",
             WarningCode::HeaderNameWhitespace => "header-name-whitespace",
+            WarningCode::HeaderNameControl => "header-name-control",
             WarningCode::NonAscii => "non-ascii",
             WarningCode::NonLwsWhitespace => "non-lws-whitespace",
         }
@@ -551,6 +556,7 @@ mod tests {
             WarningCode::InvalidRport,
             WarningCode::InvalidPort,
             WarningCode::HeaderNameWhitespace,
+            WarningCode::HeaderNameControl,
             WarningCode::NonAscii,
             WarningCode::NonLwsWhitespace,
         ];
@@ -581,6 +587,7 @@ mod tests {
                 | WarningCode::InvalidRport
                 | WarningCode::InvalidPort
                 | WarningCode::HeaderNameWhitespace
+                | WarningCode::HeaderNameControl
                 | WarningCode::NonAscii
                 | WarningCode::NonLwsWhitespace => {}
             }

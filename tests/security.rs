@@ -2216,18 +2216,12 @@ fn start_line() -> impl Strategy<Value = String> {
     ]
 }
 
-/// Lines that are neither a header nor a start line, or a start line
-/// inside the block.
-fn refused_line() -> impl Strategy<Value = (bool, String)> {
-    let other = prop_oneof![
+/// Lines that are neither a header nor a start line.
+fn refused_line() -> impl Strategy<Value = String> {
+    prop_oneof![
         "[a-z]{1,8}( [a-z]{1,8}){0,4}",
         "SIP/2\\.0 [0-9]{0,2}[a-z]{1,3} [A-Za-z]{1,8}",
         ": ?[a-z]{1,4}",
-        "[A-Za-z]{1,3}[\u{1}\u{7f}][A-Za-z]{1,3}: [a-z]{1,4}",
-    ];
-    prop_oneof![
-        other.prop_map(|l| (false, l)),
-        start_line().prop_map(|l| (true, l)),
     ]
 }
 
@@ -2246,15 +2240,112 @@ fn row_line() -> impl Strategy<Value = (Vec<WarningCode>, String)> {
             WarningCode::HeaderNameWhitespace,
             WarningCode::InvalidToken
         ])),
+        "[A-Za-z]{1,3}[\u{1}\u{7f}\u{85}][A-Za-z]{1,3}: [a-z]{1,4}"
+            .prop_map(row(&[WarningCode::HeaderNameControl])),
+        "[A-Za-z]{1,3}[ ][\u{1}\u{85}é/]{1,2}[A-Za-z]{1,3}: [a-z]{1,4}".prop_map(|l: String| {
+            let mut codes = vec![WarningCode::HeaderNameWhitespace];
+            if l.contains('é') {
+                codes.push(WarningCode::NonAscii);
+            }
+            if l.contains('/') {
+                codes.push(WarningCode::InvalidToken);
+            }
+            if l.contains(['\u{1}', '\u{85}']) {
+                codes.push(WarningCode::HeaderNameControl);
+            }
+            (codes, l)
+        }),
     ]
 }
 
-/// `Ok(codes)` for a row, `Err(start_shaped)` for a refused line.
-fn header_or_refused() -> impl Strategy<Value = (Result<Vec<WarningCode>, bool>, String)> {
+/// How the reader takes a generated line.
+#[derive(Debug, Clone)]
+enum Kind {
+    /// A row with the name warnings it raises.
+    Row(Vec<WarningCode>),
+    /// Skipped wherever it is: no colon, or an empty name.
+    Refused,
+    /// A status line, which holds no colon: skipped unless it is line 0 of a
+    /// whole message.
+    Status,
+    /// A request line, whose `sip:` colon makes it a row named by its method
+    /// and scheme, unless it is line 0 of a whole message.
+    Request,
+}
+
+fn line_of_any_kind() -> impl Strategy<Value = (Kind, String)> {
     prop_oneof![
-        row_line().prop_map(|(codes, l)| (Ok(codes), l)),
-        refused_line().prop_map(|(start, l)| (Err(start), l)),
+        row_line().prop_map(|(codes, l)| (Kind::Row(codes), l)),
+        refused_line().prop_map(|l| (Kind::Refused, l)),
+        start_line().prop_map(|l| {
+            let kind = if l.starts_with("SIP/") {
+                Kind::Status
+            } else {
+                Kind::Request
+            };
+            (kind, l)
+        }),
     ]
+}
+
+/// What a reader reports for `lines` (extent, kind, text), read as a whole
+/// message or as a header block.
+struct Expected {
+    rows: usize,
+    row_extents: Vec<Range<usize>>,
+    skipped: Vec<(Range<usize>, String)>,
+    warned: Vec<(WarningCode, Range<usize>)>,
+}
+
+fn expected(lines: &[(Kind, String)], eol: &str, whole: bool) -> Expected {
+    let mut want = Expected {
+        rows: 0,
+        row_extents: Vec::new(),
+        skipped: Vec::new(),
+        warned: Vec::new(),
+    };
+    let mut at = 0;
+    for (i, (kind, line)) in lines
+        .iter()
+        .enumerate()
+    {
+        let extent = at..at + line.len();
+        let name = || {
+            let (name, _) = line
+                .split_once(':')
+                .unwrap();
+            at..at
+                + name
+                    .trim_end_matches([' ', '\t'])
+                    .len()
+        };
+        match kind {
+            Kind::Row(codes) => {
+                want.warned
+                    .extend(
+                        codes
+                            .iter()
+                            .map(|&c| (c, name())),
+                    );
+                want.rows += 1;
+                want.row_extents
+                    .push(extent);
+            }
+            Kind::Status | Kind::Request if whole && i == 0 => {}
+            Kind::Request => {
+                want.warned
+                    .push((WarningCode::HeaderNameWhitespace, name()));
+                want.rows += 1;
+                want.row_extents
+                    .push(extent);
+            }
+            Kind::Refused | Kind::Status => want
+                .skipped
+                .push((extent, line.clone())),
+        }
+        at += line.len() + eol.len();
+    }
+    want
 }
 
 proptest! {
@@ -2263,38 +2354,20 @@ proptest! {
     #[test]
     fn every_line_is_a_row_or_skipped_unless_it_starts_the_message(
         start in prop::option::of(start_line()),
-        lines in prop::collection::vec(header_or_refused(), 0..8),
+        lines in prop::collection::vec(line_of_any_kind(), 0..8),
         eol in prop::sample::select(vec!["\r\n", "\n"]),
         body in any::<bool>(),
     ) {
+        let lines: Vec<(Kind, String)> = start
+            .map(|l| {
+                let kind = if l.starts_with("SIP/") { Kind::Status } else { Kind::Request };
+                (kind, l)
+            })
+            .into_iter()
+            .chain(lines)
+            .collect();
         let mut msg = String::new();
-        let mut rows = 0;
-        let mut block_skipped = Vec::new();
-        let mut refused = Vec::new();
-        let mut warned = Vec::new();
-        let mut row_extents = Vec::new();
-        if let Some(start) = &start {
-            block_skipped.push(0..start.len());
-            msg.push_str(start);
-            msg.push_str(eol);
-        }
-        for (kind, line) in &lines {
-            let at = msg.len();
-            match kind {
-                Ok(codes) => {
-                    rows += 1;
-                    let (name, _) = line.split_once(':').unwrap();
-                    let name = at..at + name.trim_end_matches([' ', '\t']).len();
-                    warned.extend(codes.iter().map(|&c| (c, name.clone())));
-                    row_extents.push(at..at + line.len());
-                }
-                Err(start_shaped) => {
-                    block_skipped.push(at..at + line.len());
-                    if !(msg.is_empty() && *start_shaped) {
-                        refused.push(at..at + line.len());
-                    }
-                }
-            }
+        for (_, line) in &lines {
             msg.push_str(line);
             msg.push_str(eol);
         }
@@ -2312,50 +2385,36 @@ proptest! {
             spans.iter().map(|s| s.get(&msg).unwrap().to_owned()).collect()
         };
 
-        let headers = SipMessageHeaders::new(&msg);
-        prop_assert_eq!(headers.len(), rows, "{:?}", msg);
-        prop_assert_eq!(extents(headers.skipped()), refused.clone(), "{:?}", msg);
-        prop_assert_eq!(headers.row_spans().len(), rows, "{:?}", msg);
-        prop_assert_eq!(extents(headers.row_spans()), row_extents.clone(), "{:?}", msg);
-        for (span, (_, line)) in headers
-            .row_spans()
-            .iter()
-            .zip(lines.iter().filter(|(kind, _)| kind.is_ok()))
-        {
-            prop_assert_eq!(span.get(&msg), Ok(line.as_str()), "{:?}", msg);
+        for whole in [true, false] {
+            let want = expected(&lines, eol, whole);
+            let headers = if whole {
+                SipMessageHeaders::new(&msg)
+            } else {
+                SipMessageHeaders::from_header_block(&msg)
+            };
+            let skipped: Vec<_> = want.skipped.iter().map(|(r, _)| r.clone()).collect();
+            let skipped_texts: Vec<_> = want.skipped.iter().map(|(_, l)| l.clone()).collect();
+            prop_assert_eq!(headers.len(), want.rows, "{:?}", msg);
+            prop_assert_eq!(extents(headers.skipped()), skipped.clone(), "{:?}", msg);
+            prop_assert_eq!(line_texts(headers.skipped()), skipped_texts, "{:?}", msg);
+            prop_assert_eq!(extents(headers.row_spans()), want.row_extents.clone(), "{:?}", msg);
+            prop_assert_eq!(headers.end(), end, "{:?}", msg);
+            let found: Vec<(WarningCode, Range<usize>)> = headers
+                .warnings()
+                .iter()
+                .map(|w| (w.code, w.span().unwrap().range()))
+                .collect();
+            prop_assert_eq!(&found, &want.warned, "{:?}", msg);
+            let owned = if whole {
+                extract_all_headers(&msg)
+            } else {
+                extract_header_block(&msg)
+            };
+            prop_assert_eq!(extents(&owned.skipped), skipped);
+            prop_assert_eq!(&owned.row_spans, headers.row_spans());
+            prop_assert_eq!(owned.end, end);
+            prop_assert_eq!(&owned.headers, headers.fields());
+            prop_assert_eq!(owned.warnings.as_slice(), headers.warnings());
         }
-        let refused_lines: Vec<String> = lines
-            .iter()
-            .filter(|(kind, _)| kind.is_err())
-            .map(|(_, line)| line.clone())
-            .skip(usize::from(lines.first().is_some_and(|(kind, _)| matches!(kind, Err(true))) && start.is_none()))
-            .collect();
-        prop_assert_eq!(line_texts(headers.skipped()), refused_lines, "{:?}", msg);
-        prop_assert_eq!(headers.end(), end, "{:?}", msg);
-        let found: Vec<(WarningCode, Range<usize>)> = headers
-            .warnings()
-            .iter()
-            .map(|w| (w.code, w.span().unwrap().range()))
-            .collect();
-        prop_assert_eq!(&found, &warned, "{:?}", msg);
-        let all = extract_all_headers(&msg);
-        prop_assert_eq!(extents(&all.skipped), refused.clone());
-        prop_assert_eq!(&all.row_spans, headers.row_spans());
-        prop_assert_eq!(all.end, end);
-        prop_assert_eq!(&all.headers, headers.fields());
-        prop_assert_eq!(all.warnings.as_slice(), headers.warnings());
-
-        let block = SipMessageHeaders::from_header_block(&msg);
-        prop_assert_eq!(block.fields(), headers.fields(), "{:?}", msg);
-        prop_assert_eq!(extents(block.skipped()), block_skipped.clone(), "{:?}", msg);
-        prop_assert_eq!(extents(block.row_spans()), row_extents.clone(), "{:?}", msg);
-        prop_assert_eq!(block.end(), end, "{:?}", msg);
-        prop_assert_eq!(block.warnings(), headers.warnings());
-        let owned = extract_header_block(&msg);
-        prop_assert_eq!(extents(&owned.skipped), block_skipped.clone());
-        prop_assert_eq!(&owned.row_spans, block.row_spans());
-        prop_assert_eq!(owned.end, end);
-        prop_assert_eq!(&owned.headers, block.fields());
-        prop_assert_eq!(owned.warnings.as_slice(), block.warnings());
     }
 }

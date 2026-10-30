@@ -2219,10 +2219,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     fn skipped_spans_cover_the_line_without_its_ending() {
         let msg = "SIP/2.0 200 OK\r\nno colon\r\n\x20orphan \r\nX\u{1}Bad: a\r\nTo: x\r\n\r\n";
         let headers = SipMessageHeaders::new(msg);
-        assert_eq!(
-            texts(headers.skipped(), msg),
-            ["no colon", " orphan ", "X\u{1}Bad: a"]
-        );
+        assert_eq!(texts(headers.skipped(), msg), ["no colon", " orphan "]);
         let bare = "no colon\n\n";
         let block = SipMessageHeaders::from_header_block(bare);
         assert_eq!(texts(block.skipped(), bare), ["no colon"]);
@@ -2361,13 +2358,11 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
     }
 
     #[test]
-    fn a_name_that_cannot_be_bounded_is_skipped() {
+    fn a_line_with_no_name_before_its_colon_is_skipped() {
         let msg = "SIP/2.0 200 OK\r\n\
                    no colon\r\n\
                    : no name\r\n\
-                   X\u{1}Bad: a\r\n\
-                   X\u{7f}Bad: a\r\n\
-                   INVITE sip:bob@example.com SIP/2.0\r\n\
+                   \x20 \t: blank name\r\n\
                    \x20orphan\r\n\
                    Spaced Name: a\r\n\
                    \x20folded\r\n\
@@ -2382,9 +2377,7 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
             [
                 at("no colon"),
                 at(": no name"),
-                at("X\u{1}"),
-                at("X\u{7f}"),
-                at("INVITE"),
+                at("\x20 \t: blank"),
                 at(" orphan")
             ]
         );
@@ -2399,6 +2392,149 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
                 .warnings()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn a_control_character_in_a_name_is_a_warned_row() {
+        let msg = "SIP/2.0 200 OK\r\n\
+                   X\u{1}Bad: a\r\n\
+                   X\u{7f}Bad: b\r\n\
+                   X\u{85}Bad: c\r\n\
+                   To: d\r\n\
+                   \r\n";
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
+        let headers = SipMessageHeaders::new(msg);
+        assert!(headers
+            .skipped()
+            .is_empty());
+        assert_eq!(
+            headers
+                .iter()
+                .collect::<Vec<_>>(),
+            [
+                ("X\u{1}Bad", "a"),
+                ("X\u{7f}Bad", "b"),
+                ("X\u{85}Bad", "c"),
+                ("To", "d")
+            ]
+        );
+        assert_eq!(
+            name_warnings(msg),
+            [
+                (
+                    WarningCode::HeaderNameControl,
+                    Some(at("\u{1}")),
+                    "X\u{1}Bad"
+                ),
+                (
+                    WarningCode::HeaderNameControl,
+                    Some(at("\u{7f}")),
+                    "X\u{7f}Bad"
+                ),
+                (
+                    WarningCode::HeaderNameControl,
+                    Some(at("\u{85}")),
+                    "X\u{85}Bad"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_control_character_and_the_other_breach_classes_are_reported_apart() {
+        let msg = "SIP/2.0 200 OK\r\nA B\u{1}é/\t\u{85}: 1\r\n\r\n";
+        let name = "A B\u{1}é/\t\u{85}";
+        let at = |s: &str| {
+            msg.find(s)
+                .unwrap()
+        };
+        assert_eq!(
+            name_warnings(msg),
+            [
+                (WarningCode::HeaderNameWhitespace, Some(at(" B")), name),
+                (WarningCode::NonAscii, Some(at("é")), name),
+                (WarningCode::InvalidToken, Some(at("/")), name),
+                (WarningCode::HeaderNameControl, Some(at("\u{1}")), name),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_start_line_shape_after_the_first_line_is_a_row() {
+        let line = "INVITE sip:bob@example.com SIP/2.0";
+        let msg = format!("To: x\r\n{line}\r\nVia: y\r\n\r\n");
+        let headers = SipMessageHeaders::new(&msg);
+        assert!(headers
+            .skipped()
+            .is_empty());
+        assert_eq!(
+            headers
+                .iter()
+                .collect::<Vec<_>>(),
+            [
+                ("To", "x"),
+                ("INVITE sip", "bob@example.com SIP/2.0"),
+                ("Via", "y")
+            ]
+        );
+        assert_eq!(
+            name_warnings(&msg),
+            [(
+                WarningCode::HeaderNameWhitespace,
+                msg.find(" sip"),
+                "INVITE sip"
+            )]
+        );
+        let rows: Vec<_> = MessageLines::new(msg.as_str())
+            .rows()
+            .map(|row| (row.index(), row.name()))
+            .collect();
+        assert_eq!(rows, [(0, "To"), (1, "INVITE sip"), (2, "Via")]);
+    }
+
+    #[test]
+    fn only_the_first_line_of_a_whole_message_is_exempt_as_a_start_line() {
+        for line in ["INVITE sip:bob@example.com SIP/2.0", "SIP/2.0 200 OK"] {
+            let msg = format!("{line}\r\nVia: y\r\n\r\n");
+            let whole = SipMessageHeaders::new(&msg);
+            assert!(whole
+                .skipped()
+                .is_empty());
+            assert_eq!(
+                whole
+                    .iter()
+                    .collect::<Vec<_>>(),
+                [("Via", "y")]
+            );
+            let walked: Vec<_> = MessageLines::new(msg.as_str())
+                .rows()
+                .map(|row| row.index())
+                .collect();
+            assert_eq!(walked, [0]);
+        }
+        let request = "INVITE sip:bob@example.com SIP/2.0\r\nVia: y\r\n\r\n";
+        let block = SipMessageHeaders::from_header_block(request);
+        assert_eq!(
+            block
+                .iter()
+                .collect::<Vec<_>>(),
+            [("INVITE sip", "bob@example.com SIP/2.0"), ("Via", "y")]
+        );
+        assert!(block
+            .skipped()
+            .is_empty());
+        let status = "SIP/2.0 200 OK\r\nVia: y\r\n\r\n";
+        let block = SipMessageHeaders::from_header_block(status);
+        assert_eq!(starts(block.skipped()), [0]);
+        assert_eq!(
+            block
+                .iter()
+                .collect::<Vec<_>>(),
+            [("Via", "y")]
         );
     }
 
