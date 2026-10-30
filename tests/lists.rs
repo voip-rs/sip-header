@@ -823,3 +823,38 @@ fn whitespace_before_a_quote_never_splits_the_quoted_value() {
         assert_eq!(seen, [(code, Some(13), None)], "{raw:?}");
     }
 }
+
+#[test]
+fn only_the_first_equal_of_a_segment_opens_a_value() {
+    let raw = r#"<sip:a@example.com>;p=x=", <sip:b@example.com>;q=""#;
+    let (contacts, seen) = reported::<ContactList>(raw);
+    let [a, b] = contacts.addrs() else {
+        panic!("{contacts:?}");
+    };
+    assert_eq!(a.param("p"), Some(Some(r#"x=""#)));
+    assert_eq!(b.param("q"), Some(Some(r#"""#)));
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::InvalidToken, Some(22), Some(0)),
+            (WarningCode::UnterminatedQuote, Some(49), Some(1))
+        ]
+    );
+
+    let raw = r#"Digest a=b="c, d""#;
+    let (auth, seen) = reported::<SipAuthValue>(raw);
+    assert_eq!(
+        auth.params()
+            .iter()
+            .collect::<Vec<_>>(),
+        [("a", Some(r#"b="c"#)), ("d", None)]
+    );
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::InvalidToken, Some(9), None),
+            (WarningCode::AuthParamFlag, Some(15), None),
+            (WarningCode::StrayDelimiter, Some(16), None)
+        ]
+    );
+}

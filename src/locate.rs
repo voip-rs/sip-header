@@ -174,4 +174,29 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn only_the_first_equal_of_a_segment_opens_a_value() {
+        let contact = r#"<sip:a@example.com>;p=x=", <sip:b@example.com>;q=""#;
+        assert_eq!(
+            split(contact, ListGrammar::NameAddr),
+            [
+                r#"<sip:a@example.com>;p=x=""#,
+                r#" <sip:b@example.com>;q=""#
+            ]
+        );
+        let via = r#"SIP/2.0/UDP h;p=x=", SIP/2.0/UDP i;q=""#;
+        assert_eq!(
+            split(via, ListGrammar::Token),
+            [r#"SIP/2.0/UDP h;p=x=""#, r#" SIP/2.0/UDP i;q=""#]
+        );
+        assert_eq!(
+            split(r#"a=b="c, d""#, ListGrammar::Auth),
+            [r#"a=b="c"#, r#" d""#]
+        );
+        assert_eq!(
+            split(r#"a=b="c, d", e="f, g""#, ListGrammar::Auth),
+            [r#"a=b="c"#, r#" d""#, r#" e="f, g""#]
+        );
+    }
 }
