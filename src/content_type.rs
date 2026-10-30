@@ -11,23 +11,31 @@
 //! media-type `q` is an ordinary parameter, so they go through the generic
 //! header-parameter reader. A `*` type or subtype, legal only in an Accept
 //! range, is kept under `InvalidToken`.
+//!
+//! One reader serves both framings. A body part's Content-Type (RFC 2045
+//! §5.1) is first blanked of its comments by `cfws`, then read with RFC
+//! 2045 tokens; whitespace left inside a token is one RFC 822 token break,
+//! so a comment's width never shows in a held value.
 
 use std::fmt;
 
 use crate::accept::read_media_type;
+use crate::cfws::{self, Grammar};
 use crate::check::only;
-use crate::diagnostic::{Field, Parsed};
+use crate::diagnostic::{Field, ParseWarning, Parsed};
 use crate::error::{FaultCode, ParseError};
-use crate::is_token_char;
 use crate::lws;
 use crate::params::HeaderParams;
 use crate::traits::{sealed, BodyPartParse, HeaderParse};
+use crate::{is_token_char, Framing};
 
 /// A `Content-Type` value: `type/subtype *(SEMI m-parameter)`.
 ///
-/// Parsed through [`HeaderParse`]. Type and subtype are lowercase; the
-/// parameters are as received, so a multipart `boundary` prints back byte
-/// for byte, and `q` is an ordinary parameter here.
+/// Parsed through [`HeaderParse`] from a SIP header, or [`BodyPartParse`]
+/// from a MIME body part's header, where comments are read. Type and
+/// subtype are lowercase; the parameters are as received, so a multipart
+/// `boundary` prints back byte for byte, and `q` is an ordinary parameter
+/// here.
 ///
 /// ```
 /// use sip_header::{HeaderParse, SipContentType};
@@ -103,33 +111,52 @@ impl fmt::Display for SipContentType {
 
 impl sealed::Sealed for SipContentType {}
 
+/// The value in `s`, scrubbed and, in a body part, with its comments blanked.
+fn read(
+    s: &str,
+    framing: Framing,
+    mut warnings: Vec<ParseWarning>,
+) -> Result<Parsed<SipContentType>, ParseError> {
+    let trimmed = lws::trim_in(s, s, Field::Value, &mut warnings);
+    if trimmed.is_empty() {
+        return Err(ParseError::empty(Field::Value));
+    }
+    let (media_part, params_part) = crate::split_at_params(trimmed);
+    let (media_type, subtype) = read_media_type(s, media_part, false, framing, &mut warnings)?;
+    let params = HeaderParams::read_framed(s, params_part, framing, &mut warnings);
+    Ok(Parsed::new(
+        SipContentType {
+            media_type: media_type.to_ascii_lowercase(),
+            subtype: subtype.to_ascii_lowercase(),
+            params,
+        },
+        warnings,
+    ))
+}
+
 impl HeaderParse for SipContentType {
     /// Parse leniently; whitespace around the value is the header's `LWS`.
     fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        crate::scrub::parse_scrubbed_located(input, |s| {
-            let mut warnings = Vec::new();
-            let trimmed = lws::trim_in(s, s, Field::Value, &mut warnings);
-            if trimmed.is_empty() {
-                return Err(ParseError::empty(Field::Value));
-            }
-            let (media_part, params_part) = crate::split_at_params(trimmed);
-            let (media_type, subtype) = read_media_type(s, media_part, false, &mut warnings)?;
-            let params = HeaderParams::read(s, params_part, &mut warnings);
-            Ok(Parsed::new(
-                SipContentType {
-                    media_type: media_type.to_ascii_lowercase(),
-                    subtype: subtype.to_ascii_lowercase(),
-                    params,
-                },
-                warnings,
-            ))
-        })
+        crate::scrub::parse_scrubbed_located(input, |s| read(s, Framing::Sip, Vec::new()))
     }
 }
 
 impl BodyPartParse for SipContentType {
+    /// Parse leniently, comments read as whitespace and tokens as RFC 2045
+    /// `token`s; a run of whitespace inside a token, a comment's included,
+    /// is held as one SP.
     fn parse_body_part_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
-        Self::parse_with_warnings(input)
+        crate::scrub::parse_scrubbed_located(input, |s| {
+            let mut warnings = Vec::new();
+            let framed = cfws::read(
+                s,
+                Grammar::MediaType,
+                Framing::BodyPart,
+                Field::Value,
+                &mut warnings,
+            );
+            read(&framed.text, Framing::BodyPart, warnings)
+        })
     }
 }
 

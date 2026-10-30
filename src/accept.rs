@@ -12,7 +12,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::list::CommaList;
 use crate::lws;
 use crate::params::HeaderParams;
-use crate::{is_token, is_token_char};
+use crate::{is_token_char, Framing};
 
 /// A single Accept entry: `type/subtype *(SEMI accept-param)`.
 ///
@@ -161,7 +161,7 @@ fn parse_accept_entry(
 ) -> Result<SipAcceptEntry, ParseError> {
     let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let (media_part, params_part) = crate::split_at_params(raw);
-    let (media_type, subtype) = read_media_type(entry, media_part, true, warnings)?;
+    let (media_type, subtype) = read_media_type(entry, media_part, true, Framing::Sip, warnings)?;
 
     Ok(SipAcceptEntry {
         params: read_accept_params(entry, params_part, warnings),
@@ -170,12 +170,14 @@ fn parse_accept_entry(
 }
 
 /// Read `type/subtype` from `media_part`, a slice of `input`, as written
-/// and not lowercased; `*` is kept under [`WarningCode::InvalidToken`]
-/// unless `wildcard` allows it, which only an Accept range does.
+/// and not lowercased, each a `framing` token as it holds them; `*` is kept
+/// under [`WarningCode::InvalidToken`] unless `wildcard` allows it, which
+/// only an Accept range does.
 pub(crate) fn read_media_type(
     input: &str,
     media_part: &str,
     wildcard: bool,
+    framing: Framing,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<(String, String), ParseError> {
     let media_part = lws::trim_in(input, media_part, Field::MediaRange, warnings);
@@ -199,8 +201,10 @@ pub(crate) fn read_media_type(
     if type_str.is_empty() || subtype_str.is_empty() {
         return Err(bad_range());
     }
+    let type_str = framing.held(&type_str);
+    let subtype_str = framing.held(&subtype_str);
     for (raw, part) in [(raw_type, &type_str), (raw_subtype, &subtype_str)] {
-        let conforms = is_token(part) && (wildcard || part.as_ref() != "*");
+        let conforms = framing.is_token(part) && (wildcard || part.as_ref() != "*");
         flag_invalid_token(input, raw, conforms, Field::MediaRange, warnings);
     }
     Ok((type_str.into_owned(), subtype_str.into_owned()))

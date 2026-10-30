@@ -11,7 +11,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::redact::HeaderRedaction;
 use crate::span::{relocated, Located, Relocation, Span};
-use crate::{is_token, offset_in, write_quoted_pair, RawParam};
+use crate::{is_token, offset_in, write_quoted_pair, Framing, RawParam};
 
 /// `params_mut`, `with_param`, `with_quoted_param`, `params` and `param`
 /// for a type holding its parameters in a `params: HeaderParams` field;
@@ -634,6 +634,18 @@ impl HeaderParams {
         p: &RawParam<'_>,
         warnings: &mut Vec<ParseWarning>,
     ) {
+        self.push_framed(input, p, Framing::Sip, warnings);
+    }
+
+    /// [`push_raw`](Self::push_raw), names and bare values read as
+    /// `framing`'s tokens and held as it holds them.
+    fn push_framed(
+        &mut self,
+        input: &str,
+        p: &RawParam<'_>,
+        framing: Framing,
+        warnings: &mut Vec<ParseWarning>,
+    ) {
         let at = offset_in(input, p.key);
         if p.key
             .is_empty()
@@ -652,17 +664,31 @@ impl HeaderParams {
         {
             return;
         }
-        if !is_token(&name) {
+        let name = framing.held(&name);
+        if !framing.is_token(&name) {
             warnings.push(ParseWarning::new(Field::Param, WarningCode::InvalidToken).at(at));
         }
         let value = p
             .unquoted()
             .zip(p.value)
-            .map(|(u, raw)| (u.value, u.quoted, Span::within(input, raw)));
+            .map(|(u, raw)| {
+                let value = if u.quoted {
+                    u.value
+                } else {
+                    framing
+                        .held(&u.value)
+                        .into_owned()
+                };
+                (value, u.quoted, Span::within(input, raw))
+            });
+        let is_bare = match framing {
+            Framing::Sip => is_bare_value,
+            Framing::BodyPart => crate::is_mime_token,
+        };
         let bare_breach = !p.unterminated
             && value
                 .as_ref()
-                .is_some_and(|(v, quoted, _)| !quoted && !is_bare_value(v));
+                .is_some_and(|(v, quoted, _)| !quoted && !is_bare(v));
         self.push_read(&name, value, Field::Param, at, warnings);
         if let Some(raw) = p
             .value
@@ -679,9 +705,19 @@ impl HeaderParams {
     /// Read `*(SEMI generic-param)` from `params`, a slice of `input`,
     /// reporting breaches at their position in `input`.
     pub(crate) fn read(input: &str, params: &str, warnings: &mut Vec<ParseWarning>) -> Self {
+        Self::read_framed(input, params, Framing::Sip, warnings)
+    }
+
+    /// [`read`](Self::read) under `framing`.
+    pub(crate) fn read_framed(
+        input: &str,
+        params: &str,
+        framing: Framing,
+        warnings: &mut Vec<ParseWarning>,
+    ) -> Self {
         let mut out = HeaderParams::default();
         for p in crate::parse_params(params) {
-            out.push_raw(input, &p, warnings);
+            out.push_framed(input, &p, framing, warnings);
         }
         out
     }

@@ -38,6 +38,165 @@
 //! byte, and the comment a `(` opens closes where the depth first falls
 //! below the depth right after it.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::ops::Range;
+
+use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::span::Span;
+use crate::Framing;
+
+/// Where a value's grammar lets a quoted string start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Grammar {
+    /// `type "/" subtype *(";" parameter)`: a quote opens a parameter value.
+    MediaType,
+}
+
+/// A value with its comments blanked.
+pub(crate) struct Framed<'a> {
+    /// The value with every comment byte SP; borrowed when nothing was blanked.
+    pub(crate) text: Cow<'a, str>,
+}
+
+/// What the scan has seen that decides where a quote opens.
+#[derive(Default)]
+struct Seen {
+    /// Start of the current parameter, after its `;`.
+    param: Option<usize>,
+    /// Set once a quote fails to close, since no later one can.
+    quotes_unclosed: bool,
+}
+
+impl Seen {
+    /// Whether a `"` after `before`, the blanked text so far, opens a
+    /// quoted string under `grammar`.
+    fn quote_opens(&self, grammar: Grammar, before: &str) -> bool {
+        !self.quotes_unclosed
+            && match grammar {
+                Grammar::MediaType => self
+                    .param
+                    .is_some_and(|p| crate::opens_param_quote(&before[p..])),
+            }
+    }
+}
+
+/// Read `text` under `grammar`: in body-part framing every comment blanked
+/// and its content reported on `field`, in SIP framing left as it is.
+pub(crate) fn read<'a>(
+    text: &'a str,
+    grammar: Grammar,
+    framing: Framing,
+    field: Field,
+    warnings: &mut Vec<ParseWarning>,
+) -> Framed<'a> {
+    let bytes = text.as_bytes();
+    if framing == Framing::Sip || !bytes.contains(&b'(') {
+        return Framed {
+            text: Cow::Borrowed(text),
+        };
+    }
+    let ends = comment_ends(bytes);
+    let mut seen = Seen::default();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !matches!(b, b'(' | b'"' | b';') {
+            i += 1;
+            continue;
+        }
+        out.push_str(&text[copied..i]);
+        copied = i;
+        let skip_to = match b {
+            b'(' => ends
+                .get(&i)
+                .map(|&end| {
+                    report_comment(text, i..end + 1, field, warnings);
+                    out.extend(std::iter::repeat(' ').take(end + 1 - i));
+                    copied = end + 1;
+                    end + 1
+                }),
+            b'"' if seen.quote_opens(grammar, &out) => {
+                let close = crate::closing_quote(&text[i + 1..]).map(|c| i + c + 2);
+                seen.quotes_unclosed = close.is_none();
+                close
+            }
+            b';' => {
+                seen.param = Some(i + 1);
+                None
+            }
+            _ => None,
+        };
+        i = skip_to.unwrap_or(i + 1);
+    }
+    out.push_str(&text[copied..]);
+    Framed {
+        text: Cow::Owned(out),
+    }
+}
+
+/// Where the comment opened by each `(` of `bytes` closes, for each `(`
+/// that closes.
+fn comment_ends(bytes: &[u8]) -> HashMap<usize, usize> {
+    let mut depth = Vec::with_capacity(bytes.len());
+    let mut d = 0isize;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if i + 1 < bytes.len() => {
+                depth.extend([d, d]);
+                i += 2;
+                continue;
+            }
+            b'(' => d += 1,
+            b')' => d -= 1,
+            _ => {}
+        }
+        depth.push(d);
+        i += 1;
+    }
+    let mut next = HashMap::new();
+    let mut ends = HashMap::new();
+    for (i, &d) in depth
+        .iter()
+        .enumerate()
+        .rev()
+    {
+        if bytes[i] == b'(' {
+            if let Some(&end) = next.get(&(d - 1)) {
+                ends.insert(i, end);
+            }
+        }
+        next.insert(d, i);
+    }
+    ends
+}
+
+/// Raise [`WarningCode::ControlChar`] and [`WarningCode::NonAscii`] at the
+/// first of each in the comment `text[range]`, covering it.
+fn report_comment(text: &str, range: Range<usize>, field: Field, warnings: &mut Vec<ParseWarning>) {
+    let inner = &text[range.start + 1..range.end - 1];
+    let control = inner.find(|c: char| c.is_ascii_control() && c != '\t');
+    let non_ascii = inner.find(|c: char| !c.is_ascii());
+    let mut found: Vec<_> = [
+        control.map(|i| (i, WarningCode::ControlChar)),
+        non_ascii.map(|i| (i, WarningCode::NonAscii)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    found.sort_unstable_by_key(|&(i, _)| i);
+    for (i, code) in found {
+        warnings.push(
+            ParseWarning::new(field, code)
+                .at(range.start + 1 + i)
+                .covering(Span::new(range.clone())),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

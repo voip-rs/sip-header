@@ -25,11 +25,12 @@
 //! ```
 //!
 //! The other traits are named where needed: [`UriHeaderParse`],
-//! [`AddrParts`], [`SipHeaderRowsExt`], [`Redact`], [`HeaderEquivalence`]
-//! and `SipHeaderExtract` (feature: `message`). Both crates define
-//! `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at their roots,
-//! so sip-uri's are spelled through `sip_uri::` beside these. [`WarningKind`]
-//! is sip-uri's, re-exported here as the type of [`ParseWarning::kind`].
+//! [`BodyPartParse`], [`AddrParts`], [`SipHeaderRowsExt`], [`Redact`],
+//! [`HeaderEquivalence`] and `SipHeaderExtract` (feature: `message`). Both
+//! crates define `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at
+//! their roots, so sip-uri's are spelled through `sip_uri::` beside these.
+//! [`WarningKind`] is sip-uri's, re-exported here as the type of
+//! [`ParseWarning::kind`].
 //!
 //! # Headers
 //!
@@ -211,6 +212,75 @@ pub(crate) fn is_token(s: &str) -> bool {
             .all(is_token_byte)
 }
 
+/// RFC 2045 §5.1 `token` byte: US-ASCII other than SPACE, CTLs and
+/// `tspecials`.
+pub(crate) fn is_mime_token_byte(b: u8) -> bool {
+    b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?=".contains(&b)
+}
+
+/// RFC 2045 §5.1 `token`.
+pub(crate) fn is_mime_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(is_mime_token_byte)
+}
+
+/// The grammar a value is read under: a SIP header's, or a MIME body
+/// part's, whose comments are blanked before the value parser runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Framing {
+    /// RFC 3261 §25.1: `token`, and parentheses are value text.
+    Sip,
+    /// RFC 2045: its `token`, and RFC 822 lexing between tokens.
+    BodyPart,
+}
+
+impl Framing {
+    /// Whether `s` is a `token` of this grammar.
+    pub(crate) fn is_token(self, s: &str) -> bool {
+        match self {
+            Framing::Sip => is_token(s),
+            Framing::BodyPart => is_mime_token(s),
+        }
+    }
+
+    /// `s`, a field read as a token, as held: in a body part each inner run
+    /// of SP and HTAB, a blanked comment among them, is one token break.
+    pub(crate) fn held(self, s: &str) -> std::borrow::Cow<'_, str> {
+        let is_wsp = |c: char| c == ' ' || c == '\t';
+        if self == Framing::Sip || !s.contains(is_wsp) {
+            return std::borrow::Cow::Borrowed(s);
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut in_run = false;
+        for c in s.chars() {
+            if is_wsp(c) {
+                if !in_run {
+                    out.push(' ');
+                }
+                in_run = true;
+            } else {
+                out.push(c);
+                in_run = false;
+            }
+        }
+        std::borrow::Cow::Owned(out)
+    }
+}
+
+/// Whether a `"` after `segment`, the text of one `generic-param` after its
+/// `;`, opens its value as [`parse_params`] reads it: the segment's first
+/// `=` followed by whitespace alone.
+pub(crate) fn opens_param_quote(segment: &str) -> bool {
+    segment
+        .find('=')
+        .is_some_and(|eq| {
+            segment[eq + 1..]
+                .trim_start()
+                .is_empty()
+        })
+}
+
 /// Whether `value` opens a quoted-string that never closes.
 pub(crate) fn opens_unterminated_quote(value: &str) -> bool {
     value
@@ -271,7 +341,7 @@ pub(crate) fn write_quoted_pair<W: std::fmt::Write + ?Sized>(
 
 /// Byte index of the first `"` not escaped by `quoted-pair`, scanning text
 /// that follows an opening quote.
-fn closing_quote(s: &str) -> Option<usize> {
+pub(crate) fn closing_quote(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {

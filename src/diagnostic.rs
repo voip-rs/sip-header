@@ -349,8 +349,8 @@ pub enum WarningCode {
     /// Text after a complete value that starts no parameter (RFC 3261
     /// §25.1 `*( SEMI generic-param )`), dropped.
     TrailingContent,
-    /// A character outside RFC 3261 §25.1 `token` where one is required,
-    /// kept as sent.
+    /// A character outside RFC 3261 §25.1 `token` where one is required, or
+    /// in a MIME body part outside RFC 2045 §5.1 `token`, kept as sent.
     InvalidToken,
     /// A `"` that opens a quoted-string (RFC 3261 §25.1) and never closes;
     /// the value ends at the next delimiter.
@@ -402,7 +402,10 @@ pub enum WarningCode {
     /// which only `quoted-pair` does; dropped, with a `\` escaping it. Also a
     /// control character (VT, FF, a second CR) in whitespace trimmed at a
     /// value's edge or read as a separator, which `WSP = SP / HTAB` never
-    /// admits; trimmed or read as a separator, as it always was.
+    /// admits; trimmed or read as a separator, as it always was. Also a
+    /// control character other than HTAB inside a body part's comment, which
+    /// RFC 5322 §3.2.2 `ctext` admits only through §4.1 `obs-ctext`; dropped
+    /// with the comment.
     ControlChar,
     /// A `warn-code` below 100, three digits as RFC 3261 §20.43 `warn-code =
     /// 3DIGIT` requires but in no class §27.2 defines by first digit; kept.
@@ -432,7 +435,9 @@ pub enum WarningCode {
     /// token`, §7.3.1); kept as sent.
     HeaderNameControl,
     /// A non-ASCII character where RFC 3261 §25.1 `token` admits only
-    /// ASCII, as in a header name (§7.3.1); kept as sent.
+    /// ASCII, as in a header name (§7.3.1); kept as sent. Also one inside a
+    /// body part's comment, where RFC 5322 §3.2.2 `ctext` is US-ASCII;
+    /// dropped with the comment.
     NonAscii,
     /// Whitespace other than SP and HTAB around a value, an entry, a
     /// parameter or a token, or between two fields, which RFC 3261 §25.1
