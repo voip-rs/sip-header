@@ -346,6 +346,32 @@ fn token_list_from_entries_takes_each_entry_whole() {
     assert!(TokenList::from_entries(SipHeader::Via, ["timer"]).is_err());
 }
 
+#[test]
+fn token_list_cuts_every_comma() {
+    for (raw, tokens) in [
+        (r#"a;b="x, y""#, &["a;b=x", "y"][..]),
+        (r#"a;b= "x, y";c"#, &["a;b= x", "y;c"]),
+        (r#""a, b""#, &["a", "b"]),
+        ("a;b=<x, y>", &["a;b=x", "y"]),
+    ] {
+        let parsed = TokenList::parse(SipHeader::Supported, raw).unwrap();
+        assert_eq!(
+            parsed
+                .iter()
+                .collect::<Vec<_>>(),
+            tokens,
+            "{raw:?}"
+        );
+        for &header in token_headers() {
+            assert_eq!(
+                TokenList::parse(header, raw).map(|l| l.len()),
+                TokenList::from_entries(header, raw.split(',')).map(|l| l.len()),
+                "{header} {raw:?}"
+            );
+        }
+    }
+}
+
 /// A list of two entries, both overwritten through `get_mut` and `iter_mut`.
 macro_rules! entries_mut {
     ($Type:ty, $wire:expr) => {{

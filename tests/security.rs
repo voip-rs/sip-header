@@ -2462,6 +2462,13 @@ const VIA_STARTS: &[&str] = &[
     "SIP/2.0/UDP 203.0.113.1",
 ];
 const AUTH_STARTS: &[&str] = &["realm=", "nonce=", "qop=", "a"];
+const TOKEN_STARTS: &[&str] = &["timer", "INVITE", "a;b=", "a@example.com;", ""];
+/// Token lists with each case rule and each empty rule.
+const TOKEN_HEADERS: [SipHeader; 3] = [
+    SipHeader::Supported,
+    SipHeader::Require,
+    SipHeader::InReplyTo,
+];
 
 /// The range of the RFC 3261 §25.1 `quoted-string` opening `text`, which
 /// starts at `at` in its row, `quoted-pair` honoured.
@@ -2558,6 +2565,21 @@ fn joined_reads_as_entries<L>(
 where
     L: ListParse + HeaderParse + PartialEq + std::fmt::Debug,
 {
+    joined_reads_as_entries_by(entries, all_held, L::parse_with_warnings, |e: &[&str]| {
+        L::from_entries_with_warnings(
+            e.iter()
+                .copied(),
+        )
+    })
+}
+
+/// P1 for a list read by `parse` whole and by `from_entries` pre-split.
+fn joined_reads_as_entries_by<L: PartialEq + std::fmt::Debug>(
+    entries: &[String],
+    all_held: impl Fn(&str, &L) -> bool,
+    parse: impl Fn(&str) -> Result<Parsed<L>, ParseError>,
+    from_entries: impl Fn(&[&str]) -> Result<Parsed<L>, ParseError>,
+) -> Result<(), TestCaseError> {
     let left_open = |w: &ParseWarning| {
         matches!(
             w.code,
@@ -2571,7 +2593,7 @@ where
         .iter()
         .map(String::as_str)
         .filter(|e| {
-            L::from_entries_with_warnings([*e]).is_ok_and(|p| {
+            from_entries(&[*e]).is_ok_and(|p| {
                 !p.warnings
                     .iter()
                     .any(left_open)
@@ -2583,7 +2605,7 @@ where
         return Ok(());
     }
     let joined = kept.join(", ");
-    let whole = L::parse_with_warnings(&joined).map(|p| {
+    let whole = parse(&joined).map(|p| {
         let about: Vec<_> = p
             .warnings
             .iter()
@@ -2591,11 +2613,7 @@ where
             .collect();
         (p.value, about)
     });
-    let split = L::from_entries_with_warnings(
-        kept.iter()
-            .copied(),
-    )
-    .map(|p| {
+    let split = from_entries(&kept).map(|p| {
         let about: Vec<_> = p
             .warnings
             .iter()
@@ -2640,7 +2658,16 @@ proptest! {
         reasons in prop::collection::vec(entry_of(REASON_STARTS), 1..4),
         vias in prop::collection::vec(entry_of(VIA_STARTS), 1..4),
         auths in prop::collection::vec(entry_of(AUTH_STARTS), 1..4),
+        tokens in prop::collection::vec(entry_of(TOKEN_STARTS), 1..4),
     ) {
+        for header in TOKEN_HEADERS {
+            joined_reads_as_entries_by(
+                &tokens,
+                |e, _: &TokenList| !e.contains(','),
+                |raw| TokenList::parse_with_warnings(header, raw),
+                |e| TokenList::from_entries_with_warnings(header, e.iter().copied()),
+            )?;
+        }
         let one_addr = |e: &str, addrs: &[SipHeaderAddr]| {
             addrs.iter().all(|a| commas_held(e, 0..e.len(), &addr_holds(e, a)))
         };
@@ -2691,7 +2718,17 @@ proptest! {
         name_addrs in prop::collection::vec(entry_of(NAME_ADDR_STARTS), 1..4),
         uris in prop::collection::vec(entry_of(URI_STARTS), 1..4),
         vias in prop::collection::vec(entry_of(VIA_STARTS), 1..4),
+        tokens in prop::collection::vec(entry_of(TOKEN_STARTS), 1..4),
     ) {
+        let row = tokens.join(", ");
+        for header in TOKEN_HEADERS {
+            // A token holds nothing, so every comma of the row cuts it.
+            prop_assert_eq!(
+                TokenList::parse(header, &row),
+                TokenList::from_entries(header, row.split(',')),
+                "{} {:?}", header, row
+            );
+        }
         let row = name_addrs.join(", ");
         if let Ok(l) = ContactList::parse(&row) {
             kept_entries_hold_their_commas(&row, l.addrs(), SipHeaderAddr::span, addr_holds)?;
