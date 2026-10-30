@@ -179,6 +179,7 @@ macro_rules! define_header_enum {
             pub const ALL: &'static [Self] = &[$($Name::$variant),+];
 
             /// Canonical wire name.
+            #[inline]
             pub fn as_str(&self) -> &'static str {
                 match self {
                     $($Name::$variant => $wire,)+
@@ -193,6 +194,7 @@ macro_rules! define_header_enum {
 
             const ALL: &'static [Self] = $Name::ALL;
 
+            #[inline]
             fn as_str(&self) -> &'static str {
                 $Name::as_str(self)
             }

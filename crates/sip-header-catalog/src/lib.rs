@@ -308,6 +308,7 @@ impl SipHeader {
     }
 
     /// Return the compact form letter for this header, if one exists.
+    #[inline]
     pub fn compact_form(&self) -> Option<char> {
         COMPACT_FORMS
             .iter()
@@ -501,6 +502,10 @@ impl SipHeader {
 
     /// Whether `wire_name`, as a message spells it, names this header:
     /// case-insensitively, or as its compact form.
+    ///
+    /// Resolves the header on each call: a loop over many wire names builds
+    /// one [`NameMatcher`] and reuses it.
+    #[inline]
     pub fn matches(&self, wire_name: &str) -> bool {
         NameMatcher::from(*self).matches(wire_name)
     }
@@ -553,6 +558,8 @@ impl SipHeader {
 pub struct NameMatcher<'a> {
     name: &'a str,
     header: Option<SipHeader>,
+    /// The header's compact letter, lowercase ASCII; none when unregistered.
+    compact: Option<u8>,
 }
 
 impl<'a> NameMatcher<'a> {
@@ -561,26 +568,36 @@ impl<'a> NameMatcher<'a> {
     pub fn new(name: &'a str) -> Self {
         match SipHeader::lookup(name) {
             Some(h) => h.into(),
-            None => NameMatcher { name, header: None },
+            None => NameMatcher {
+                name,
+                header: None,
+                compact: None,
+            },
         }
     }
 
     /// Whether `wire_name`, as a message spells it, names the resolved
     /// header.
+    #[inline]
     pub fn matches(&self, wire_name: &str) -> bool {
         wire_name.eq_ignore_ascii_case(self.name)
             || matches!(
-                (self.header, wire_name.as_bytes()),
-                (Some(h), [c]) if SipHeader::from_compact(char::from(*c)) == Some(h)
+                (self.compact, wire_name.as_bytes()),
+                (Some(letter), [c]) if c.to_ascii_lowercase() == letter
             )
     }
 }
 
 impl From<SipHeader> for NameMatcher<'_> {
+    #[inline]
     fn from(header: SipHeader) -> Self {
         NameMatcher {
             name: header.as_str(),
             header: Some(header),
+            // COMPACT_FORMS letters are all ASCII, so the cast is lossless.
+            compact: header
+                .compact_form()
+                .map(|c| c as u8),
         }
     }
 }
