@@ -20,6 +20,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header_addr::Rendered;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
@@ -351,6 +352,7 @@ fn read_entry(entry: &str, warnings: &mut Vec<ParseWarning>) -> Result<UriInfoEn
 
 impl CommaList for UriInfo {
     type Entry = UriInfoEntry;
+    const GRAMMAR: ListGrammar = ListGrammar::Uri;
 
     fn parse_entry(
         entry: &str,

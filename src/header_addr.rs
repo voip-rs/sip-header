@@ -10,6 +10,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::join::SipJoin;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::params::{any_value, HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::reason::SipReason;
@@ -722,7 +723,7 @@ list_type!(SipHeaderAddrList, SipHeaderAddr, non_empty);
 
 impl CommaList for SipHeaderAddrList {
     type Entry = SipHeaderAddr;
-    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
+    const GRAMMAR: ListGrammar = ListGrammar::NameAddr;
 
     fn parse_entry(
         entry: &str,

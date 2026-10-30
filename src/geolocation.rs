@@ -16,6 +16,7 @@ use sip_uri::{Uri, UriRedact};
 use crate::diagnostic::{Field, ParseWarning};
 use crate::error::ParseError;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{relocated, Located, Relocation, Span};
@@ -292,6 +293,7 @@ fn read_entry(
 
 impl CommaList for SipGeolocation {
     type Entry = SipGeolocationEntry;
+    const GRAMMAR: ListGrammar = ListGrammar::Uri;
 
     fn parse_entry(
         entry: &str,

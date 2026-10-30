@@ -7,9 +7,10 @@ use sip_header_catalog::SipHeader;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header::TypedHeader;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::scrub::scrub;
-use crate::{QuoteStart, RowEntry};
+use crate::RowEntry;
 
 /// A token-list header: its tokens and the header they belong to.
 ///
@@ -78,7 +79,7 @@ impl TokenList {
     /// Errors as [`new`](Self::new) does on a wrong header, and when no
     /// token remains where `header` needs one.
     pub fn parse_with_warnings(header: SipHeader, raw: &str) -> Result<Parsed<Self>, ParseError> {
-        Self::read(header, crate::split_row(raw, None, QuoteStart::Param))
+        Self::read(header, crate::split_row(raw, None, ListGrammar::Token))
     }
 
     /// Parse `raw` leniently, discarding the warnings.
@@ -132,7 +133,7 @@ impl TokenList {
         header: SipHeader,
         rows: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        Self::read(header, crate::row_entries(rows, QuoteStart::Param))
+        Self::read(header, crate::row_entries(rows, ListGrammar::Token))
     }
 
     /// Build from header rows leniently, discarding the warnings.

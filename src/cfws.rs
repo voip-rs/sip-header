@@ -49,6 +49,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
+use crate::locate::closing_quote;
 use crate::span::Span;
 use crate::Framing;
 
@@ -180,7 +181,7 @@ pub(crate) fn read<'a>(
                     end + 1
                 }),
             b'"' if seen.quote_opens(grammar, &out) => {
-                let close = crate::closing_quote(&text[i + 1..]).map(|c| i + c + 2);
+                let close = closing_quote(&text[i + 1..]).map(|c| i + c + 2);
                 seen.quotes_unclosed = close.is_none();
                 close
             }
@@ -493,7 +494,7 @@ mod tests {
                 let Some(v) = p.value.filter(|v| !p.unterminated && v.starts_with('"')) else {
                     continue;
                 };
-                let Some(close) = crate::closing_quote(&v[1..]) else {
+                let Some(close) = closing_quote(&v[1..]) else {
                     continue;
                 };
                 let quoted = &v[..close + 2];

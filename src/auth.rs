@@ -8,6 +8,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::params::{HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::redact::Redact;
@@ -473,7 +474,7 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Ok(auth);
     }
 
-    let split = crate::split_entries(rest, crate::QuoteStart::AuthParam);
+    let split = crate::split_entries(rest, ListGrammar::Auth);
     for raw_param in split.entries {
         let param_str = lws::trim_in(input, raw_param, Field::Credentials, warnings);
         if param_str.is_empty() {

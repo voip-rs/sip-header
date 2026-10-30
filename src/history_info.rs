@@ -7,6 +7,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::params::{HeaderParams, ParamsMut};
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 use crate::span::{Located, Relocation, Span};
@@ -208,7 +209,7 @@ impl Located for HistoryInfoEntry {
 
 impl CommaList for HistoryInfo {
     type Entry = HistoryInfoEntry;
-    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
+    const GRAMMAR: ListGrammar = ListGrammar::NameAddr;
 
     fn parse_entry(
         entry: &str,

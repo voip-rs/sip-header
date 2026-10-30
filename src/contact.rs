@@ -11,6 +11,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::header_addr::parse_list_addr;
 use crate::header_addr::SipHeaderAddr;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
 
@@ -216,7 +217,7 @@ impl fmt::Display for RedactedContacts<'_> {
 impl CommaList for ContactList {
     /// `None` for a `*` entry.
     type Entry = Option<SipHeaderAddr>;
-    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::DisplayName;
+    const GRAMMAR: ListGrammar = ListGrammar::NameAddr;
 
     fn parse_entry(
         entry: &str,

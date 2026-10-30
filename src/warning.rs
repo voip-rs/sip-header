@@ -8,6 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
+use crate::locate::ListGrammar;
 use crate::lws;
 use crate::span::Span;
 
@@ -318,7 +319,7 @@ impl crate::span::Located for SipWarningEntry {}
 
 impl CommaList for SipWarning {
     type Entry = SipWarningEntry;
-    const QUOTE_START: crate::QuoteStart = crate::QuoteStart::Word;
+    const GRAMMAR: ListGrammar = ListGrammar::Warning;
 
     fn parse_entry(
         entry: &str,

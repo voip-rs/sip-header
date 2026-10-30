@@ -2,9 +2,10 @@
 
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::ParseError;
+use crate::locate::ListGrammar;
 use crate::scrub::{scrub, Scrubbed};
 use crate::span::{Located, Span};
-use crate::{QuoteStart, RowEntry};
+use crate::RowEntry;
 
 /// Constructor, accessors, iteration and Display for a
 /// `struct $Type(Vec<$Entry>)`.
@@ -258,9 +259,8 @@ pub(crate) trait CommaList: Sized {
     /// [`EmptyEntry`](crate::WarningCode::EmptyEntry).
     const BLANK_ENTRIES_ARE_EMPTY: bool = false;
 
-    /// Where this grammar lets a `quoted-string` start, which decides the
-    /// commas a quote hides.
-    const QUOTE_START: QuoteStart = QuoteStart::Param;
+    /// The entry grammar, which decides the commas a quote or bracket holds.
+    const GRAMMAR: ListGrammar = ListGrammar::Token;
 
     /// Parse one entry, positions relative to `entry`; an `Err` drops it
     /// under [`skipped`].
@@ -297,7 +297,7 @@ pub(crate) trait CommaList: Sized {
         {
             return Self::from_parsed(Vec::new()).map(|v| Parsed::new(v, whole.warnings));
         }
-        Self::list_from_marked(crate::split_row(raw, None, Self::QUOTE_START))
+        Self::list_from_marked(crate::split_row(raw, None, Self::GRAMMAR))
     }
 
     /// Parse entries already split, each a row of its own, attributing
@@ -318,7 +318,7 @@ pub(crate) trait CommaList: Sized {
     fn list_from_rows<'a>(
         rows: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        Self::list_from_marked(crate::row_entries(rows, Self::QUOTE_START))
+        Self::list_from_marked(crate::row_entries(rows, Self::GRAMMAR))
     }
 
     /// Parse every entry, positioned in the row it was split from.
@@ -458,7 +458,7 @@ pub(crate) struct ReadEntries<E> {
 /// any list; text after its comma is dropped under
 /// [`WarningCode::TrailingContent`].
 pub(crate) fn entry_from_str<L: CommaList>(raw: &str) -> Result<Parsed<L::Entry>, ParseError> {
-    let mut split = crate::split_row(raw, None, L::QUOTE_START);
+    let mut split = crate::split_row(raw, None, L::GRAMMAR);
     let first = split.next();
     let rest = split
         .next()
