@@ -437,12 +437,20 @@ impl<'a> RawParam<'a> {
     }
 }
 
-/// `raw` split at its first `;`, which the tail keeps for [`parse_params`].
+/// `raw`, a `token`-led entry, split where [`Locator::entry`] puts its
+/// first parameter; the tail keeps the `;` for [`parse_params`].
 pub(crate) fn split_at_params(raw: &str) -> (&str, &str) {
-    raw.split_at(
-        raw.find(';')
-            .unwrap_or(raw.len()),
-    )
+    raw.split_at(first_param(Locator::entry(raw, ListGrammar::Token)).unwrap_or(raw.len()))
+}
+
+/// The position of the first [`Mark::Param`] among `marks`.
+pub(crate) fn first_param(marks: impl IntoIterator<Item = Mark>) -> Option<usize> {
+    marks
+        .into_iter()
+        .find_map(|m| match m {
+            Mark::Param(at) => Some(at),
+            _ => None,
+        })
 }
 
 /// One `;`-delimited segment of a parameter tail and the marks inside it.
@@ -479,7 +487,7 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
             }
             Mark::Value(at) => last.equal = Some(at),
             Mark::Quote { open, close } => last.quote = Some((open, close)),
-            Mark::Comma(_) => {}
+            Mark::Comma(_) | Mark::Bracket { .. } => {}
         }
     }
     if let Some(last) = segments.last_mut() {

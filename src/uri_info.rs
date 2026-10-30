@@ -20,7 +20,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::header_addr::Rendered;
 use crate::list::CommaList;
-use crate::locate::ListGrammar;
+use crate::locate::{ListGrammar, Locator, Mark};
 use crate::lws;
 use crate::params::HeaderParams;
 use crate::redact::{HeaderRedaction, Redact, RedactedList};
@@ -232,13 +232,18 @@ pub(crate) fn read_uri_entry<'a>(
 ) -> Result<UriEntry<'a>, ParseError> {
     let raw = lws::trim_in(entry, entry, Field::Entry, warnings);
     let at = crate::offset_in(entry, raw);
-    let (data, params, recovered) = match raw
-        .strip_prefix('<')
-        .and_then(|s| s.split_once('>'))
-    {
-        Some((data, tail)) => (data, tail, None),
+    let mut marks = Locator::entry(raw, ListGrammar::Uri).peekable();
+    let close = match marks.peek() {
+        Some(&Mark::Bracket {
+            close: Some(close), ..
+        }) => Some(close),
+        _ => None,
+    };
+    let param = crate::first_param(marks).unwrap_or(raw.len());
+    let (data, params, recovered) = match close {
+        Some(close) => (&raw[1..close], &raw[close + 1..], None),
         None => {
-            let (data, params) = crate::split_at_params(raw);
+            let (data, params) = raw.split_at(param);
             let code = if raw.starts_with('<') {
                 WarningCode::UnclosedBracket
             } else {
@@ -284,7 +289,7 @@ pub(crate) fn read_uri_entry<'a>(
     warnings.extend(uri_warnings);
     let params = match recovered {
         Some(_) => params,
-        None => after_bracket(entry, params, warnings),
+        None => after_bracket(entry, params, param - (raw.len() - params.len()), warnings),
     };
     Ok(UriEntry {
         uri,
@@ -294,18 +299,21 @@ pub(crate) fn read_uri_entry<'a>(
     })
 }
 
-/// The parameter text in `tail`, what follows `>`, dropping text before
-/// its first `;` under [`WarningCode::TrailingContent`].
-fn after_bracket<'a>(entry: &str, tail: &'a str, warnings: &mut Vec<ParseWarning>) -> &'a str {
-    let (padding, junk) = lws::split_start(tail);
-    if junk.is_empty() || junk.starts_with(';') {
+/// The parameter text in `tail`, what follows `>`, its first `;` at
+/// `param`, dropping text before it under [`WarningCode::TrailingContent`].
+fn after_bracket<'a>(
+    entry: &str,
+    tail: &'a str,
+    param: usize,
+    warnings: &mut Vec<ParseWarning>,
+) -> &'a str {
+    let (dropped, params) = tail.split_at(param);
+    let (padding, dropped) = lws::split_start(dropped);
+    if dropped.is_empty() {
         return tail;
     }
     lws::report_run(entry, padding, Field::Param, warnings);
-    let (dropped, params) = junk.split_at(
-        junk.find(';')
-            .unwrap_or(junk.len()),
-    );
+    let junk = dropped;
     warnings.push(
         ParseWarning::new(Field::Param, WarningCode::TrailingContent)
             .at(crate::offset_in(entry, junk))

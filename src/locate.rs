@@ -30,12 +30,26 @@ pub(crate) enum Mark {
     /// A `"` where the grammar lets a quoted string start, and its closing
     /// quote; a quote that never closes is text.
     Quote { open: usize, close: Option<usize> },
+    /// A `<` where the grammar puts an addr-spec, and the first `>` after
+    /// it; a bracket that never closes is text.
+    Bracket { open: usize, close: Option<usize> },
     /// A `;` that starts a `generic-param`.
     Param(usize),
     /// The `=` that opens a parameter's value: its segment's first.
     Value(usize),
     /// A `,` that separates two entries.
     Comma(usize),
+}
+
+/// Which part of an entry the [`Locator`] is reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// Before the addr-spec's bracket and the parameters.
+    Lead,
+    /// After the addr-spec's `>`, before the parameters.
+    AfterBracket,
+    /// The `*(SEMI generic-param)` tail.
+    Params,
 }
 
 /// The marks of a text read under one [`ListGrammar`].
@@ -45,10 +59,10 @@ pub(crate) struct Locator<'a> {
     /// Whether a top-level `,` ends an entry.
     split: bool,
     i: usize,
-    /// `<` nesting, counted only when splitting.
-    depth: u32,
-    in_params: bool,
+    part: Part,
     segment: Segment,
+    /// Whether a bracket opened in the entry, closed or not.
+    bracketed: bool,
     /// Whether the entry so far holds anything but whitespace.
     begun: bool,
     /// Whether the last character read is whitespace.
@@ -57,51 +71,69 @@ pub(crate) struct Locator<'a> {
     after_equal: bool,
     /// Set once a quote fails to close, since no later one can.
     quotes_unclosed: bool,
+    /// Set once a bracket fails to close, since no later one can.
+    brackets_unclosed: bool,
 }
 
 impl<'a> Locator<'a> {
-    fn new(text: &'a str, grammar: ListGrammar, split: bool) -> Self {
+    fn new(text: &'a str, grammar: ListGrammar, split: bool, part: Part) -> Self {
         Locator {
             text,
             grammar,
             split,
             i: 0,
-            depth: 0,
-            in_params: !split,
+            part,
             segment: Segment::default(),
+            bracketed: false,
             begun: false,
             after_space: false,
             after_equal: false,
             quotes_unclosed: false,
+            brackets_unclosed: false,
         }
     }
 
     /// The marks of `text`, a row of comma-separated entries.
     pub(crate) fn split(text: &'a str, grammar: ListGrammar) -> Self {
-        Locator::new(text, grammar, true)
+        Locator::new(text, grammar, true, Part::Lead)
+    }
+
+    /// The marks of `text`, one entry, a `,` in it read as text.
+    pub(crate) fn entry(text: &'a str, grammar: ListGrammar) -> Self {
+        Locator::new(text, grammar, false, Part::Lead)
     }
 
     /// The marks of `text`, a `*(SEMI generic-param)` tail read from its
     /// first `;`.
     pub(crate) fn params(text: &'a str) -> Self {
-        Locator::new(text, ListGrammar::Token, false)
+        Locator::new(text, ListGrammar::Token, false, Part::Params)
     }
 
     /// Whether a `"` read next stands where the grammar lets a quoted
     /// string start.
     fn quote_opens(&self) -> bool {
-        let in_value = self.in_params
+        let in_value = self.part == Part::Params
             && self
                 .segment
                 .opens_quote();
         match self.grammar {
             ListGrammar::Token | ListGrammar::Uri => in_value,
-            ListGrammar::NameAddr => !self.begun || in_value,
+            ListGrammar::NameAddr => (self.part == Part::Lead && !self.begun) || in_value,
             ListGrammar::Warning => self.begun && self.after_space,
             ListGrammar::Auth => self
                 .segment
                 .opens_quote(),
             ListGrammar::Anywhere => !self.begun || self.after_space || self.after_equal,
+        }
+    }
+
+    /// Whether a `<` read next stands where the grammar puts an addr-spec.
+    fn bracket_opens(&self) -> bool {
+        match self.grammar {
+            ListGrammar::Uri => self.part == Part::Lead && !self.begun,
+            ListGrammar::NameAddr => self.part == Part::Lead && !self.bracketed,
+            ListGrammar::Anywhere => true,
+            ListGrammar::Token | ListGrammar::Warning | ListGrammar::Auth => false,
         }
     }
 
@@ -117,7 +149,8 @@ impl<'a> Locator<'a> {
         let value = self
             .segment
             .push(c);
-        (value && (self.in_params || self.grammar == ListGrammar::Auth)).then_some(Mark::Value(at))
+        (value && (self.part == Part::Params || self.grammar == ListGrammar::Auth))
+            .then_some(Mark::Value(at))
     }
 
     /// The quote opening at `at`, skipped to its close.
@@ -134,6 +167,28 @@ impl<'a> Locator<'a> {
         self.read(at, '"');
         Mark::Quote { open: at, close }
     }
+
+    /// The bracket opening at `at`, skipped to its close.
+    fn bracket(&mut self, at: usize) -> Mark {
+        let close = if self.brackets_unclosed {
+            None
+        } else {
+            self.text[at + 1..]
+                .find('>')
+                .map(|c| at + 1 + c)
+        };
+        self.brackets_unclosed = close.is_none();
+        self.bracketed = true;
+        self.read(at, '<');
+        if let Some(close) = close {
+            self.i = close + 1;
+            self.read(close, '>');
+            if self.part == Part::Lead {
+                self.part = Part::AfterBracket;
+            }
+        }
+        Mark::Bracket { open: at, close }
+    }
 }
 
 impl Iterator for Locator<'_> {
@@ -146,29 +201,20 @@ impl Iterator for Locator<'_> {
         {
             let at = self.i;
             self.i += c.len_utf8();
-            if self.depth > 0 {
-                match c {
-                    '<' => self.depth += 1,
-                    '>' => self.depth -= 1,
-                    _ => {}
-                }
-                self.read(at, c);
-                continue;
-            }
             match c {
                 '"' if self.quote_opens() => return Some(self.quote(at)),
-                '<' if self.split => self.depth += 1,
+                '<' if self.bracket_opens() => return Some(self.bracket(at)),
                 ';' if self.grammar != ListGrammar::Auth => {
                     self.read(at, c);
-                    self.in_params = true;
+                    self.part = Part::Params;
                     self.segment = Segment::default();
                     return Some(Mark::Param(at));
                 }
                 ',' if self.split => {
-                    let quotes_unclosed = self.quotes_unclosed;
                     *self = Locator {
                         i: self.i,
-                        quotes_unclosed,
+                        quotes_unclosed: self.quotes_unclosed,
+                        brackets_unclosed: self.brackets_unclosed,
                         ..Locator::split(self.text, self.grammar)
                     };
                     return Some(Mark::Comma(at));

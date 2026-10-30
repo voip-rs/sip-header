@@ -576,7 +576,7 @@ fn auth_items(rest: &str) -> (Vec<AuthItem<'_>>, bool) {
             }
             Mark::Value(at) => equal = Some(at),
             Mark::Quote { open, close } => quote = Some((open, close)),
-            Mark::Param(_) => {}
+            Mark::Param(_) | Mark::Bracket { .. } => {}
         }
     }
     let final_comma = start > 0 && start == rest.len();
