@@ -462,41 +462,44 @@ struct ParamSegment {
 /// value opening with a quote that closes runs to the next `;` after it,
 /// and one that never closes ends at the next `;` like any value.
 pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
-    let mut segments = vec![ParamSegment::default()];
+    let mut params = Vec::new();
+    let mut lead = "";
+    let mut seg = ParamSegment::default();
     for mark in Locator::params(s) {
-        let Some(last) = segments.last_mut() else {
-            break;
-        };
         match mark {
             Mark::Param(at) => {
-                last.end = at;
-                segments.push(ParamSegment {
+                seg.end = at;
+                seg.read(s, &mut lead, &mut params);
+                seg = ParamSegment {
                     semi: Some(at),
                     start: at + 1,
                     ..ParamSegment::default()
-                });
+                };
             }
-            Mark::Value(at) => last.equal = Some(at),
-            Mark::Quote { open, close } => last.quote = Some((open, close)),
+            Mark::Value(at) => seg.equal = Some(at),
+            Mark::Quote { open, close } => seg.quote = Some((open, close)),
             Mark::Comma(_) | Mark::Bracket { .. } => {}
         }
     }
-    if let Some(last) = segments.last_mut() {
-        last.end = s.len();
-    }
-    let mut params = Vec::new();
-    let mut lead = "";
-    for seg in segments {
-        let (run, body) = lws::split_start(&s[seg.start..seg.end]);
-        let mut padding = [lead, "", "", "", ""];
-        match seg.semi {
+    seg.end = s.len();
+    seg.read(s, &mut lead, &mut params);
+    params
+}
+
+impl ParamSegment {
+    /// Push the parameter this segment of `s` holds onto `params`; `lead`
+    /// carries the whitespace before the first `;` to that parameter.
+    fn read<'a>(self, s: &'a str, lead: &mut &'a str, params: &mut Vec<RawParam<'a>>) {
+        let (run, body) = lws::split_start(&s[self.start..self.end]);
+        let mut padding = [*lead, "", "", "", ""];
+        match self.semi {
             None if body.is_empty() => {
-                lead = run;
-                continue;
+                *lead = run;
+                return;
             }
             None => padding[0] = run,
             Some(semi) => {
-                lead = "";
+                *lead = "";
                 padding[1] = run;
                 if body.is_empty() {
                     params.push(RawParam {
@@ -506,11 +509,11 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
                         unterminated: false,
                         padding,
                     });
-                    continue;
+                    return;
                 }
             }
         }
-        let Some(eq) = seg.equal else {
+        let Some(eq) = self.equal else {
             let (key, key_end) = lws::split_end(body);
             padding[2] = key_end;
             params.push(RawParam {
@@ -520,10 +523,10 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
                 unterminated: false,
                 padding,
             });
-            continue;
+            return;
         };
         let (key, key_end) = lws::split_end(&s[offset_in(s, body)..eq]);
-        let (value_start, value) = lws::split_start(&s[eq + 1..seg.end]);
+        let (value_start, value) = lws::split_start(&s[eq + 1..self.end]);
         let (text, value_end) = lws::split_end(value);
         padding[2] = key_end;
         padding[3] = value_start;
@@ -532,16 +535,15 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
         params.push(RawParam {
             key,
             value: Some(text),
-            quoted: seg
+            quoted: self
                 .quote
                 .is_some_and(|(_, close)| close.is_some_and(|c| c + 1 == last)),
-            unterminated: seg
+            unterminated: self
                 .quote
                 .is_some_and(|(_, close)| close.is_none()),
             padding,
         });
     }
-    params
 }
 
 /// Split comma-separated header entries at the commas outside quoted
