@@ -15,9 +15,10 @@
 //!   a literal is text;
 //! - a `"` opens a quoted string only where the caller's [`Grammar`] lets
 //!   one start, and only when it closes. For a media type that is the rule
-//!   the parameter reader applies ([`Segment`]), so the two never disagree
-//!   about which `(` sits inside a quoted value; for a `msg-id` it is where
-//!   an `id-left` word starts, and a `[` opens the literal `id-right`;
+//!   the parameter reader applies, through the same [`Segment`] and
+//!   `closing_quote` from `locate.rs`, so the two never disagree about
+//!   which `(` sits inside a quoted value; for a `msg-id` it is where an
+//!   `id-left` word starts, and a `[` opens the literal `id-right`;
 //! - `quoted-pair` is honoured inside comments, quoted strings and
 //!   literals, and a `\` anywhere else is ordinary text;
 //! - nested comments close in order. A `(` that never closes is text and

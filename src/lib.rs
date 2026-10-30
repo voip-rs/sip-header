@@ -544,21 +544,21 @@ pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
     params
 }
 
-/// Split comma-separated header entries respecting angle-bracket nesting
-/// and double-quoted strings.
+/// Split comma-separated header entries at the commas outside quoted
+/// strings and angle brackets.
 ///
 /// SIP headers that carry lists (RFC 3261 §7.3.1) use commas as delimiters,
 /// but commas may also appear inside angle-bracketed URIs or quoted strings
-/// (e.g. Warning warn-text per §20.43). This function splits only on commas
-/// at bracket depth zero and outside quoted strings.
+/// (e.g. Warning warn-text per §20.43). This function does not know the
+/// list's grammar, so it accepts every position some list grammar does.
 ///
-/// Backslash escapes inside quoted strings (RFC 3261 §25.1 `quoted-pair`)
-/// are respected to avoid premature quote-close on `\"`. A `"` opens a
-/// quoted string only at bracket depth zero, where some list grammar lets
-/// one start (first in an entry, after whitespace or after `=`), and only
-/// when it closes; any other `"` is text, so a stray one affects its entry
-/// alone. The typed lists split by their own grammar, which admits fewer
-/// starts.
+/// A `"` opens a quoted string first in an entry, after whitespace or after
+/// `=`, whitespace being the class [`str::trim`] removes, and only when it
+/// closes; `quoted-pair` (RFC 3261 §25.1) is honoured, so a final `\"`
+/// never closes it. A `<` outside a quoted string opens a bracket only when
+/// a `>` follows, and the first `>` closes it: brackets do not nest. Any
+/// other `"` or `<` is text, so a stray one affects its entry alone. The
+/// typed lists split by their own grammar, which admits fewer starts.
 ///
 /// CR, LF and NUL are dropped before framing, as the list parsers drop
 /// them, and each entry is the slice of `raw` its text came from.
@@ -743,8 +743,13 @@ pub(crate) fn row_entries<'a>(
         .flat_map(move |(i, row)| split_row(row, Some(i), grammar))
 }
 
-/// [`split_comma_entries`], at the commas [`Locator::split`] finds under
-/// `grammar`.
+/// The entries of `raw` at the commas [`Locator::split`] finds under
+/// `grammar`, the grammar the list's entry reader reads them by, so the
+/// reader holds every comma the split kept.
+///
+/// The scan reads `raw` with CR, LF and NUL scrubbed, as the readers do,
+/// and each entry is sliced from `raw` itself, so a dropped character
+/// never moves a boundary.
 pub(crate) fn split_entries(raw: &str, grammar: ListGrammar) -> Split<'_> {
     let scrubbed = scrub::scrub(raw);
     let text = &scrubbed.text;

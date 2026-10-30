@@ -1,10 +1,73 @@
-//! Where a list's quoted strings, brackets and entry separators sit, per
-//! list grammar.
+//! Where a list's quoted strings, brackets, parameters and entry
+//! separators sit, per list grammar.
+//!
+//! The list splitter ([`crate::split_entries`]) and every entry reader take
+//! these positions from one [`Locator`], so no reader holds text the
+//! splitter cut or cuts text the splitter held: a disagreement lets one
+//! quoted value smuggle a whole extra entry. A reader never searches for
+//! `"`, `<`, `;` or `=` itself; a leniency that moves a quote or a bracket
+//! lives here or nowhere.
+//!
+//! # Rules, RFC 3261 §25.1, §20.10, §20.43
+//!
+//! - Whitespace is [`is_trimmed`], the class the readers trim, wherever a
+//!   rule looks at it (`quoted-string = SWS DQUOTE …`, `EQUAL`, `LAQUOT`).
+//!   The readers still report what lies beyond SP and HTAB.
+//! - A `"` opens a quoted string only where its [`ListGrammar`] lets one
+//!   start, and only when it closes; `closing_quote` honours
+//!   `quoted-pair`, so a final `\"` is never a close. A quote that never
+//!   closes is text and holds no comma.
+//! - In a `generic-param` or `auth-param`, only the segment's first `=`
+//!   opens a value, and a quote opens it only with nothing but whitespace
+//!   between ([`Segment`]).
+//! - A `<` opens a bracket only where the grammar puts an addr-spec: in a
+//!   name-addr's lead before any `;`, or first in a URI entry. The first
+//!   `>` closes it, brackets do not nest, and a bracket that never closes
+//!   is text and holds no comma. Inside a bracket nothing opens.
+//! - Parameters start at the first `;` outside a quote or bracket. In a
+//!   bare `sip`/`sips` addr-spec a `;` belongs to the userinfo when an `@`
+//!   follows before any `"` (`user` may hold `;`); the parameters of any
+//!   other bare addr-spec are the header's (§20.10), so a `;` before any
+//!   `<` makes the entry bare.
+//! - Warn-text opens at the first `"` after whitespace past the code's SP
+//!   (`warning-value = warn-code SP warn-agent SP warn-text`), and nothing
+//!   opens after it closes.
+//!
+//! # Modes
+//!
+//! [`Locator::split`] reads a row, a `,` outside every quote and bracket
+//! ending an entry and resetting the entry's state; [`Locator::entry`]
+//! reads one entry, its commas text; [`Locator::params`] reads a parameter
+//! tail from its first `;`. An entry read alone yields the marks the row's
+//! split gave it, and a tail read by `params` the marks its entry gave it,
+//! which the tests hold. The splitter reads text with CR, LF and NUL
+//! scrubbed, as the readers do.
+//!
+//! # No decision waits for the entry's end
+//!
+//! The splitter decides before it knows where an entry ends, so every
+//! rule is decided by the text read so far plus a lookahead for a close.
+//! The userinfo rule is applied as the text arrives: a `;` that may be the
+//! userinfo's is held until an `@` (userinfo), a `"`, a `,` or the end
+//! (parameters, read again from that `;`).
+//!
+//! # Linear time
+//!
+//! A quote or bracket that fails to find its close sets a flag, and no
+//! later one of its kind looks ahead again: when no `>` follows one `<`,
+//! none follows a later one, and when no closing quote follows one `"`,
+//! every later `"` was the escaped half of a `quoted-pair` on that scan,
+//! and a scan started just after it reads the same pairs from there, so
+//! it finds none either. The userinfo re-read happens at most once per
+//! entry.
+//!
+//! `cfws.rs` shares [`Segment`] and `closing_quote` to locate a MIME
+//! parameter's quoted value.
 
 use crate::lws::is_trimmed;
 
-/// The grammar of one list entry, which decides where a quoted string can
-/// start.
+/// The grammar of one list entry, which decides where a quoted string, a
+/// bracket and the parameters can start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListGrammar {
     /// `token-ish *(SEMI generic-param)`: Via, the Accept family, Reason,
