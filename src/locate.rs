@@ -61,6 +61,13 @@
 //! it finds none either. The userinfo re-read happens at most once per
 //! entry.
 //!
+//! # Plain runs
+//!
+//! A run of [`PLAIN`] bytes, ASCII that no rule names, is read in one step
+//! that sets what reading each of them would; only the other bytes are
+//! decoded and matched. A rule that starts looking at a byte takes it out
+//! of [`PLAIN`], or the run steps over it unseen.
+//!
 //! `cfws.rs` shares [`Segment`] and `closing_quote` to locate a MIME
 //! parameter's quoted value.
 
@@ -138,6 +145,21 @@ impl BareUri {
         self.sip == Some(true) && !self.at && !self.quoted
     }
 }
+
+/// The bytes no rule looks at, beyond their not being whitespace: ASCII
+/// other than whitespace and the bytes a match arm or `read` names.
+const PLAIN: [bool; 256] = {
+    let mut plain = [false; 256];
+    let mut b = 0;
+    while b < 0x80 {
+        plain[b] = !matches!(
+            b as u8,
+            b'"' | b'<' | b';' | b'=' | b',' | b'@' | b':' | b' ' | b'\t'..=b'\r'
+        );
+        b += 1;
+    }
+    plain
+};
 
 /// The marks of a text read under one [`ListGrammar`].
 pub(crate) struct Locator<'a> {
@@ -255,6 +277,21 @@ impl<'a> Locator<'a> {
             .then_some(Mark::Value(at))
     }
 
+    /// [`read`](Self::read) of a run of [`PLAIN`] bytes starting at `at`:
+    /// the first sets what the rest would set again.
+    fn read_plain(&mut self, at: usize) {
+        self.begun = true;
+        self.after_space = false;
+        self.after_equal = false;
+        self.segment
+            .blank_since = false;
+        if self.grammar == ListGrammar::NameAddr && self.part == Part::Lead {
+            self.bare
+                .start
+                .get_or_insert(at);
+        }
+    }
+
     /// Record `c`, read at `at` in a name-addr's lead, as the bare URI
     /// it may turn out to be.
     fn read_bare(&mut self, at: usize, c: char) {
@@ -342,6 +379,16 @@ impl Iterator for Locator<'_> {
 
     fn next(&mut self) -> Option<Mark> {
         loop {
+            let run = self
+                .text
+                .as_bytes()[self.i..]
+                .iter()
+                .take_while(|&&b| PLAIN[usize::from(b)])
+                .count();
+            if run > 0 {
+                self.read_plain(self.i);
+                self.i += run;
+            }
             let Some(c) = self.text[self.i..]
                 .chars()
                 .next()
