@@ -409,8 +409,6 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
 pub struct MessageLines<'a, T: ?Sized + MessageText = str> {
     message: &'a T,
     lines: RawLines<'a>,
-    /// The line read after a row that did not continue it.
-    ahead: Option<Range<usize>>,
     rows: usize,
     start_line: bool,
     blank_line_end: Option<usize>,
@@ -513,7 +511,6 @@ impl<'a, T: ?Sized + MessageText> MessageLines<'a, T> {
         MessageLines {
             message,
             lines: RawLines::new(message.bytes()),
-            ahead: None,
             rows: 0,
             start_line,
             blank_line_end: None,
@@ -556,15 +553,9 @@ impl<'a, T: ?Sized + MessageText> MessageLines<'a, T> {
         if self.done {
             return None;
         }
-        let range = match self
-            .ahead
-            .take()
-        {
-            Some(range) => range,
-            None => self
-                .lines
-                .next()?,
-        };
+        let range = self
+            .lines
+            .next()?;
         if range.is_empty() {
             self.done = true;
             let body_start = self
@@ -592,14 +583,31 @@ impl<'a, T: ?Sized + MessageText> MessageLines<'a, T> {
     }
 
     /// Consume the continuation lines after a header line, returning the
-    /// end of the last one, or `end` when there is none.
+    /// end of the last one, or `end` when there is none. The line that is
+    /// none stays unread, unless it is the blank line, which is passed here
+    /// so `blank_line_end` is known as soon as the last row is returned.
     fn continuations(&mut self, mut end: usize) -> usize {
-        while let Some(line) = self.line() {
-            if !self.is_continuation(&line) {
-                self.ahead = Some(line);
-                break;
+        let bytes = self
+            .message
+            .bytes();
+        loop {
+            let rest = bytes
+                .get(
+                    self.lines
+                        .next_start()..,
+                )
+                .unwrap_or_default();
+            match rest {
+                [b' ' | b'\t', ..] => match self.line() {
+                    Some(line) => end = line.end,
+                    None => break,
+                },
+                [] | [b'\n' | b'\r'] | [b'\n', ..] | [b'\r', b'\n', ..] => {
+                    self.line();
+                    break;
+                }
+                _ => break,
             }
-            end = line.end;
         }
         end
     }
@@ -651,9 +659,6 @@ impl<T: ?Sized + MessageText> Clone for MessageLines<'_, T> {
             message: self.message,
             lines: self
                 .lines
-                .clone(),
-            ahead: self
-                .ahead
                 .clone(),
             rows: self.rows,
             start_line: self.start_line,
