@@ -1,6 +1,8 @@
 //! Where a list's quoted strings, brackets and entry separators sit, per
 //! list grammar.
 
+use crate::lws::is_trimmed;
+
 /// The grammar of one list entry, which decides where a quoted string can
 /// start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,12 +56,9 @@ impl<'a> Locator<'a> {
 
     /// Whether a `"` following `before`, the entry so far, stands where the
     /// grammar lets a quoted string start.
-    fn quote_opens(&self, before: &[u8]) -> bool {
-        let trimmed = before
-            .iter()
-            .rposition(|b| !b.is_ascii_whitespace())
-            .map_or(&before[..0], |last| &before[..=last]);
-        let after_equal = trimmed.last() == Some(&b'=');
+    fn quote_opens(&self, before: &str) -> bool {
+        let trimmed = before.trim_end_matches(is_trimmed);
+        let after_equal = trimmed.ends_with('=');
         let entry_start = trimmed.is_empty();
         let after_space = !entry_start && trimmed.len() < before.len();
         match self.grammar {
@@ -83,7 +82,7 @@ impl Iterator for Locator<'_> {
             let i = self.i;
             self.i += 1;
             match bytes[i] {
-                b'"' if self.depth == 0 && self.quote_opens(&bytes[self.entry..i]) => {
+                b'"' if self.depth == 0 && self.quote_opens(&self.text[self.entry..i]) => {
                     if let Some(close) = closing_quote(&self.text[i + 1..]) {
                         self.i = i + close + 2;
                     }
@@ -124,81 +123,7 @@ pub(crate) fn closing_quote(s: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
-
     use super::*;
-
-    /// The splitter as it stood before the locator, frozen to prove the
-    /// locator reproduces it.
-    mod frozen {
-        use super::super::closing_quote;
-
-        #[derive(Clone, Copy)]
-        pub(super) enum QuoteStart {
-            Param,
-            DisplayName,
-            Word,
-            AuthParam,
-            Anywhere,
-        }
-
-        pub(super) fn top_level_commas(text: &str, rule: QuoteStart) -> Vec<usize> {
-            let bytes = text.as_bytes();
-            let mut commas = Vec::new();
-            let mut depth = 0u32;
-            let mut start = 0;
-            let mut in_params = false;
-            let mut i = 0;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'"' if depth == 0
-                        && opens_quoted_string(&bytes[start..i], in_params, rule) =>
-                    {
-                        if let Some(close) = closing_quote(&text[i + 1..]) {
-                            i += close + 1;
-                        }
-                    }
-                    b'<' => depth += 1,
-                    b'>' => depth = depth.saturating_sub(1),
-                    b';' if depth == 0 => in_params = true,
-                    b',' if depth == 0 => {
-                        commas.push(i);
-                        start = i + 1;
-                        in_params = false;
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            commas
-        }
-
-        fn opens_quoted_string(before: &[u8], in_params: bool, rule: QuoteStart) -> bool {
-            let trimmed = before
-                .iter()
-                .rposition(|b| !b.is_ascii_whitespace())
-                .map_or(&before[..0], |last| &before[..=last]);
-            let after_equal = trimmed.last() == Some(&b'=');
-            let entry_start = trimmed.is_empty();
-            let after_space = !entry_start && trimmed.len() < before.len();
-            match rule {
-                QuoteStart::Param => in_params && after_equal,
-                QuoteStart::DisplayName => entry_start || (in_params && after_equal),
-                QuoteStart::Word => after_space,
-                QuoteStart::AuthParam => after_equal,
-                QuoteStart::Anywhere => entry_start || after_space || after_equal,
-            }
-        }
-    }
-
-    const PIECES: &[&str] = &[
-        "a", " ", "\t", "\u{a0}", "\u{b}", "\u{85}", "\u{3000}", "\"", "\\", "<", ">", ";", "=",
-        ",", "@", "sip:", "399 ",
-    ];
-
-    fn row() -> impl Strategy<Value = String> {
-        prop::collection::vec(prop::sample::select(PIECES), 0..24).prop_map(|p| p.concat())
-    }
 
     fn commas(text: &str, grammar: ListGrammar) -> Vec<usize> {
         Locator::split(text, grammar)
@@ -247,26 +172,6 @@ mod tests {
                 [&format!("realm={ws}\"a, b\""), " nonce=\"n\""],
                 "{auth:?}"
             );
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn split_reproduces_the_frozen_splitter(text in row()) {
-            for (grammar, rule) in [
-                (ListGrammar::Token, frozen::QuoteStart::Param),
-                (ListGrammar::Uri, frozen::QuoteStart::Param),
-                (ListGrammar::NameAddr, frozen::QuoteStart::DisplayName),
-                (ListGrammar::Warning, frozen::QuoteStart::Word),
-                (ListGrammar::Auth, frozen::QuoteStart::AuthParam),
-                (ListGrammar::Anywhere, frozen::QuoteStart::Anywhere),
-            ] {
-                prop_assert_eq!(
-                    commas(&text, grammar),
-                    frozen::top_level_commas(&text, rule),
-                    "{:?}", grammar
-                );
-            }
         }
     }
 }
