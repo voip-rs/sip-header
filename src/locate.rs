@@ -38,7 +38,8 @@ pub(crate) struct Locator<'a> {
     i: usize,
     entry: usize,
     depth: u32,
-    in_params: bool,
+    /// Start of the current `generic-param`, after its `;`.
+    param: Option<usize>,
 }
 
 impl<'a> Locator<'a> {
@@ -50,23 +51,27 @@ impl<'a> Locator<'a> {
             i: 0,
             entry: 0,
             depth: 0,
-            in_params: false,
+            param: None,
         }
     }
 
-    /// Whether a `"` following `before`, the entry so far, stands where the
-    /// grammar lets a quoted string start.
-    fn quote_opens(&self, before: &str) -> bool {
+    /// Whether a `"` at `at` stands where the grammar lets a quoted string
+    /// start.
+    fn quote_opens(&self, at: usize) -> bool {
+        let before = &self.text[self.entry..at];
         let trimmed = before.trim_end_matches(is_trimmed);
-        let after_equal = trimmed.ends_with('=');
         let entry_start = trimmed.is_empty();
         let after_space = !entry_start && trimmed.len() < before.len();
+        let in_param = || {
+            self.param
+                .is_some_and(|p| Segment::of(&self.text[p..at]).opens_quote())
+        };
         match self.grammar {
-            ListGrammar::Token | ListGrammar::Uri => self.in_params && after_equal,
-            ListGrammar::NameAddr => entry_start || (self.in_params && after_equal),
+            ListGrammar::Token | ListGrammar::Uri => in_param(),
+            ListGrammar::NameAddr => entry_start || in_param(),
             ListGrammar::Warning => after_space,
-            ListGrammar::Auth => after_equal,
-            ListGrammar::Anywhere => entry_start || after_space || after_equal,
+            ListGrammar::Auth => Segment::of(before).opens_quote(),
+            ListGrammar::Anywhere => entry_start || after_space || trimmed.ends_with('='),
         }
     }
 }
@@ -82,7 +87,7 @@ impl Iterator for Locator<'_> {
             let i = self.i;
             self.i += 1;
             match bytes[i] {
-                b'"' if self.depth == 0 && self.quote_opens(&self.text[self.entry..i]) => {
+                b'"' if self.depth == 0 && self.quote_opens(i) => {
                     if let Some(close) = closing_quote(&self.text[i + 1..]) {
                         self.i = i + close + 2;
                     }
@@ -93,16 +98,55 @@ impl Iterator for Locator<'_> {
                         .depth
                         .saturating_sub(1)
                 }
-                b';' if self.depth == 0 => self.in_params = true,
+                b';' if self.depth == 0 => self.param = Some(i + 1),
                 b',' if self.depth == 0 => {
                     self.entry = i + 1;
-                    self.in_params = false;
+                    self.param = None;
                     return Some(Mark::Comma(i));
                 }
                 _ => {}
             }
         }
         None
+    }
+}
+
+/// One `generic-param` or `auth-param` read so far: its first `=`, the
+/// only one that opens a value (RFC 3261 §25.1), and whether only
+/// whitespace has followed it.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Segment {
+    equal: Option<usize>,
+    blank_since: bool,
+}
+
+impl Segment {
+    /// The segment `text`, read from just after its `;` or entry start.
+    pub(crate) fn of(text: &str) -> Self {
+        let mut segment = Segment::default();
+        for (at, c) in text.char_indices() {
+            segment.push(at, c);
+        }
+        segment
+    }
+
+    /// Read `c`, at `at`.
+    fn push(&mut self, at: usize, c: char) {
+        match self.equal {
+            None if c == '=' => {
+                self.equal = Some(at);
+                self.blank_since = true;
+            }
+            Some(_) if !is_trimmed(c) => self.blank_since = false,
+            _ => {}
+        }
+    }
+
+    /// Whether a `"` read next opens the value's quoted string.
+    pub(crate) fn opens_quote(&self) -> bool {
+        self.equal
+            .is_some()
+            && self.blank_since
     }
 }
 

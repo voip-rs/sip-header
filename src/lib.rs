@@ -278,19 +278,6 @@ impl Framing {
     }
 }
 
-/// Whether a `"` after `segment`, the text of one `generic-param` after its
-/// `;`, opens its value as [`parse_params`] reads it: the segment's first
-/// `=` followed by whitespace alone.
-pub(crate) fn opens_param_quote(segment: &str) -> bool {
-    segment
-        .find('=')
-        .is_some_and(|eq| {
-            segment[eq + 1..]
-                .trim_start()
-                .is_empty()
-        })
-}
-
 /// Whether `value` opens a quoted-string that never closes.
 pub(crate) fn opens_unterminated_quote(value: &str) -> bool {
     value

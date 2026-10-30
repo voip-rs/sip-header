@@ -15,10 +15,9 @@
 //!   a literal is text;
 //! - a `"` opens a quoted string only where the caller's [`Grammar`] lets
 //!   one start, and only when it closes. For a media type that is the rule
-//!   the parameter reader applies ([`crate::opens_param_quote`]), so the
-//!   two never disagree about which `(` sits inside a quoted value; for a
-//!   `msg-id` it is where an `id-left` word starts, and a `[` opens the
-//!   literal `id-right`;
+//!   the parameter reader applies ([`Segment`]), so the two never disagree
+//!   about which `(` sits inside a quoted value; for a `msg-id` it is where
+//!   an `id-left` word starts, and a `[` opens the literal `id-right`;
 //! - `quoted-pair` is honoured inside comments, quoted strings and
 //!   literals, and a `\` anywhere else is ordinary text;
 //! - nested comments close in order. A `(` that never closes is text and
@@ -49,7 +48,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
-use crate::locate::closing_quote;
+use crate::locate::{closing_quote, Segment};
 use crate::span::Span;
 use crate::Framing;
 
@@ -107,7 +106,7 @@ impl Seen {
             && match grammar {
                 Grammar::MediaType => self
                     .param
-                    .is_some_and(|p| crate::opens_param_quote(&before[p..])),
+                    .is_some_and(|p| Segment::of(&before[p..]).opens_quote()),
                 Grammar::MsgId => {
                     let word = before[self.id_start..].trim();
                     self.at
