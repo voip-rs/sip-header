@@ -282,6 +282,19 @@ mod tests {
     }
 
     #[test]
+    fn a_mechanism_opens_no_quote() {
+        let mut warnings = Vec::new();
+        let read = read(
+            r#"x "(a)";b="(c)""#,
+            Grammar::Mechanism,
+            Framing::BodyPart,
+            Field::Value,
+            &mut warnings,
+        );
+        assert_eq!(read.text, r#"x "   ";b="   ""#);
+    }
+
+    #[test]
     fn sip_framing_keeps_comments_as_text() {
         let text = "text/plain (c)";
         let mut warnings = Vec::new();

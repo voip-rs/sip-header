@@ -6,13 +6,15 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::marker::PhantomData;
 
 use sip_header::{
-    ContactList, Field, HeaderParse, HistoryInfo, ParseError, Parsed, SipAccept, SipAcceptEncoding,
-    SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength, SipContentType, SipGeolocation,
-    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
-    SipMessageHeaders, SipReason, SipReasonList, SipReplaces, SipSecurity, SipTargetDialog, SipVia,
-    SipWarning, TokenList, UriInfo, WarningCode, WarningKind,
+    BodyPartParse, ContactList, Field, HeaderParse, HistoryInfo, ParseError, Parsed, SipAccept,
+    SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength,
+    SipContentTransferEncoding, SipContentType, SipGeolocation, SipHeader, SipHeaderAddr,
+    SipHeaderAddrList, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason,
+    SipReasonList, SipReplaces, SipSecurity, SipTargetDialog, SipVia, SipWarning, TokenList,
+    UriInfo, WarningCode, WarningKind,
 };
 
 /// The three reads of a value, as the string it prints; `TokenList` takes
@@ -34,6 +36,23 @@ impl<T: HeaderParse + Display> Reads for T {
 
     fn strict(input: &str) -> Result<String, ParseError> {
         T::parse_strict(input).map(|v| v.to_string())
+    }
+}
+
+/// The body-part reads of a value.
+struct BodyPart<T>(PhantomData<T>);
+
+impl<T: BodyPartParse + Display> Reads for BodyPart<T> {
+    fn with_warnings(input: &str) -> Result<Parsed<String>, ParseError> {
+        T::parse_body_part_with_warnings(input).map(|p| p.map(|v| v.to_string()))
+    }
+
+    fn lenient(input: &str) -> Result<String, ParseError> {
+        T::parse_body_part(input).map(|v| v.to_string())
+    }
+
+    fn strict(input: &str) -> Result<String, ParseError> {
+        T::parse_body_part_strict(input).map(|v| v.to_string())
     }
 }
 
@@ -415,19 +434,28 @@ fn content_length() {
     check::<SipContentLength>(&["¤120", "120¤"]);
 }
 
+const CONTENT_TYPE: &[&str] = &[
+    "¤multipart/mixed;boundary=b1",
+    "multipart/mixed;boundary=b1¤",
+    "multipart¤/mixed;boundary=b1",
+    "multipart/¤mixed;boundary=b1",
+    "multipart/mixed¤;boundary=b1",
+    "multipart/mixed;¤boundary=b1",
+    "multipart/mixed;boundary¤=b1",
+    "multipart/mixed;boundary=¤b1",
+    "multipart/mixed;boundary=b1¤;charset=utf-8",
+];
+
 #[test]
 fn content_type() {
-    check::<SipContentType>(&[
-        "¤multipart/mixed;boundary=b1",
-        "multipart/mixed;boundary=b1¤",
-        "multipart¤/mixed;boundary=b1",
-        "multipart/¤mixed;boundary=b1",
-        "multipart/mixed¤;boundary=b1",
-        "multipart/mixed;¤boundary=b1",
-        "multipart/mixed;boundary¤=b1",
-        "multipart/mixed;boundary=¤b1",
-        "multipart/mixed;boundary=b1¤;charset=utf-8",
-    ]);
+    check::<SipContentType>(CONTENT_TYPE);
+    check::<BodyPart<SipContentType>>(CONTENT_TYPE);
+}
+
+#[test]
+fn content_transfer_encoding() {
+    check::<SipContentTransferEncoding>(&["¤base64", "base64¤"]);
+    check::<BodyPart<SipContentTransferEncoding>>(&["¤base64", "base64¤"]);
 }
 
 #[test]

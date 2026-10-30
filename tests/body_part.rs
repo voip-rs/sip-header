@@ -3,8 +3,8 @@
 
 use proptest::prelude::*;
 use sip_header::{
-    BodyPartParse, Field, HeaderParse, ParseError, ParseWarning, Parsed, SipContentType,
-    WarningCode, WarningKind,
+    BodyPartParse, FaultCode, Field, HeaderParse, ParseError, ParseWarning, Parsed,
+    SipContentTransferEncoding, SipContentType, TransferEncoding, WarningCode, WarningKind,
 };
 
 type R = Result<(), ParseError>;
@@ -229,6 +229,156 @@ fn a_mime_token_is_legal_in_a_body_part() -> R {
         assert!(SipContentType::parse_strict(raw).is_ok(), "{raw}");
     }
     Ok(())
+}
+
+/// A transfer encoding read both ways, which share one grammar: `parse`
+/// keeps the value, the warnings are `want`, and strict refuses the first.
+fn relaxed_cte(raw: &str, want: &[(WarningCode, Option<usize>)]) -> SipContentTransferEncoding {
+    let body = relaxed_body_part!(SipContentTransferEncoding, raw, want);
+    let sip = relaxed(
+        SipContentTransferEncoding::parse_with_warnings(raw),
+        SipContentTransferEncoding::parse(raw),
+        SipContentTransferEncoding::parse_strict(raw),
+        want,
+    );
+    assert_eq!(sip, body, "{raw}");
+    body
+}
+
+#[test]
+fn transfer_encoding_names_the_rfc_2045_mechanisms_in_any_case() -> R {
+    for (raw, known) in [
+        ("7bit", TransferEncoding::SevenBit),
+        ("8BIT", TransferEncoding::EightBit),
+        ("Binary", TransferEncoding::Binary),
+        ("Quoted-Printable", TransferEncoding::QuotedPrintable),
+        ("bAsE64", TransferEncoding::Base64),
+    ] {
+        let value = SipContentTransferEncoding::parse_body_part_strict(raw)?;
+        assert_eq!(value.known(), Some(known), "{raw}");
+        assert_eq!(value.as_str(), raw.to_ascii_lowercase());
+        assert_eq!(value.to_string(), raw.to_ascii_lowercase());
+        assert_eq!(SipContentTransferEncoding::parse_strict(raw)?, value);
+        assert_eq!(SipContentTransferEncoding::new(raw)?, value);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for raw in ["7bit", "8bit", "binary", "quoted-printable", "base64"] {
+        let known = SipContentTransferEncoding::new(raw)?.known();
+        assert!(known.is_some() && seen.insert(known), "{raw}");
+    }
+    Ok(())
+}
+
+#[test]
+fn transfer_encoding_keeps_any_other_token_unnamed() -> R {
+    for raw in ["x-uuencode", "X-Custom#1", "ietf-$&^{|}"] {
+        let value = SipContentTransferEncoding::parse_body_part_strict(raw)?;
+        assert_eq!(value.known(), None, "{raw}");
+        assert_eq!(value.as_str(), raw.to_ascii_lowercase());
+    }
+    Ok(())
+}
+
+#[test]
+fn transfer_encoding_reads_comments_in_both_entry_points() -> R {
+    let base64 = SipContentTransferEncoding::new("base64")?;
+    for raw in [
+        "base64 (encoded)",
+        "(c) base64",
+        "base64(a (b) c)",
+        " \tBASE64 ( x ) ",
+    ] {
+        assert_eq!(relaxed_cte_clean(raw)?, base64, "{raw}");
+    }
+    Ok(())
+}
+
+fn relaxed_cte_clean(raw: &str) -> Result<SipContentTransferEncoding, ParseError> {
+    let body = SipContentTransferEncoding::parse_body_part_strict(raw)?;
+    assert_eq!(
+        SipContentTransferEncoding::parse_strict(raw)?,
+        body,
+        "{raw}"
+    );
+    Ok(body)
+}
+
+#[test]
+fn transfer_encoding_keeps_its_first_word() {
+    let value = relaxed_cte("base64 x", &[(WarningCode::TrailingContent, Some(6))]);
+    assert_eq!(value.as_str(), "base64");
+    let value = relaxed_cte("base(c)64", &[(WarningCode::TrailingContent, Some(4))]);
+    assert_eq!(value.as_str(), "base");
+    let parsed = SipContentTransferEncoding::parse_body_part_with_warnings("base64 x y").unwrap();
+    assert_eq!(parsed.warnings[0].kind, WarningKind::Lost);
+    assert_eq!(parsed.warnings[0].field, Field::TransferEncoding);
+    assert_eq!(
+        parsed.warnings[0]
+            .span()
+            .unwrap()
+            .get("base64 x y"),
+        Ok(" x y")
+    );
+}
+
+#[test]
+fn transfer_encoding_keeps_a_non_token_under_invalid_token() {
+    let value = relaxed_cte("base64;x=1", &[(WarningCode::InvalidToken, Some(0))]);
+    assert_eq!(value.as_str(), "base64;x=1");
+    let value = relaxed_cte("(c) b@se64", &[(WarningCode::InvalidToken, Some(4))]);
+    assert_eq!(value.as_str(), "b@se64");
+    let value = relaxed_cte("\"base64\"", &[(WarningCode::StrayDelimiter, Some(0))]);
+    assert_eq!(value.as_str(), "base64");
+    let value = relaxed_cte("base64 (\u{1})", &[(WarningCode::ControlChar, Some(8))]);
+    assert_eq!(value.as_str(), "base64");
+}
+
+#[test]
+fn transfer_encoding_without_a_word_is_an_error() {
+    let empty = Err(ParseError::Malformed(sip_header::Fault::new(
+        Field::TransferEncoding,
+        FaultCode::Empty,
+    )));
+    for raw in ["", " ", "(base64)", "\"\""] {
+        assert_eq!(SipContentTransferEncoding::parse(raw), empty, "{raw:?}");
+        assert_eq!(
+            SipContentTransferEncoding::parse_body_part(raw),
+            empty,
+            "{raw:?}"
+        );
+    }
+}
+
+#[test]
+fn transfer_encoding_new_refuses_what_is_no_mime_token() {
+    for raw in ["", "a b", "a;b", "a(b)", "a\r\nb", "\u{e9}"] {
+        assert!(SipContentTransferEncoding::new(raw).is_err(), "{raw:?}");
+    }
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn transfer_encoding_serde_is_its_mechanism() {
+    let value = SipContentTransferEncoding::new("Base64").unwrap();
+    assert_eq!(serde_json::to_string(&value).unwrap(), r#""base64""#);
+    for json in [r#""base64""#, r#""BASE64""#] {
+        assert_eq!(
+            serde_json::from_str::<SipContentTransferEncoding>(json).unwrap(),
+            value
+        );
+    }
+    let kept = SipContentTransferEncoding::parse("b@se64").unwrap();
+    let json = serde_json::to_string(&kept).unwrap();
+    assert_eq!(
+        serde_json::from_str::<SipContentTransferEncoding>(&json).unwrap(),
+        kept
+    );
+    for json in [r#""a b""#, r#""""#, r#""a\nb""#, "1"] {
+        assert!(
+            serde_json::from_str::<SipContentTransferEncoding>(json).is_err(),
+            "{json}"
+        );
+    }
 }
 
 /// Text built from the characters that frame a body-part value.
