@@ -4,8 +4,8 @@ use sip_header::sip_uri::WarningKind;
 use sip_header::{
     split_comma_entries, ContactList, FaultCode, HeaderParse, HistoryInfo, ListParse, ParseError,
     SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipGeolocation, SipHeader,
-    SipHeaderAddrList, SipHeaderLookup, SipReasonList, SipSecurity, SipVia, SipWarning, TokenList,
-    TypedHeader, UriInfo, WarningCode,
+    SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipReasonList, SipSecurity, SipVia,
+    SipWarning, TokenList, TypedHeader, UriInfo, WarningCode,
 };
 
 fn is_empty_fault<T: std::fmt::Debug>(r: Result<T, ParseError>) -> bool {
@@ -857,4 +857,61 @@ fn only_the_first_equal_of_a_segment_opens_a_value() {
             (WarningCode::StrayDelimiter, Some(16), None)
         ]
     );
+}
+
+/// [`reported`] for entries handed to `from_entries`.
+fn reported_entries<T>(entries: &[&str]) -> (T, Vec<Reported>)
+where
+    T: ListParse + PartialEq + std::fmt::Debug,
+{
+    let entries = || {
+        entries
+            .iter()
+            .copied()
+    };
+    let parsed = T::from_entries_with_warnings(entries()).unwrap();
+    assert_eq!(T::from_entries(entries()).as_ref(), Ok(&parsed.value));
+    assert_eq!(
+        T::from_entries_strict(entries()),
+        Err(ParseError::NonConformant(parsed.warnings[0]))
+    );
+    let seen = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.code, w.position, w.entry))
+        .collect();
+    (parsed.value, seen)
+}
+
+#[test]
+fn a_value_is_quoted_only_when_its_quote_closes_at_its_end() {
+    let (contacts, seen) = reported_entries::<ContactList>(&[r#"<sip:a@example.com>;p="x" ", y""#]);
+    let [addr] = contacts.addrs() else {
+        panic!("{contacts:?}");
+    };
+    assert_eq!(addr.param("p"), Some(Some(r#""x" ", y""#)));
+    assert_eq!(seen, [(WarningCode::InvalidToken, Some(22), Some(0))]);
+
+    let (addr, seen) = reported::<SipHeaderAddr>(r#"<sip:a@example.com>;p="x"y"#);
+    assert_eq!(addr.param("p"), Some(Some(r#""x"y"#)));
+    assert_eq!(seen, [(WarningCode::InvalidToken, Some(22), None)]);
+
+    let (auth, seen) = reported::<SipAuthValue>(r#"Digest realm="a"b"#);
+    assert_eq!(auth.realm(), Some(r#""a"b"#));
+    assert_eq!(seen, [(WarningCode::InvalidToken, Some(13), None)]);
+}
+
+#[test]
+fn a_final_escaped_quote_never_closes_a_value() {
+    let (addr, seen) = reported::<SipHeaderAddr>(r#"<sip:a@example.com>;p="a\""#);
+    assert_eq!(addr.param("p"), Some(Some(r#""a\""#)));
+    assert_eq!(seen, [(WarningCode::UnterminatedQuote, Some(22), None)]);
+
+    let (reasons, seen) = reported::<SipReasonList>(r#"SIP;cause=200;text="a\""#);
+    assert_eq!(reasons.entries()[0].text(), Some(r#""a\""#));
+    assert_eq!(seen, [(WarningCode::UnterminatedQuote, Some(19), Some(0))]);
+
+    let (auth, seen) = reported::<SipAuthValue>(r#"Digest realm="a b\""#);
+    assert_eq!(auth.realm(), Some(r#""a b\""#));
+    assert_eq!(seen, [(WarningCode::UnterminatedQuote, Some(13), None)]);
 }
