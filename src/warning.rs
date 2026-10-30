@@ -261,9 +261,6 @@ fn is_hostport(agent: &str) -> bool {
 /// The `warn-text` opening `s`, a slice of `entry`, unescaped, its quote
 /// closing at `close`; text after it is dropped under
 /// [`WarningCode::TrailingContent`].
-///
-/// A final `\"` with no other close is read as a closing quote after a lone
-/// backslash, which is dropped with [`WarningCode::TrailingBackslash`].
 fn warn_text(
     entry: &str,
     s: &str,
@@ -271,16 +268,6 @@ fn warn_text(
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<String, ParseError> {
     let Some(close) = close else {
-        if let Some(inner) = s[1..].strip_suffix('"') {
-            let (text, trailing_backslash) = crate::unescape_quoted_pair_checked(inner);
-            if trailing_backslash {
-                warnings.push(
-                    ParseWarning::new(Field::Text, WarningCode::TrailingBackslash)
-                        .at(crate::offset_in(entry, inner) + inner.len() - 1),
-                );
-                return Ok(text);
-            }
-        }
         return Err(ParseError::malformed(
             Field::Text,
             FaultCode::Unterminated,
@@ -646,26 +633,13 @@ mod tests {
     }
 
     #[test]
-    fn text_ending_in_lone_backslash_is_dropped_with_warning() {
+    fn text_ending_in_an_escaped_quote_is_unterminated() {
         let raw = r#"399 example.com "C:\""#;
-        assert_eq!(
-            SipWarning::parse(raw)
-                .unwrap()
-                .entries()[0]
-                .text(),
-            "C:"
-        );
-        let (entry, w) = only_warning(raw);
-        assert_eq!(entry.text(), "C:");
-        assert_eq!(
-            (w.field, w.code, w.kind, w.position),
-            (
-                Field::Text,
-                crate::WarningCode::TrailingBackslash,
-                sip_uri::WarningKind::Lost,
-                raw.find('\\')
-            )
-        );
+        assert!(matches!(
+            SipWarning::parse(raw),
+            Err(ParseError::Malformed(f))
+                if (f.field, f.code, f.position) == (Field::Text, FaultCode::Unterminated, raw.find('"'))
+        ));
     }
 
     #[test]
