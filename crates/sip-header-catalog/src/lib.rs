@@ -726,6 +726,78 @@ mod compact_form_tests {
         }
     }
 
+    fn wire_names() -> Vec<String> {
+        let mut names: Vec<String> = [
+            "é",
+            "Ｌ",
+            "",
+            "Content-Lengt",
+            "Content-Lengths",
+            "l ",
+            " l",
+        ]
+        .map(String::from)
+        .into();
+        names.extend((0u8..=0x7f).map(|b| char::from(b).to_string()));
+        for h in SipHeader::ALL {
+            let name = h.as_str();
+            names.extend([
+                name.into(),
+                name.to_ascii_uppercase(),
+                name.to_ascii_lowercase(),
+            ]);
+            if let Some(ch) = h.compact_form() {
+                names.extend([
+                    ch.to_string(),
+                    ch.to_ascii_uppercase()
+                        .to_string(),
+                ]);
+            }
+        }
+        names
+    }
+
+    fn reference(h: Option<SipHeader>, name: &str, wire: &str) -> bool {
+        match h {
+            Some(h) => {
+                wire.eq_ignore_ascii_case(h.as_str())
+                    || matches!(wire.as_bytes(), [c] if SipHeader::from_compact(char::from(*c)) == Some(h))
+            }
+            None => wire.eq_ignore_ascii_case(name),
+        }
+    }
+
+    #[test]
+    fn matches_agrees_with_the_resolving_definition() {
+        let names = wire_names();
+        for h in SipHeader::ALL {
+            let matcher = NameMatcher::from(*h);
+            for w in &names {
+                let want = reference(Some(*h), h.as_str(), w);
+                assert_eq!(matcher.matches(w), want, "{h} {w:?}");
+                assert_eq!(h.matches(w), want, "{h} {w:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn name_matcher_new_agrees_with_the_resolving_definition() {
+        let names = wire_names();
+        for query in names
+            .iter()
+            .map(String::as_str)
+            .chain(["X-Custom", "x-custom"])
+        {
+            let matcher = NameMatcher::new(query);
+            let resolved = SipHeader::parse_name(query).ok();
+            for w in &names {
+                let want = reference(resolved, query, w);
+                assert_eq!(matcher.matches(w), want, "{query:?} {w:?}");
+                assert_eq!(SipHeader::name_matches(query, w), want, "{query:?} {w:?}");
+            }
+        }
+    }
+
     #[test]
     fn parse_name_takes_compact_forms_in_either_case() {
         for h in SipHeader::ALL {
