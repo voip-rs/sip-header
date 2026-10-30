@@ -419,6 +419,27 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_sip_entry_starts_its_params_after_the_userinfo() {
+        for (text, entries) in [
+            (r#"sip:u;x@h="a, b""#, &[r#"sip:u;x@h="a"#, r#" b""#][..]),
+            (r#"SIPS:u;x@h="a, b""#, &[r#"SIPS:u;x@h="a"#, r#" b""#]),
+            (r#"<sip:u;x@h="a, b""#, &[r#"<sip:u;x@h="a"#, r#" b""#]),
+            (r#"sip:u;p="a, b""#, &[r#"sip:u;p="a, b""#]),
+            (r#"tel:u;x@h="a, b""#, &[r#"tel:u;x@h="a, b""#]),
+            (
+                r#"a;b="x, <sip:y@example.com>" <sip:c@example.com>"#,
+                &[r#"a;b="x, <sip:y@example.com>" <sip:c@example.com>"#],
+            ),
+            (
+                "sip:u;x <sip:y@example.com, b>",
+                &["sip:u;x <sip:y@example.com", " b>"],
+            ),
+        ] {
+            assert_eq!(split(text, ListGrammar::NameAddr), entries, "{text:?}");
+        }
+    }
+
+    #[test]
     fn params_mark_segments_values_and_quotes() {
         assert_eq!(
             Locator::params(r#";p="x" ", y";q= "a\";r"#).collect::<Vec<_>>(),

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sip_header::sip_uri::WarningKind;
+use sip_header::sip_uri::{WarningCode as UriCode, WarningKind};
 use sip_header::{
     split_comma_entries, ContactList, FaultCode, HeaderParse, HistoryInfo, ListParse, ParseError,
     SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipGeolocation, SipHeader,
@@ -1011,4 +1011,90 @@ fn a_bracket_holds_commas_only_at_an_addr_spec_and_when_it_closes() {
 
     assert_eq!(split_comma_entries("<a, b"), ["<a", " b"]);
     assert_eq!(split_comma_entries("<a<b>, c>"), ["<a<b>", " c>"]);
+}
+
+#[test]
+fn a_semicolon_before_any_bracket_makes_the_entry_bare() {
+    let raw = r#"a;b="x, <sip:y@example.com>" <sip:c@example.com>"#;
+    let (addrs, seen) = reported::<SipHeaderAddrList>(raw);
+    let [addr] = addrs.entries() else {
+        panic!("{addrs:?}");
+    };
+    assert_eq!(addr.display_name(), None);
+    assert_eq!(
+        addr.uri()
+            .to_string(),
+        "a"
+    );
+    assert_eq!(
+        addr.param("b"),
+        Some(Some(r#""x, <sip:y@example.com>" <sip:c@example.com>"#))
+    );
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::Uri(UriCode::MissingScheme), Some(0), Some(0)),
+            (WarningCode::InvalidToken, Some(4), Some(0))
+        ]
+    );
+
+    let raw = "Doe; John <sip:x@example.com>";
+    let (addr, seen) = reported::<SipHeaderAddr>(raw);
+    assert_eq!(addr.display_name(), None);
+    assert_eq!(
+        addr.uri()
+            .to_string(),
+        "Doe"
+    );
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::Uri(UriCode::MissingScheme), Some(0), None),
+            (WarningCode::InvalidToken, Some(5), None),
+            (WarningCode::StrayDelimiter, Some(10), None)
+        ]
+    );
+
+    let raw = r#"sip:u;x@h="a, b""#;
+    let (addrs, seen) = reported::<SipHeaderAddrList>(raw);
+    assert_eq!(
+        addrs
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>(),
+        ["<sip:u;x@h%3D%22a>", "<b%22>"]
+    );
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::MissingBrackets, Some(5), Some(0)),
+            (WarningCode::Uri(UriCode::InvalidChar), Some(9), Some(0)),
+            (WarningCode::Uri(UriCode::MissingScheme), Some(14), Some(1))
+        ]
+    );
+
+    let (history, seen) = reported::<HistoryInfo>("sip:a@example.com;p=<x>;index=1");
+    let [entry] = history.entries() else {
+        panic!("{history:?}");
+    };
+    assert_eq!(
+        entry
+            .addr()
+            .uri()
+            .to_string(),
+        "sip:a@example.com"
+    );
+    assert_eq!(
+        entry
+            .addr()
+            .param("p"),
+        Some(Some("<x>"))
+    );
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::NotNameAddr, Some(0), Some(0)),
+            (WarningCode::InvalidToken, Some(20), Some(0))
+        ]
+    );
 }
