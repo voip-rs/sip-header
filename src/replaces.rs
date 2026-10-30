@@ -364,6 +364,15 @@ mod tests {
     }
 
     #[test]
+    fn tag_whose_quote_closes_early_is_kept_with_its_quotes() {
+        let raw = r#"a@example.com;to-tag="t;x="u;from-tag=f"#;
+        let r = SipReplaces::parse(raw).unwrap();
+        assert_eq!(r.to_tag(), r#""t;x="u"#);
+        assert_eq!(r.from_tag(), "f");
+        assert_eq!(SipReplaces::parse(&r.to_string()), Ok(r));
+    }
+
+    #[test]
     fn unterminated_quote_splits_at_next_semicolon() {
         let r = SipReplaces::parse(r#"a;x="p;to-tag=t;from-tag=f"#).unwrap();
         assert_eq!(r.to_tag(), "t");

@@ -1711,14 +1711,14 @@ mod tests {
     }
 
     #[test]
-    fn param_trailing_backslash_warns_and_is_dropped() {
+    fn param_final_escaped_quote_leaves_the_value_unterminated() {
         let input = r#"<sip:a@example.com>;x="a\";tag=t"#;
         let parsed = SipHeaderAddr::parse_with_warnings(input).unwrap();
         assert_eq!(
             parsed
                 .value
                 .param("x"),
-            Some(Some("a"))
+            Some(Some(r#""a\""#))
         );
         assert_eq!(
             parsed
@@ -1726,15 +1726,19 @@ mod tests {
                 .tag(),
             Some("t")
         );
-        let w = parsed.warnings[1];
+        let found: Vec<_> = parsed
+            .warnings
+            .iter()
+            .map(|w| (w.field, w.code, w.kind, w.position))
+            .collect();
         assert_eq!(
-            (w.field, w.code, w.kind, w.position),
-            (
+            found,
+            [(
                 Field::Param,
-                WarningCode::TrailingBackslash,
-                sip_uri::WarningKind::Lost,
-                input.find('\\')
-            )
+                WarningCode::UnterminatedQuote,
+                sip_uri::WarningKind::Recovered,
+                input.find('"')
+            )]
         );
         assert!(SipHeaderAddr::parse_strict(input).is_err());
     }

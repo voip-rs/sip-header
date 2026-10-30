@@ -8,7 +8,7 @@ use crate::check::checked_token;
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token;
-use crate::locate::ListGrammar;
+use crate::locate::{ListGrammar, Locator, Mark};
 use crate::lws;
 use crate::params::{HeaderParams, Owner, ParamRule, ParamsMut};
 use crate::redact::Redact;
@@ -474,13 +474,13 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
         return Ok(auth);
     }
 
-    let split = crate::split_entries(rest, ListGrammar::Auth);
-    for raw_param in split.entries {
-        let param_str = lws::trim_in(input, raw_param, Field::Credentials, warnings);
+    let (items, final_comma) = auth_items(rest);
+    for item in items {
+        let param_str = lws::trim_in(input, item.text, Field::Credentials, warnings);
         if param_str.is_empty() {
             warnings.push(crate::empty_entry(
                 Field::Credentials,
-                crate::offset_in(input, raw_param),
+                crate::offset_in(input, item.text),
             ));
             continue;
         }
@@ -489,7 +489,11 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             warnings.push(ParseWarning::new(Field::Credentials, code).at(at));
         };
 
-        let Some(eq) = param_str.find('=') else {
+        let in_rest = |s: &str| crate::offset_in(rest, s);
+        let Some(eq) = item
+            .equal
+            .map(|at| at - in_rest(param_str))
+        else {
             let key = crate::token_field(input, param_str, Field::Credentials, warnings);
             if key.is_empty() {
                 continue;
@@ -512,43 +516,78 @@ fn parse_auth(input: &str, warnings: &mut Vec<ParseWarning>) -> Result<SipAuthVa
             warn(warnings, WarningCode::InvalidToken, key_at);
         }
 
-        let unterminated = crate::opens_unterminated_quote(value);
-        let (value, quoted) = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2
-        {
-            let (unescaped, trailing_backslash) =
-                crate::unescape_quoted_pair_checked(&value[1..value.len() - 1]);
-            (unescaped, Some(trailing_backslash))
+        let end = in_rest(value) + value.len();
+        let unterminated = item
+            .quote
+            .is_some_and(|(_, close)| close.is_none());
+        let quoted = item
+            .quote
+            .is_some_and(|(_, close)| close.is_some_and(|c| c + 1 == end));
+        let value = if quoted {
+            crate::unescape_quoted_pair(&value[1..value.len() - 1])
         } else {
-            (value.to_string(), None)
+            value.to_string()
         };
         auth.params
             .push_read(
                 &key,
-                Some((value.clone(), quoted.is_some(), span)),
+                Some((value.clone(), quoted, span)),
                 Field::Credentials,
                 key_at,
                 warnings,
             );
         if unterminated {
             warn(warnings, WarningCode::UnterminatedQuote, at);
-        } else if quoted.is_none() && !is_token(&value) {
+        } else if !quoted && !is_token(&value) {
             warn(warnings, WarningCode::InvalidToken, at);
         }
-        if quoted == Some(true) {
-            let raw = param_str[eq + 1..].trim();
-            warn(warnings, WarningCode::TrailingBackslash, at + raw.len() - 2);
-        }
     }
-    if split
-        .tail
-        .is_some()
-    {
+    if final_comma {
         warnings.push(
             ParseWarning::new(Field::Credentials, WarningCode::TrailingComma)
                 .at(crate::offset_in(input, rest) + rest.len() - 1),
         );
     }
     Ok(auth)
+}
+
+/// One `auth-param` as [`Locator::split`] frames it, positions in the text
+/// it was split from: its value's `=` and its quoted string.
+struct AuthItem<'a> {
+    text: &'a str,
+    equal: Option<usize>,
+    quote: Option<(usize, Option<usize>)>,
+}
+
+/// The items of `rest`, and whether a final comma ends it with no item.
+fn auth_items(rest: &str) -> (Vec<AuthItem<'_>>, bool) {
+    let mut items = Vec::new();
+    let mut start = 0;
+    let (mut equal, mut quote) = (None, None);
+    for mark in Locator::split(rest, ListGrammar::Auth) {
+        match mark {
+            Mark::Comma(at) => {
+                items.push(AuthItem {
+                    text: &rest[start..at],
+                    equal: equal.take(),
+                    quote: quote.take(),
+                });
+                start = at + 1;
+            }
+            Mark::Value(at) => equal = Some(at),
+            Mark::Quote { open, close } => quote = Some((open, close)),
+            Mark::Param(_) => {}
+        }
+    }
+    let final_comma = start > 0 && start == rest.len();
+    if !final_comma {
+        items.push(AuthItem {
+            text: &rest[start..],
+            equal,
+            quote,
+        });
+    }
+    (items, final_comma)
 }
 
 /// `token68 = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`
@@ -905,14 +944,14 @@ mod tests {
     }
 
     #[test]
-    fn trailing_backslash_is_warned() {
+    fn a_final_escaped_quote_leaves_the_value_unterminated() {
         let input = r#"Digest realm="a\""#;
         let parsed = SipAuthValue::parse_with_warnings(input).unwrap();
         assert_eq!(
             parsed
                 .value
                 .realm(),
-            Some("a")
+            Some(r#""a\""#)
         );
         let found: Vec<_> = parsed
             .warnings
@@ -921,20 +960,12 @@ mod tests {
             .collect();
         assert_eq!(
             found,
-            vec![
-                (
-                    Field::Credentials,
-                    WarningCode::UnterminatedQuote,
-                    WarningKind::Recovered,
-                    input.find('"')
-                ),
-                (
-                    Field::Credentials,
-                    WarningCode::TrailingBackslash,
-                    WarningKind::Lost,
-                    input.find('\\')
-                ),
-            ]
+            vec![(
+                Field::Credentials,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                input.find('"')
+            )]
         );
         assert_eq!(
             SipAuthValue::parse_strict(input),

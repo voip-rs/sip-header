@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn reason_text_trailing_backslash_warns() {
+    fn reason_text_final_escaped_quote_is_unterminated() {
         let decoded = r#"SIP;text="a\""#;
         let p = entry_reason("SIP%3Btext%3D%22a%5C%22")
             .unwrap()
@@ -598,17 +598,17 @@ mod tests {
         assert_eq!(
             p.value
                 .text(),
-            Some("a")
+            Some(r#""a\""#)
         );
         let w = p
             .warnings
             .iter()
-            .find(|w| w.code == WarningCode::TrailingBackslash)
+            .find(|w| w.code == WarningCode::UnterminatedQuote)
             .copied()
             .unwrap();
         assert_eq!(
             (w.field, w.kind, w.position),
-            (Field::Text, WarningKind::Lost, decoded.find('\\'))
+            (Field::Text, WarningKind::Recovered, decoded.find('"'))
         );
         assert!(p
             .into_strict()

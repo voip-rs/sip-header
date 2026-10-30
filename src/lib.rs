@@ -164,7 +164,7 @@ pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};
 
-use locate::{closing_quote, ListGrammar, Locator, Mark};
+use locate::{ListGrammar, Locator, Mark};
 
 /// Byte offset of `inner`, a subslice of `outer`, within `outer`.
 pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
@@ -278,24 +278,6 @@ impl Framing {
     }
 }
 
-/// Whether `value` opens a quoted-string that never closes.
-pub(crate) fn opens_unterminated_quote(value: &str) -> bool {
-    value
-        .strip_prefix('"')
-        .is_some_and(|rest| closing_quote(rest).is_none())
-}
-
-/// Whether unescaping `inner` would drop a lone trailing `\`.
-fn ends_in_lone_backslash(inner: &str) -> bool {
-    inner
-        .bytes()
-        .rev()
-        .take_while(|&b| b == b'\\')
-        .count()
-        % 2
-        == 1
-}
-
 /// A control character `qdtext` excludes but `quoted-pair` carries
 /// (RFC 3261 §25.1); CR and LF fit neither.
 pub(crate) fn is_quoted_pair_only(c: char) -> bool {
@@ -387,6 +369,8 @@ pub(crate) struct RawParam<'a> {
     pub(crate) key: &'a str,
     /// Value, SWS-trimmed, quotes and escapes intact; `None` for a flag.
     pub(crate) value: Option<&'a str>,
+    /// Whether the value is one quoted-string, its quote closing at its end.
+    pub(crate) quoted: bool,
     /// Whether the value opens a quote that never closes.
     pub(crate) unterminated: bool,
     /// The whitespace trimmed around it: before and after the `;`, after the
@@ -401,8 +385,6 @@ pub(crate) struct Unquoted {
     pub(crate) value: String,
     /// Whether the value arrived as a quoted-string.
     pub(crate) quoted: bool,
-    /// Whether a lone `\` before the closing quote was dropped.
-    pub(crate) trailing_backslash: bool,
 }
 
 impl<'a> RawParam<'a> {
@@ -430,38 +412,26 @@ impl<'a> RawParam<'a> {
     /// The value without its surrounding quotes and with `quoted-pair` unescaped.
     pub(crate) fn unquoted(&self) -> Option<Unquoted> {
         let v = self.value?;
-        Some(if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
-            let (value, trailing_backslash) = unescape_quoted_pair_checked(&v[1..v.len() - 1]);
-            Unquoted {
-                value,
-                quoted: true,
-                trailing_backslash,
-            }
-        } else {
-            Unquoted {
-                value: v.to_string(),
-                quoted: false,
-                trailing_backslash: false,
-            }
+        Some(Unquoted {
+            value: if self.quoted {
+                unescape_quoted_pair(&v[1..v.len() - 1])
+            } else {
+                v.to_string()
+            },
+            quoted: self.quoted,
         })
     }
 
-    /// Raise [`WarningCode::UnterminatedQuote`] and
-    /// [`WarningCode::TrailingBackslash`] at their position in `input`, the
-    /// string the parameter was read from.
+    /// Raise [`WarningCode::UnterminatedQuote`] at its position in `input`,
+    /// the string the parameter was read from.
     pub(crate) fn report_quoting(&self, input: &str, warnings: &mut Vec<ParseWarning>) {
-        let Some(v) = self.value else {
-            return;
-        };
-        let at = offset_in(input, v);
-        if self.unterminated {
-            warnings.push(ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote).at(at));
-        }
-        let closed = v.len() >= 2 && v.starts_with('"') && v.ends_with('"');
-        if closed && ends_in_lone_backslash(&v[1..v.len() - 1]) {
+        if let Some(v) = self
+            .value
+            .filter(|_| self.unterminated)
+        {
             warnings.push(
-                ParseWarning::new(Field::Param, WarningCode::TrailingBackslash)
-                    .at(at + v.len() - 2),
+                ParseWarning::new(Field::Param, WarningCode::UnterminatedQuote)
+                    .at(offset_in(input, v)),
             );
         }
     }
@@ -475,80 +445,104 @@ pub(crate) fn split_at_params(raw: &str) -> (&str, &str) {
     )
 }
 
+/// One `;`-delimited segment of a parameter tail and the marks inside it.
+#[derive(Default)]
+struct ParamSegment {
+    /// Its `;`; `None` for text before the first.
+    semi: Option<usize>,
+    start: usize,
+    end: usize,
+    equal: Option<usize>,
+    quote: Option<(usize, Option<usize>)>,
+}
+
 /// Read `*(SEMI generic-param)` from the `;` opening it; a `;` with no
 /// parameter after it yields an empty `key` positioned at that `;`.
 ///
-/// A value opening with `"` runs to its closing quote, so a `;` inside it does
-/// not split; a quote that never closes ends at the next `;` like any value.
+/// Segments, values and quotes are where [`Locator::params`] puts them: a
+/// value opening with a quote that closes runs to the next `;` after it,
+/// and one that never closes ends at the next `;` like any value.
 pub(crate) fn parse_params(s: &str) -> Vec<RawParam<'_>> {
-    let mut params = Vec::new();
-    let mut rest = s;
-    loop {
-        let (before, trimmed) = lws::split_start(rest);
-        rest = trimmed;
-        if rest.is_empty() {
-            return params;
-        }
-        let mut padding = [before, "", "", "", ""];
-        if let Some(after) = rest.strip_prefix(';') {
-            let (run, next) = lws::split_start(after);
-            padding[1] = run;
-            if next.is_empty() || next.starts_with(';') {
-                params.push(RawParam {
-                    key: &rest[..0],
-                    value: None,
-                    unterminated: false,
-                    padding,
+    let mut segments = vec![ParamSegment::default()];
+    for mark in Locator::params(s) {
+        let Some(last) = segments.last_mut() else {
+            break;
+        };
+        match mark {
+            Mark::Param(at) => {
+                last.end = at;
+                segments.push(ParamSegment {
+                    semi: Some(at),
+                    start: at + 1,
+                    ..ParamSegment::default()
                 });
-                rest = next;
+            }
+            Mark::Value(at) => last.equal = Some(at),
+            Mark::Quote { open, close } => last.quote = Some((open, close)),
+            Mark::Comma(_) => {}
+        }
+    }
+    if let Some(last) = segments.last_mut() {
+        last.end = s.len();
+    }
+    let mut params = Vec::new();
+    let mut lead = "";
+    for seg in segments {
+        let (run, body) = lws::split_start(&s[seg.start..seg.end]);
+        let mut padding = [lead, "", "", "", ""];
+        match seg.semi {
+            None if body.is_empty() => {
+                lead = run;
                 continue;
             }
-            rest = next;
+            None => padding[0] = run,
+            Some(semi) => {
+                lead = "";
+                padding[1] = run;
+                if body.is_empty() {
+                    params.push(RawParam {
+                        key: &s[semi..semi],
+                        value: None,
+                        quoted: false,
+                        unterminated: false,
+                        padding,
+                    });
+                    continue;
+                }
+            }
         }
-        let segment_end = rest
-            .find(';')
-            .unwrap_or(rest.len());
-        let Some(eq) = rest[..segment_end].find('=') else {
-            let (key, key_end) = lws::split_end(&rest[..segment_end]);
+        let Some(eq) = seg.equal else {
+            let (key, key_end) = lws::split_end(body);
             padding[2] = key_end;
             params.push(RawParam {
                 key,
                 value: None,
+                quoted: false,
                 unterminated: false,
                 padding,
             });
-            rest = &rest[segment_end..];
             continue;
         };
-        let (key, key_end) = lws::split_end(&rest[..eq]);
-        let (value_start, value) = lws::split_start(&rest[eq + 1..]);
+        let (key, key_end) = lws::split_end(&s[offset_in(s, body)..eq]);
+        let (value_start, value) = lws::split_start(&s[eq + 1..seg.end]);
+        let (text, value_end) = lws::split_end(value);
         padding[2] = key_end;
         padding[3] = value_start;
-        let close = value
-            .strip_prefix('"')
-            .map(closing_quote);
-        let value_end = match close.flatten() {
-            Some(close) => {
-                let after = close + 2;
-                after
-                    + value[after..]
-                        .find(';')
-                        .unwrap_or(value.len() - after)
-            }
-            None => value
-                .find(';')
-                .unwrap_or(value.len()),
-        };
-        let (text, value_end_run) = lws::split_end(&value[..value_end]);
-        padding[4] = value_end_run;
+        padding[4] = value_end;
+        let last = offset_in(s, text) + text.len();
         params.push(RawParam {
             key,
             value: Some(text),
-            unterminated: close == Some(None),
+            quoted: seg
+                .quote
+                .is_some_and(|(_, close)| close.is_some_and(|c| c + 1 == last)),
+            unterminated: seg
+                .quote
+                .is_some_and(|(_, close)| close.is_none()),
             padding,
         });
-        rest = &value[value_end..];
     }
+    params
 }
 
 /// Split comma-separated header entries respecting angle-bracket nesting
@@ -758,7 +752,11 @@ pub(crate) fn split_entries(raw: &str, grammar: ListGrammar) -> Split<'_> {
     let mut entries = Vec::new();
     let mut start = 0;
     let mut raw_start = 0;
-    for Mark::Comma(comma) in Locator::split(text, grammar) {
+    let commas = Locator::split(text, grammar).filter_map(|m| match m {
+        Mark::Comma(at) => Some(at),
+        _ => None,
+    });
+    for comma in commas {
         let raw_comma = scrubbed.source(comma);
         entries.push(&raw[raw_start..raw_comma]);
         start = comma + 1;
@@ -872,11 +870,10 @@ mod tests {
         );
     }
 
-    fn unquoted(value: &str, quoted: bool, trailing_backslash: bool) -> Option<Unquoted> {
+    fn unquoted(value: &str, quoted: bool) -> Option<Unquoted> {
         Some(Unquoted {
             value: value.to_string(),
             quoted,
-            trailing_backslash,
         })
     }
 
@@ -885,7 +882,7 @@ mod tests {
         let p = parse_params(r#";t="say \"hi;\"";x=1"#);
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].value, Some(r#""say \"hi;\"""#));
-        assert_eq!(p[0].unquoted(), unquoted(r#"say "hi;""#, true, false));
+        assert_eq!(p[0].unquoted(), unquoted(r#"say "hi;""#, true));
         assert_eq!(p[1].value, Some("1"));
         assert!(!p[0].unterminated);
     }
@@ -893,13 +890,13 @@ mod tests {
     #[test]
     fn params_empty_quoted_value() {
         let p = parse_params(r#";a="""#);
-        assert_eq!(p[0].unquoted(), unquoted("", true, false));
+        assert_eq!(p[0].unquoted(), unquoted("", true));
     }
 
     #[test]
     fn params_unquoted_token_value() {
         let p = parse_params(";a=b");
-        assert_eq!(p[0].unquoted(), unquoted("b", false, false));
+        assert_eq!(p[0].unquoted(), unquoted("b", false));
         assert_eq!(parse_params(";lr")[0].unquoted(), None);
     }
 
@@ -916,12 +913,27 @@ mod tests {
     }
 
     #[test]
-    fn params_escaped_closing_quote_leaves_trailing_backslash() {
+    fn params_final_escaped_quote_leaves_the_value_unterminated() {
         let p = parse_params(r#";x="a\";y=1"#);
         assert_eq!(p[0].value, Some(r#""a\""#));
         assert!(p[0].unterminated);
-        assert_eq!(p[0].unquoted(), unquoted("a", true, true));
+        assert_eq!(p[0].unquoted(), unquoted(r#""a\""#, false));
         assert_eq!(p[1].value, Some("1"));
+    }
+
+    #[test]
+    fn params_quoted_only_when_the_quote_closes_at_the_value_end() {
+        let p = parse_params(r#";x="a"b;y="c" ;z="d"" "#);
+        assert_eq!(
+            p.iter()
+                .map(|p| (p.value, p.quoted))
+                .collect::<Vec<_>>(),
+            [
+                (Some(r#""a"b"#), false),
+                (Some(r#""c""#), true),
+                (Some(r#""d"""#), false)
+            ]
+        );
     }
 
     #[test]

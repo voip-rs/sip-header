@@ -386,9 +386,6 @@ fn parse_text(p: &RawParam<'_>, input: &str, warnings: &mut Vec<ParseWarning>) -
     } else if !unquoted.quoted {
         warn(WarningCode::UnquotedText, at);
     }
-    if unquoted.trailing_backslash {
-        warn(WarningCode::TrailingBackslash, at + v.len() - 2);
-    }
     Some((unquoted.value, true, Span::within(input, v)))
 }
 
@@ -641,23 +638,23 @@ mod tests {
     }
 
     #[test]
-    fn text_trailing_backslash_warns() {
+    fn text_final_escaped_quote_is_unterminated() {
         let input = r#"SIP;text="a\""#;
         let p = parsed(input);
         assert_eq!(
             p.value
                 .text(),
-            Some("a")
+            Some(r#""a\""#)
         );
         let w = p
             .warnings
             .iter()
-            .find(|w| w.code == WarningCode::TrailingBackslash)
+            .find(|w| w.code == WarningCode::UnterminatedQuote)
             .copied()
             .unwrap();
         assert_eq!(
             (w.field, w.kind, w.position),
-            (Field::Text, WarningKind::Lost, input.find('\\'))
+            (Field::Text, WarningKind::Recovered, input.find('"'))
         );
     }
 }

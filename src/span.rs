@@ -748,13 +748,14 @@ mod tests {
             })
     }
 
-    /// A quoted value's text without its quotes, `quoted-pair` unescaped.
+    /// A quoted value's text without its quotes, `quoted-pair` unescaped:
+    /// a value whose quote closes at its last byte.
     fn unquoted(text: &str) -> String {
         match text
             .strip_prefix('"')
-            .and_then(|t| t.strip_suffix('"'))
+            .filter(|t| crate::locate::closing_quote(t).is_some_and(|c| c + 1 == t.len()))
         {
-            Some(inner) => crate::unescape_quoted_pair(inner),
+            Some(inner) => crate::unescape_quoted_pair(&inner[..inner.len() - 1]),
             None => text.to_string(),
         }
     }

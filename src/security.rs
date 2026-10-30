@@ -337,7 +337,7 @@ mod param_tests {
     }
 
     #[test]
-    fn trailing_backslash_is_warned() {
+    fn final_escaped_quote_is_unterminated() {
         use crate::diagnostic::WarningCode;
 
         let entry = r#"digest;x="a\";q=0.1"#;
@@ -347,7 +347,7 @@ mod param_tests {
                 .value
                 .entries()[0]
                 .param("x"),
-            Some(Some("a"))
+            Some(Some(r#""a\""#))
         );
         let codes: Vec<_> = parsed
             .warnings
@@ -356,10 +356,7 @@ mod param_tests {
             .collect();
         assert_eq!(
             codes,
-            vec![
-                (WarningCode::UnterminatedQuote, entry.find('"')),
-                (WarningCode::TrailingBackslash, entry.find('\\')),
-            ]
+            vec![(WarningCode::UnterminatedQuote, entry.find('"'))]
         );
     }
 
@@ -378,20 +375,12 @@ mod param_tests {
             .collect();
         assert_eq!(
             found,
-            vec![
-                (
-                    Field::Param,
-                    WarningCode::UnterminatedQuote,
-                    WarningKind::Recovered,
-                    Some(1)
-                ),
-                (
-                    Field::Param,
-                    WarningCode::TrailingBackslash,
-                    WarningKind::Lost,
-                    Some(1)
-                ),
-            ]
+            vec![(
+                Field::Param,
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                Some(1)
+            )]
         );
         assert_eq!(
             SipSecurity::parse_strict(raw),

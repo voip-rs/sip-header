@@ -970,16 +970,17 @@ mod tests {
         );
 
         let raw = r#"<urn:example:1>;note="a\";purpose=icon"#;
-        let (_, seen) = lenient(raw);
+        let (info, seen) = lenient(raw);
+        assert_eq!(info.entries()[0].param("note"), Some(Some(r#""a\""#)));
         assert_eq!(
-            seen[1],
-            (
+            seen,
+            vec![(
                 Field::Param,
-                WarningCode::TrailingBackslash,
-                WarningKind::Lost,
-                raw.find('\\'),
+                WarningCode::UnterminatedQuote,
+                WarningKind::Recovered,
+                raw.find('"'),
                 Some(0)
-            )
+            )]
         );
     }
 
