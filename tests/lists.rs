@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use sip_header::sip_uri::{WarningCode as UriCode, WarningKind};
 use sip_header::{
-    split_comma_entries, ContactList, FaultCode, HeaderParse, HistoryInfo, ListParse, ParseError,
-    SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipGeolocation, SipHeader,
-    SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipReasonList, SipSecurity, SipVia,
-    SipWarning, TokenList, TypedHeader, UriInfo, WarningCode,
+    split_comma_entries, ContactList, FaultCode, Field, HeaderParse, HistoryInfo, ListParse,
+    ParseError, SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipGeolocation,
+    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderLookup, SipReasonList, SipSecurity,
+    SipVia, SipWarning, TokenList, TypedHeader, UriInfo, WarningCode,
 };
 
 fn is_empty_fault<T: std::fmt::Debug>(r: Result<T, ParseError>) -> bool {
@@ -1095,6 +1095,41 @@ fn a_semicolon_before_any_bracket_makes_the_entry_bare() {
         [
             (WarningCode::NotNameAddr, Some(0), Some(0)),
             (WarningCode::InvalidToken, Some(20), Some(0))
+        ]
+    );
+}
+
+#[test]
+fn warn_text_opens_only_after_whitespace_past_the_code_and_nothing_after_it() {
+    use sip_header::SipWarningEntry;
+
+    assert!(matches!(
+        SipWarningEntry::parse(r#"399 h"ab""#),
+        Err(ParseError::Malformed(f)) if (f.field, f.code) == (Field::Text, FaultCode::Missing)
+    ));
+    let (warnings, seen) = reported::<SipWarning>(r#"399 h"ab", 399 h "c""#);
+    let [entry] = warnings.entries() else {
+        panic!("{warnings:?}");
+    };
+    assert_eq!(entry.text(), "c");
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::SkippedEntry, Some(0), Some(0)),
+            (WarningCode::StrayDelimiter, Some(5), Some(0))
+        ]
+    );
+
+    let (warnings, seen) = reported::<SipWarning>(r#"399 h "a" "b, c""#);
+    let [entry] = warnings.entries() else {
+        panic!("{warnings:?}");
+    };
+    assert_eq!(entry.text(), "a");
+    assert_eq!(
+        seen,
+        [
+            (WarningCode::TrailingContent, Some(10), Some(0)),
+            (WarningCode::SkippedEntry, Some(14), Some(1))
         ]
     );
 }

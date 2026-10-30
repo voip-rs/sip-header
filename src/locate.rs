@@ -533,6 +533,20 @@ mod tests {
     }
 
     #[test]
+    fn warn_text_opens_only_after_whitespace_past_the_code_and_nothing_after_it() {
+        for (text, entries) in [
+            (r#"399 h"a, b""#, &[r#"399 h"a"#, r#" b""#][..]),
+            (r#"399 h "a" "b, c""#, &[r#"399 h "a" "b"#, r#" c""#]),
+            (r#"399 h "a, b""#, &[r#"399 h "a, b""#]),
+            ("399 h\u{a0}\"a, b\"", &["399 h\u{a0}\"a, b\""]),
+            ("399\u{a0}\"a, b\"", &["399\u{a0}\"a", " b\""]),
+            (r#""a, b" 399 h "c""#, &[r#""a"#, r#" b" 399 h "c""#]),
+        ] {
+            assert_eq!(split(text, ListGrammar::Warning), entries, "{text:?}");
+        }
+    }
+
+    #[test]
     fn params_mark_segments_values_and_quotes() {
         assert_eq!(
             Locator::params(r#";p="x" ", y";q= "a\";r"#).collect::<Vec<_>>(),
