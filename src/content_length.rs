@@ -89,9 +89,8 @@ fn control_inside_digits(input: &str) -> Option<usize> {
 
 impl sealed::Sealed for SipContentLength {}
 
-impl HeaderParse for SipContentLength {
-    /// Parse leniently; whitespace around the value is the header's `LWS`.
-    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+impl SipContentLength {
+    fn parse_full(input: &str) -> Result<Parsed<Self>, ParseError> {
         if let Some(at) = control_inside_digits(input) {
             return Err(ParseError::malformed(
                 Field::Value,
@@ -124,6 +123,13 @@ impl HeaderParse for SipContentLength {
             }
             Ok(Parsed::new(SipContentLength(length), warnings))
         })
+    }
+}
+
+impl HeaderParse for SipContentLength {
+    /// Parse leniently; whitespace around the value is the header's `LWS`.
+    fn parse_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        Self::parse_full(input)
     }
 }
 
