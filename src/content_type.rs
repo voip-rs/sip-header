@@ -21,7 +21,7 @@ use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::lws;
 use crate::params::HeaderParams;
-use crate::traits::{sealed, HeaderParse};
+use crate::traits::{sealed, BodyPartParse, HeaderParse};
 
 /// A `Content-Type` value: `type/subtype *(SEMI m-parameter)`.
 ///
@@ -124,6 +124,12 @@ impl HeaderParse for SipContentType {
                 warnings,
             ))
         })
+    }
+}
+
+impl BodyPartParse for SipContentType {
+    fn parse_body_part_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError> {
+        Self::parse_with_warnings(input)
     }
 }
 

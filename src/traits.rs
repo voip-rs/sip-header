@@ -112,6 +112,44 @@ pub trait ListParse: HeaderParse {
     }
 }
 
+/// Parsing a value read from a MIME body part's header (RFC 2045), where
+/// the header shares its name with a SIP header but not its grammar.
+///
+/// RFC 2045 §1 lets every MIME header but Content-Disposition carry RFC 822
+/// comments, which have no semantic content; RFC 3261 §25.1 makes a
+/// parenthesis part of a SIP header's value wherever its grammar names no
+/// `comment`. The text cannot say which framing it came from, so the caller
+/// picks the entry point: [`HeaderParse`] reads the SIP header, this trait
+/// the body part. Here a comment is read as whitespace, and a token is an
+/// RFC 2045 `token`, which admits `#`, `$`, `&`, `^`, `{`, `|` and `}`.
+///
+/// Positions and spans point into the input, comments included.
+///
+/// ```
+/// use sip_header::{BodyPartParse, HeaderParse, SipContentType};
+///
+/// let row = "text/plain (body part) ;charset=utf-8";
+/// let value = SipContentType::parse_body_part_strict(row)?;
+/// assert_eq!(value.to_string(), "text/plain;charset=utf-8");
+/// assert!(SipContentType::parse_strict(row).is_err());
+/// # Ok::<(), sip_header::ParseError>(())
+/// ```
+pub trait BodyPartParse: HeaderParse {
+    /// Parse, reporting accepted grammar breaches beside the value.
+    fn parse_body_part_with_warnings(input: &str) -> Result<Parsed<Self>, ParseError>;
+
+    /// Parse leniently, discarding the warnings.
+    fn parse_body_part(input: &str) -> Result<Self, ParseError> {
+        Self::parse_body_part_with_warnings(input).map(|parsed| parsed.value)
+    }
+
+    /// Parse, refusing the first grammar breach as
+    /// [`ParseError::NonConformant`].
+    fn parse_body_part_strict(input: &str) -> Result<Self, ParseError> {
+        Self::parse_body_part_with_warnings(input)?.into_strict()
+    }
+}
+
 /// Parsing the percent-encoded form a value takes as a URI header
 /// (`<sip:…?Replaces=…>`), where `@`, `;` and `=` stay percent-encoded.
 ///

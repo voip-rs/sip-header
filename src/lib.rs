@@ -86,6 +86,7 @@ mod accept_encoding;
 mod accept_language;
 mod auth;
 mod call_id;
+mod cfws;
 mod check;
 #[cfg(feature = "conference-info")]
 pub mod conference_info;
@@ -150,7 +151,7 @@ pub use security::{SipSecurity, SipSecurityMechanism};
 pub use span::{Span, SpanError};
 pub use target_dialog::SipTargetDialog;
 pub use token_list::TokenList;
-pub use traits::{HeaderParse, ListParse, UriHeaderParse};
+pub use traits::{BodyPartParse, HeaderParse, ListParse, UriHeaderParse};
 pub use uri_info::{UriInfo, UriInfoEntry};
 pub use via::{SipVia, SipViaEntry};
 pub use warning::{SipWarning, SipWarningEntry};
