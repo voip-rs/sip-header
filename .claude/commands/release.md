@@ -79,7 +79,7 @@ git push origin <tag>...
 
    A tag is IMMUTABLE once pushed — never retag. Wrong? Make a new patch release.
 
-6. Publish — `cargo publish` is definitive and irrevocable, so it is never wrapped in a script; run each command directly and review the dry-run output before the real one. Catalog first, from its own tag:
+6. Publish — `cargo publish` is definitive and irrevocable, so it is never wrapped in a script; run each command directly and review the dry-run output before the real one. Catalog first, from its own tag. Each line below is its own command, one per tool call, never joined with `&&` or `;`:
 
 ```sh
 git checkout <tag>
@@ -89,6 +89,8 @@ git switch master
 ```
 
    `git switch master` drops the working-tree `Cargo.lock` back to untracked; the next cargo command regenerates it.
+
+   A publish that fails or is refused, the dry run included, ends the release there: leave the checkout on the tag, do not switch branches or start the next package, and report the exact output so I can act on it. The next package's dry run cannot pass until the previous one is on crates.io anyway.
 
 7. Report the tags, the changelogs, the CI run that gated the publish, and the crates.io versions (`curl https://index.crates.io/si/p-/sip-header`, `curl https://index.crates.io/si/p-/sip-header-catalog`).
 
