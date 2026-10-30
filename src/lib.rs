@@ -751,17 +751,23 @@ pub(crate) fn row_entries<'a>(
 ///
 /// The scan reads `raw` with CR, LF and NUL scrubbed, as the readers do,
 /// and each entry is sliced from `raw` itself, so a dropped character
-/// never moves a boundary.
+/// never moves a boundary. A [`Mark::Comma`] marks a `,`, so a row with
+/// none is one entry without a scan.
 pub(crate) fn split_entries(raw: &str, grammar: ListGrammar) -> Split<'_> {
     let scrubbed = scrub::scrub(raw);
     let text = &scrubbed.text;
     let mut entries = Vec::new();
     let mut start = 0;
     let mut raw_start = 0;
-    let commas = Locator::split(text, grammar).filter_map(|m| match m {
-        Mark::Comma(at) => Some(at),
-        _ => None,
-    });
+    let commas = text
+        .contains(',')
+        .then(|| Locator::split(text, grammar))
+        .into_iter()
+        .flatten()
+        .filter_map(|m| match m {
+            Mark::Comma(at) => Some(at),
+            _ => None,
+        });
     for comma in commas {
         let raw_comma = scrubbed.source(comma);
         entries.push(&raw[raw_start..raw_comma]);
