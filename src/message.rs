@@ -337,6 +337,287 @@ impl SipHeaderRows for SipMessageHeaders<'_> {
     }
 }
 
+/// The lines of a message's header block, read lazily under the rule
+/// [`SipMessageHeaders`] reads them by.
+///
+/// Yields each row, a header line with its continuation lines, and each
+/// line [`SipMessageHeaders::skipped`] would report, in wire order; the
+/// caller chooses what to keep, and [`rows`](Self::rows) drops the skipped
+/// lines for one that does not count them. A row computes nothing until a
+/// method asks: a caller looking for one header pays for the line split
+/// and the name's bounds on every other row, and allocates only to unfold
+/// a continuation.
+///
+/// ```
+/// use sip_header::{MessageLines, NameMatcher, SipHeader};
+///
+/// let msg = "INVITE sip:bob@example.com SIP/2.0\r\n\
+///            Via: SIP/2.0/UDP 198.51.100.1\r\n\
+///            l: 42\r\n\
+///            \r\n";
+/// let content_length = NameMatcher::from(SipHeader::ContentLength);
+/// let row = MessageLines::new(msg)
+///     .rows()
+///     .find(|row| content_length.matches(row.name()))
+///     .unwrap();
+/// assert_eq!((row.index(), &*row.value()), (1, "42"));
+/// assert!(row.value_warnings().next().is_none());
+/// ```
+#[derive(Clone)]
+pub struct MessageLines<'a> {
+    message: &'a str,
+    block: &'a str,
+    next: usize,
+    rows: usize,
+    start_line: bool,
+    end: usize,
+}
+
+impl<'a> MessageLines<'a> {
+    /// Walk the header block of `message`, exempting a first line that is a
+    /// request or status line, as [`SipMessageHeaders::new`] does.
+    pub fn new(message: &'a str) -> Self {
+        Self::read(message, true)
+    }
+
+    /// Walk `block`, header lines with no start line, up to its first blank
+    /// line, as [`SipMessageHeaders::from_header_block`] does.
+    pub fn from_header_block(block: &'a str) -> Self {
+        Self::read(block, false)
+    }
+
+    fn read(message: &'a str, start_line: bool) -> Self {
+        let (block, body_start) = split_at_blank_line(message);
+        MessageLines {
+            message,
+            block,
+            next: 0,
+            rows: 0,
+            start_line,
+            end: body_start.unwrap_or(message.len()),
+        }
+    }
+
+    /// Byte offset where the header block ends, as
+    /// [`SipMessageHeaders::end`] reports it.
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    /// The rows alone, skipped lines dropped.
+    pub fn rows(self) -> impl Iterator<Item = MessageRow<'a>> {
+        self.filter_map(|line| match line {
+            MessageLine::Row(row) => Some(row),
+            MessageLine::Skipped(_) => None,
+        })
+    }
+
+    /// The next line's offset and text, its CR stripped.
+    fn line(&mut self) -> Option<(usize, &'a str)> {
+        let at = self.next;
+        let rest = self
+            .block
+            .get(at..)?;
+        let len = rest
+            .find('\n')
+            .unwrap_or(rest.len());
+        self.next = at + len + 1;
+        let line = &rest[..len];
+        Some((
+            at,
+            line.strip_suffix('\r')
+                .unwrap_or(line),
+        ))
+    }
+
+    /// Consume the continuation lines after a header line, returning the
+    /// end of the last one, or `end` when there is none.
+    fn continuations(&mut self, mut end: usize) -> usize {
+        loop {
+            let resume = self.next;
+            match self.line() {
+                Some((at, line)) if line.starts_with([' ', '\t']) => end = at + line.len(),
+                _ => {
+                    self.next = resume;
+                    return end;
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for MessageLines<'a> {
+    type Item = MessageLine<'a>;
+
+    fn next(&mut self) -> Option<MessageLine<'a>> {
+        loop {
+            let (at, line) = self.line()?;
+            if line.is_empty() {
+                continue;
+            }
+            if line.starts_with([' ', '\t']) {
+                return Some(MessageLine::Skipped(Span::new(at..at + line.len())));
+            }
+            match header_line(line) {
+                Some((name, value)) if crate::is_token(name) || !is_start_line(line) => {
+                    let end = self.continuations(at + line.len());
+                    let index = self.rows;
+                    self.rows += 1;
+                    return Some(MessageLine::Row(MessageRow {
+                        message: self.message,
+                        name,
+                        at,
+                        value,
+                        end,
+                        index,
+                    }));
+                }
+                _ if at == 0 && self.start_line && is_start_line(line) => {}
+                _ => return Some(MessageLine::Skipped(Span::new(at..at + line.len()))),
+            }
+        }
+    }
+}
+
+impl std::iter::FusedIterator for MessageLines<'_> {}
+
+impl std::fmt::Debug for MessageLines<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageLines")
+            .field("next", &self.next)
+            .field("rows", &self.rows)
+            .field("end", &self.end)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One line of a header block as [`MessageLines`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MessageLine<'a> {
+    /// A header line with its continuation lines.
+    Row(MessageRow<'a>),
+    /// A line [`SipMessageHeaders::skipped`] reports, by extent.
+    Skipped(Span),
+}
+
+/// One row of a header block, read on demand from the message.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MessageRow<'a> {
+    message: &'a str,
+    name: &'a str,
+    at: usize,
+    /// The first line's value, untrimmed.
+    value: &'a str,
+    end: usize,
+    index: usize,
+}
+
+impl<'a> MessageRow<'a> {
+    /// The name as sent, compact forms included.
+    pub fn name(&self) -> &'a str {
+        self.name
+    }
+
+    /// The row's index among the rows, as [`SipMessageHeaders::fields`]
+    /// and [`SipMessageHeaders::row_spans`] index it.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Where the row sits in the message, as
+    /// [`SipMessageHeaders::row_spans`] reports it.
+    pub fn span(&self) -> Span {
+        Span::new(self.at..self.end)
+    }
+
+    /// The value as [`SipMessageHeaders`] holds it: trimmed, each
+    /// continuation line unfolded with one SP. Borrowed unless a
+    /// continuation line holds more than whitespace.
+    pub fn value(&self) -> Cow<'a, str> {
+        let first = self
+            .value
+            .trim();
+        let mut folded = self
+            .continuations()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .peekable();
+        if folded
+            .peek()
+            .is_none()
+        {
+            return Cow::Borrowed(first);
+        }
+        // The extent holds the value with each fold's CRLF and indent where
+        // one SP goes, so this is the only allocation.
+        let mut value = String::with_capacity(self.end - self.at);
+        value.push_str(first);
+        for line in folded {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(line);
+        }
+        Cow::Owned(value)
+    }
+
+    /// The warnings [`SipMessageHeaders::warnings`] holds on
+    /// [`Field::Value`] for this row: the trimmed runs that hold more than
+    /// SP and HTAB, in line order.
+    pub fn value_warnings(&self) -> impl Iterator<Item = ParseWarning> + 'a {
+        let message = self.message;
+        std::iter::once(self.value)
+            .chain(self.continuations())
+            .flat_map(move |line| {
+                let (head, rest) = lws::split_start(line);
+                let (_, tail) = lws::split_end(rest);
+                lws::run_warnings(message, head, Field::Value).chain(lws::run_warnings(
+                    message,
+                    tail,
+                    Field::Value,
+                ))
+            })
+    }
+
+    /// The breaches of `header-name = token` in the name, as
+    /// [`SipMessageHeaders::warnings`] holds them on [`Field::Name`].
+    pub fn name_warnings(&self) -> impl Iterator<Item = ParseWarning> + 'a {
+        name_warnings(self.name, self.at)
+    }
+
+    /// The continuation lines, each without its CR.
+    fn continuations(&self) -> impl Iterator<Item = &'a str> {
+        let first_end = crate::offset_in(self.message, self.value)
+            + self
+                .value
+                .len();
+        self.message
+            .get(first_end..self.end)
+            .unwrap_or_default()
+            .split_inclusive('\n')
+            .skip(1)
+            .map(|line| match line.strip_suffix('\n') {
+                // The extent ends before the last line's ending, so only an
+                // earlier line still holds the CR its ending strips.
+                Some(line) => line
+                    .strip_suffix('\r')
+                    .unwrap_or(line),
+                None => line,
+            })
+    }
+}
+
+impl std::fmt::Debug for MessageRow<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageRow")
+            .field("name", &self.name)
+            .field("index", &self.index)
+            .field("span", &self.span())
+            .finish_non_exhaustive()
+    }
+}
+
 /// `name: value` with a bounded name: not empty and free of control
 /// characters but HTAB, SWS before the colon allowed; the value untrimmed.
 fn header_line(line: &str) -> Option<(&str, &str)> {
@@ -680,23 +961,23 @@ fn is_start_line(line: &str) -> bool {
                         .bytes()
                         .all(|b| b.is_ascii_digit())
             });
-    status || matches!(request_line(line), Ok(Some(_)))
+    status || matches!(request_parts(line), Ok(Some(_)))
 }
 
-fn request_line(first: &str) -> Result<Option<RequestLine<'_>>, ParseError> {
+/// A request line's method, Request-URI and version, checked as
+/// [`extract_request_line`] checks them; `Ok(None)` for a status line.
+fn request_parts(first: &str) -> Result<Option<[&str; 3]>, ParseError> {
     if first.is_empty() {
         return Err(ParseError::empty(Field::Value));
     }
-    let parts: Vec<&str> = first
-        .split_whitespace()
-        .collect();
-    if parts
-        .first()
-        .is_some_and(|p| p.starts_with("SIP/"))
-    {
+    let mut words = first.split_whitespace();
+    let leading = words.next();
+    if leading.is_some_and(|p| p.starts_with("SIP/")) {
         return Ok(None);
     }
-    let [method, uri_text, version] = parts.as_slice() else {
+    let (Some(method), Some(uri_text), Some(version), None) =
+        (leading, words.next(), words.next(), words.next())
+    else {
         return Err(ParseError::Malformed(
             Fault::new(Field::Value, FaultCode::Missing)
                 .at(0)
@@ -717,6 +998,14 @@ fn request_line(first: &str) -> Result<Option<RequestLine<'_>>, ParseError> {
             Some(crate::offset_in(first, version)),
         ));
     }
+    Ok(Some([method, uri_text, version]))
+}
+
+fn request_line(first: &str) -> Result<Option<RequestLine<'_>>, ParseError> {
+    let Some(parts) = request_parts(first)? else {
+        return Ok(None);
+    };
+    let [method, uri_text, version] = parts;
     let span = |part: &str| {
         let at = crate::offset_in(first, part);
         Span::new(at..at + part.len())
@@ -1588,6 +1877,25 @@ o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n";
         let bare = "Subject: one\n two\n\n";
         let headers = SipMessageHeaders::new(bare);
         assert_eq!(texts(headers.row_spans(), bare), ["Subject: one\n two"]);
+    }
+
+    #[test]
+    fn a_last_continuation_reports_a_cr_beyond_its_ending() {
+        let msg = "Subject: a\r\n b\r\r\n\r\n";
+        let headers = SipMessageHeaders::new(msg);
+        assert_eq!(
+            headers
+                .fields()
+                .iter()
+                .next(),
+            Some(("Subject", "a b"))
+        );
+        let codes: Vec<_> = headers
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.position))
+            .collect();
+        assert_eq!(codes, [(WarningCode::ControlChar, Some(14))]);
     }
 
     #[test]

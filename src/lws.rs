@@ -16,6 +16,8 @@
 //! parser only: a blank-entry test trims without reporting, so a run is
 //! reported once, and a row the message reader already trimmed arrives
 //! clean. Constructors and serde input never reach it with warnings kept.
+//! `run_warnings` is the allocation-free form, which the message reader's
+//! lazy rows use; `report_run` collects it.
 
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::span::Span;
@@ -36,34 +38,44 @@ pub(crate) fn split_end(s: &str) -> (&str, &str) {
 /// `field` for `run`, a whitespace run sliced from `input`, when it holds
 /// anything but SP and HTAB.
 pub(crate) fn report_run(input: &str, run: &str, field: Field, warnings: &mut Vec<ParseWarning>) {
-    if run
+    warnings.extend(run_warnings(input, run, field));
+}
+
+/// The warnings [`report_run`] raises for `run`, in position order, without
+/// allocating.
+pub(crate) fn run_warnings(
+    input: &str,
+    run: &str,
+    field: Field,
+) -> impl Iterator<Item = ParseWarning> {
+    let clean = run
         .bytes()
-        .all(|b| matches!(b, b' ' | b'\t'))
-    {
-        return;
+        .all(|b| matches!(b, b' ' | b'\t'));
+    let found = |code, i: Option<usize>| {
+        i.filter(|_| !clean)
+            .map(|i| (i, code))
+    };
+    let mut first = found(
+        WarningCode::ControlChar,
+        run.find(|c: char| c.is_ascii_control()),
+    );
+    let mut second = found(
+        WarningCode::NonLwsWhitespace,
+        run.find(|c: char| !matches!(c, ' ' | '\t') && !c.is_ascii_control()),
+    );
+    if matches!((first, second), (Some((i, _)), Some((j, _))) if j < i) {
+        std::mem::swap(&mut first, &mut second);
     }
-    let mut found: Vec<_> = [
-        (
-            WarningCode::ControlChar,
-            run.find(|c: char| c.is_ascii_control()),
-        ),
-        (
-            WarningCode::NonLwsWhitespace,
-            run.find(|c: char| !matches!(c, ' ' | '\t') && !c.is_ascii_control()),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(code, i)| i.map(|i| (i, code)))
-    .collect();
-    found.sort_by_key(|&(i, _)| i);
     let at = crate::offset_in(input, run);
-    for (i, code) in found {
-        warnings.push(
+    let span = Span::new(at..at + run.len());
+    [first, second]
+        .into_iter()
+        .flatten()
+        .map(move |(i, code)| {
             ParseWarning::new(field, code)
                 .at(at + i)
-                .covering(Span::new(at..at + run.len())),
-        );
-    }
+                .covering(span)
+        })
 }
 
 /// `s`, a slice of `input`, without leading whitespace, reporting the run.
