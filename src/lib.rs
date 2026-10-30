@@ -46,7 +46,8 @@
 //! - [`SipGeolocation`]: RFC 6442; [`SipSecurity`]: RFC 3329
 //! - [`SipReplaces`], [`SipJoin`], [`SipTargetDialog`]: RFC 3891, 3911, 4538
 //! - [`TokenList`]: Allow, Supported, Require and the other token lists
-//! - [`SipContentTransferEncoding`]: RFC 2045, read from MIME body parts
+//! - [`SipContentId`]: RFC 8262 and RFC 2045; [`SipContentTransferEncoding`]:
+//!   RFC 2045, read from MIME body parts
 //! - `conference_info`: RFC 4575 conference event package (feature:
 //!   `conference-info`)
 //!
@@ -129,6 +130,7 @@ pub use accept_language::{SipAcceptLanguage, SipAcceptLanguageEntry};
 pub use auth::SipAuthValue;
 pub use call_id::SipCallId;
 pub use contact::ContactList;
+pub use content_id::SipContentId;
 pub use content_length::SipContentLength;
 pub use content_transfer_encoding::{SipContentTransferEncoding, TransferEncoding};
 pub use content_type::SipContentType;

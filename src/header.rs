@@ -8,6 +8,7 @@ use crate::accept_language::SipAcceptLanguage;
 use crate::auth::SipAuthValue;
 use crate::call_id::SipCallId;
 use crate::contact::ContactList;
+use crate::content_id::SipContentId;
 use crate::content_length::SipContentLength;
 use crate::content_type::SipContentType;
 use crate::diagnostic::{Field, Parsed};
@@ -183,6 +184,8 @@ typed_headers! {
     ContentLength(SipContentLength, single) => [ContentLength];
     /// Content-Type.
     ContentType(SipContentType, single) => [ContentType];
+    /// Content-ID.
+    ContentId(SipContentId, single) => [ContentId];
     /// Replaces.
     Replaces(SipReplaces, single) => [Replaces];
     /// Join.
@@ -207,6 +210,8 @@ fn wrong_header() -> ParseError {
 impl Located for SipCallId {}
 
 impl Located for SipContentLength {}
+
+impl Located for SipContentId {}
 
 /// One value per row, as the authentication headers carry them (RFC 3261
 /// §7.3.1); a warning's or error's entry index is the row, and a blank row
@@ -362,9 +367,18 @@ pub trait SipHeaderLookup: SipHeaderRows {
         lenient(self.parse_header(SipHeader::ContentLength))
     }
 
-    /// `Content-Type` (RFC 3261 §20.15).
+    /// `Content-Type` (RFC 3261 §20.15), read as a SIP header; a store of
+    /// a MIME body part's headers reads it through
+    /// [`BodyPartParse`](crate::BodyPartParse) instead.
     fn content_type(&self) -> Result<Option<SipContentType>, ParseError> {
         lenient(self.parse_header(SipHeader::ContentType))
+    }
+
+    /// `Content-ID` (RFC 8262 §3.2), read as a SIP header; a store of a
+    /// MIME body part's headers reads it through
+    /// [`BodyPartParse`](crate::BodyPartParse) instead.
+    fn content_id(&self) -> Result<Option<SipContentId>, ParseError> {
+        lenient(self.parse_header(SipHeader::ContentId))
     }
 
     /// `Refer-To` (RFC 3515 §2.1).

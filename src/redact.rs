@@ -46,10 +46,11 @@ const VIA_ADDRESS_PARAMS: &[&str] = &["received", "maddr"];
 /// default the value of every identity parameter (`+sip.instance`,
 /// `pub-gruu`, `temp-gruu`) is `***`, and so is everything after the
 /// scheme of a Geolocation reference, which names a location body or a
-/// dereference URL, and so are a Via's `sent-by` host and its `received`
-/// and `maddr` values, the addresses of the caller's device. A parameter
-/// name [`Redaction::params`] masks is masked in the header's parameters as
-/// in the URI's.
+/// dereference URL, and so is a Content-ID, which names the same body, and
+/// so are a Via's `sent-by` host and its `received` and `maddr` values, the
+/// addresses of the caller's device. A parameter name
+/// [`Redaction::params`] masks is masked in the header's parameters as in
+/// the URI's.
 ///
 /// ```
 /// use sip_header::{HeaderParse, HeaderRedaction, Redact, SipHeaderAddr};
@@ -97,7 +98,8 @@ impl HeaderRedaction {
         self
     }
 
-    /// Render Geolocation references through the URI redaction.
+    /// Render Geolocation references through the URI redaction, and a
+    /// Content-ID as sent.
     pub fn show_location(mut self) -> Self {
         self.show_location = true;
         self

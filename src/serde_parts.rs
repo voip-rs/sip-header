@@ -111,8 +111,8 @@ pub(crate) mod field {
     }
 
     fields! {
-        agent call_id code display_name early_only encoding framing from_tag language
-        local_tag mechanism media_type name port protocol quoted remote_tag scheme subtype
+        agent call_id code display_name early_only encoding framing from_tag language left
+        local_tag mechanism media_type name port protocol quoted remote_tag right scheme subtype
         text to_tag token68 tokens transport value version
     }
 }

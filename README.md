@@ -1,6 +1,6 @@
 # sip-header
 
-SIP header field parsers for Rust: name-addr, Contact, Via, Warning, Call-ID, authentication, the Accept family, Call-Info, History-Info, Reason, Geolocation, Security, Replaces, Join, Target-Dialog and the token lists, over the full IANA header catalog.
+SIP header field parsers for Rust: name-addr, Contact, Via, Warning, Call-ID, authentication, the Accept family, Call-Info, History-Info, Reason, Geolocation, Security, Replaces, Join, Target-Dialog, the token lists, Content-Type and Content-ID as SIP headers and as MIME body-part headers, and Content-Transfer-Encoding, over the full IANA header catalog.
 
 [![CI](https://github.com/voip-rs/sip-header/actions/workflows/ci.yml/badge.svg)](https://github.com/voip-rs/sip-header/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/sip-header.svg)](https://crates.io/crates/sip-header)
@@ -43,7 +43,7 @@ assert_eq!(headers.via()?, Some(via));
 # Ok::<(), ParseError>(())
 ```
 
-The others are named where needed: `UriHeaderParse`, `AddrParts`, `SipHeaderRowsExt`, `Redact`, `HeaderEquivalence` and `SipHeaderExtract`. sip-uri defines `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at its root too, so sip-uri's are spelled through `sip_uri::` beside these.
+The others are named where needed: `UriHeaderParse`, `BodyPartParse`, `AddrParts`, `SipHeaderRowsExt`, `Redact`, `HeaderEquivalence` and `SipHeaderExtract`. sip-uri defines `ParseError`, `Parsed`, `ParseWarning` and `WarningCode` at its root too, so sip-uri's are spelled through `sip_uri::` beside these.
 
 ## Lenient parsing, reported breaches
 

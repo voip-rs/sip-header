@@ -307,6 +307,8 @@ pub enum Field {
     Name,
     /// A body part's Content-Transfer-Encoding `mechanism` (RFC 2045 §6.1).
     TransferEncoding,
+    /// A `Content-ID` `msg-id` (RFC 8262 §3.2, RFC 2045 §7).
+    ContentId,
 }
 
 impl fmt::Display for Field {
@@ -338,6 +340,7 @@ impl fmt::Display for Field {
             Field::Value => "value",
             Field::Name => "header-name",
             Field::TransferEncoding => "transfer-encoding",
+            Field::ContentId => "content-id",
         };
         f.write_str(name)
     }
@@ -353,7 +356,10 @@ pub enum WarningCode {
     /// §25.1 `*( SEMI generic-param )`), dropped.
     TrailingContent,
     /// A character outside RFC 3261 §25.1 `token` where one is required, or
-    /// in a MIME body part outside RFC 2045 §5.1 `token`, kept as sent.
+    /// in a MIME body part outside RFC 2045 §5.1 `token`, kept as sent. In
+    /// a `Content-ID`, text outside RFC 5322 §3.6.4 `id-left =
+    /// dot-atom-text` or `id-right = dot-atom-text / no-fold-literal`, its
+    /// obsolete forms aside.
     InvalidToken,
     /// A `"` that opens a quoted-string (RFC 3261 §25.1) and never closes;
     /// the value ends at the next delimiter.
@@ -378,11 +384,15 @@ pub enum WarningCode {
     /// entry (RFC 3261 §20.9 `LAQUOT absoluteURI RAQUOT`), a Geolocation
     /// `locationValue` (RFC 6442 §4.1 `LAQUOT locationURI RAQUOT`), or an
     /// addr-spec holding a comma, semicolon or question mark (RFC 3261 §20).
+    /// Also a `Content-ID` without the brackets of RFC 8262 §3.2 `msg-id =
+    /// "<" id-left "@" id-right ">"`, the identifier kept.
     MissingBrackets,
     /// A `<` opening a URI that never closes, where RFC 3261 §25.1
     /// `name-addr = [ display-name ] LAQUOT addr-spec RAQUOT`, §20.9
     /// `LAQUOT absoluteURI RAQUOT` or RFC 6442 §4.1 `LAQUOT locationURI
     /// RAQUOT` requires the `>`; the URI runs to its header parameters.
+    /// Also a `Content-ID` `msg-id` whose `<` never closes; the identifier
+    /// runs to the end of the value.
     UnclosedBracket,
     /// A list entry that yields no value, dropped.
     SkippedEntry,
@@ -449,6 +459,17 @@ pub enum WarningCode {
     /// a separator, as it always was. The run stays reachable through the
     /// warning's span.
     NonLwsWhitespace,
+    /// A body part's `msg-id` in a form RFC 5322 §4.5.4 keeps only as
+    /// obsolete, `obs-id-left = local-part` and `obs-id-right = domain`: a
+    /// quoted-string word in `id-left`, or `CFWS` inside the angle brackets,
+    /// which §3.6.4 `msg-id = [CFWS] "<" id-left "@" id-right ">" [CFWS]`
+    /// does not admit. The `CFWS` is removed, since §4.5.4 makes none of it
+    /// part of the identifier.
+    ObsoleteMsgId,
+    /// A `Content-ID` without the `"@" id-right` that RFC 5322 §3.6.4
+    /// `msg-id` requires, as RFC 8262 §3.2 and RFC 2045 §7 use it; kept as
+    /// its `id-left` alone.
+    MissingIdRight,
 }
 
 impl WarningCode {
@@ -501,6 +522,8 @@ impl WarningCode {
             WarningCode::HeaderNameControl => "header-name-control",
             WarningCode::NonAscii => "non-ascii",
             WarningCode::NonLwsWhitespace => "non-lws-whitespace",
+            WarningCode::ObsoleteMsgId => "obsolete-msg-id",
+            WarningCode::MissingIdRight => "missing-id-right",
         }
     }
 }
@@ -567,6 +590,8 @@ mod tests {
             WarningCode::HeaderNameControl,
             WarningCode::NonAscii,
             WarningCode::NonLwsWhitespace,
+            WarningCode::ObsoleteMsgId,
+            WarningCode::MissingIdRight,
         ];
         for code in &all {
             match code {
@@ -597,7 +622,9 @@ mod tests {
                 | WarningCode::HeaderNameWhitespace
                 | WarningCode::HeaderNameControl
                 | WarningCode::NonAscii
-                | WarningCode::NonLwsWhitespace => {}
+                | WarningCode::NonLwsWhitespace
+                | WarningCode::ObsoleteMsgId
+                | WarningCode::MissingIdRight => {}
             }
         }
         all
