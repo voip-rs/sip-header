@@ -192,6 +192,34 @@ mod tests {
         );
     }
 
+    fn digitish() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        prop_oneof![
+            "[0-9]{0,30}",
+            "0{1,25}[0-9]{0,5}",
+            "[0-9]{18,22}",
+            "[ \\t\\r\\n\\x00+-]{0,2}[0-9]{0,22}[ \\t\\r\\n\\x00a-z.+-]{0,2}[0-9]{0,3}",
+            "[0-9]{1,3}[ \\t\\r\\n\\x00][0-9]{1,3}",
+            any::<String>(),
+        ]
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn the_fast_path_returns_what_the_full_path_does(input in digitish()) {
+            let full = SipContentLength::parse_full(&input);
+            proptest::prop_assert_eq!(SipContentLength::parse_with_warnings(&input), full.clone());
+            proptest::prop_assert_eq!(
+                SipContentLength::parse(&input),
+                full.clone().map(|p| p.value)
+            );
+            proptest::prop_assert_eq!(
+                SipContentLength::parse_strict(&input),
+                full.and_then(Parsed::into_strict)
+            );
+        }
+    }
+
     #[test]
     fn a_missing_digit_points_at_the_value() {
         assert_eq!(
