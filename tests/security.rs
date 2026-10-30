@@ -12,9 +12,9 @@ use sip_header::{
     Fault, FaultCode, Field, HeaderEquivalence, HeaderParams, HeaderParse, HeaderRedaction,
     HistoryInfo, HistoryInfoEntry, ListParse, ParamsMut, ParseError, ParseWarning, Parsed, Redact,
     RequestLine, SipAccept, SipAcceptEncoding, SipAcceptEncodingEntry, SipAcceptEntry,
-    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipContentLength,
-    SipContentType, SipGeolocation, SipGeolocationEntry, SipHeader, SipHeaderAddr,
-    SipHeaderAddrList, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
+    SipAcceptLanguage, SipAcceptLanguageEntry, SipAuthValue, SipCallId, SipContentId,
+    SipContentLength, SipContentType, SipGeolocation, SipGeolocationEntry, SipHeader,
+    SipHeaderAddr, SipHeaderAddrList, SipHeaderFields, SipHeaderLookup, SipHeaderRowsExt, SipJoin,
     SipMessageHeaders, SipReason, SipReasonCause, SipReasonList, SipReplaces, SipSecurity,
     SipSecurityMechanism, SipTargetDialog, SipVia, SipViaEntry, SipWarning, SipWarningEntry, Span,
     TokenList, TypedHeader, UriHeaderParse, UriInfo, UriInfoEntry, WarningCode,
@@ -542,6 +542,7 @@ const CORPUS: &[(&str, &str)] = &[
     ("join", "abc@203.0.113.5;to-tag=t1;from-tag=f1;early-only"),
     ("reason", r#"Q.850;cause=16;text="Normal; clearing";location=LN"#),
     ("content-type", r#"Multipart/Mixed;Boundary="a b;c";charset=utf-8;q=x"#),
+    ("content-id", "<a84b4c76e66710@example.com>"),
 ];
 
 /// Insert each of `snippets` at a char boundary chosen by its fraction.
@@ -710,6 +711,10 @@ fn check_kind(kind: &str, input: &str) -> Result<(), TestCaseError> {
         ),
         "content-type" => serde_reads_back(
             lenient_is_stable(input, SipContentType::parse_with_warnings)?,
+            input,
+        ),
+        "content-id" => serde_reads_back(
+            lenient_is_stable(input, SipContentId::parse_with_warnings)?,
             input,
         ),
         other => panic!("{other}"),
@@ -949,6 +954,9 @@ fn check_kind_through_holder(kind: &str, input: &str) -> Result<(), TestCaseErro
             through_holder::<SipContentType>(SipHeader::ContentType),
         )
         .map(drop),
+        "content-id" => {
+            lenient_is_stable(input, through_holder::<SipContentId>(SipHeader::ContentId)).map(drop)
+        }
         other => panic!("{other}"),
     }
 }
@@ -1102,6 +1110,7 @@ fn check_rows(kind: &str, rows: &[String]) -> Result<(), TestCaseError> {
         "content-type" => {
             in_their_rows::<SipContentType>(SipHeader::ContentType, &rows[..1], no_spans)
         }
+        "content-id" => in_their_rows::<SipContentId>(SipHeader::ContentId, &rows[..1], no_spans),
         other => panic!("{other}"),
     }
 }
@@ -1804,6 +1813,7 @@ const MORE_BASES: &[(&str, &str)] = &[
     ("content-length", "142"),
     ("content-type", "application/sdp"),
     ("content-type", "text/plain;charset=\"utf-8\""),
+    ("content-id", "<abc@[198.51.100.1]>"),
     ("tokens", "INVITE, 100rel, timer"),
     ("tokens", "a84b4c76e66710@example.com, en-ca"),
 ];
@@ -2087,6 +2097,7 @@ every_accessor! {
     single::<SipCallId> => call_id CallId &["call-id"];
     single::<SipContentLength> => content_length ContentLength &["content-length"];
     single::<SipContentType> => content_type ContentType &["content-type"];
+    single::<SipContentId> => content_id ContentId &["content-id"];
     single::<SipReplaces> => replaces Replaces &["replaces"];
     single::<SipJoin> => join Join &["join"];
     single::<SipTargetDialog> => target_dialog TargetDialog &["target-dialog"];

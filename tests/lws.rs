@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 
 use sip_header::{
     BodyPartParse, ContactList, Field, HeaderParse, HistoryInfo, ParseError, Parsed, SipAccept,
-    SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength,
+    SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipCallId, SipContentId, SipContentLength,
     SipContentTransferEncoding, SipContentType, SipGeolocation, SipHeader, SipHeaderAddr,
     SipHeaderAddrList, SipHeaderLookup, SipHeaderRowsExt, SipJoin, SipMessageHeaders, SipReason,
     SipReasonList, SipReplaces, SipSecurity, SipTargetDialog, SipVia, SipWarning, TokenList,
@@ -450,6 +450,13 @@ const CONTENT_TYPE: &[&str] = &[
 fn content_type() {
     check::<SipContentType>(CONTENT_TYPE);
     check::<BodyPart<SipContentType>>(CONTENT_TYPE);
+}
+
+#[test]
+fn content_id() {
+    let templates = &["¤<abc@example.com>", "<abc@example.com>¤"];
+    check::<SipContentId>(templates);
+    check::<BodyPart<SipContentId>>(templates);
 }
 
 #[test]

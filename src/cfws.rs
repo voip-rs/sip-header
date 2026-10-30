@@ -298,6 +298,55 @@ mod tests {
     }
 
     #[test]
+    fn a_msg_id_keeps_quoted_left_parts_and_literals_opaque() {
+        let text = r#"<"a (b)".c@[d (e)]> (f)"#;
+        let mut warnings = Vec::new();
+        let framed = read(
+            text,
+            Grammar::MsgId,
+            Framing::BodyPart,
+            Field::Value,
+            &mut warnings,
+        );
+        assert_eq!(framed.text, r#"<"a (b)".c@[d (e)]>    "#);
+        assert_eq!(framed.opaque, [1..8, 11..18]);
+        for (text, want) in [
+            (r#"<a"(x)"@b>"#, r#"<a"   "@b>"#),
+            (r#"<a@"(x)">"#, r#"<a@"   ">"#),
+            (r#"<a@b[(x)]>"#, r#"<a@b[   ]>"#),
+            (r#"<a (c) . "(x)"@b>"#, r#"<a     . "(x)"@b>"#),
+            (r#"<a@ (c) [(x)]>"#, r#"<a@     [(x)]>"#),
+            (r#"x<"(x)"@b>"#, r#"x<"   "@b>"#),
+        ] {
+            let mut warnings = Vec::new();
+            let read = read(
+                text,
+                Grammar::MsgId,
+                Framing::BodyPart,
+                Field::Value,
+                &mut warnings,
+            );
+            assert_eq!(read.text, want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_sip_msg_id_is_located_and_left_as_it_is() {
+        let text = r#"<"a (b)"@[c (d)]>"#;
+        let mut warnings = Vec::new();
+        let read = read(
+            text,
+            Grammar::MsgId,
+            Framing::Sip,
+            Field::Value,
+            &mut warnings,
+        );
+        assert_eq!(read.text, text);
+        assert_eq!(read.opaque, [1..8, 9..16]);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
     fn sip_framing_keeps_comments_as_text() {
         let text = "text/plain (c)";
         let mut warnings = Vec::new();

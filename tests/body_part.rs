@@ -3,7 +3,7 @@
 
 use proptest::prelude::*;
 use sip_header::{
-    BodyPartParse, FaultCode, Field, HeaderParse, ParseError, ParseWarning, Parsed,
+    BodyPartParse, FaultCode, Field, HeaderParse, ParseError, ParseWarning, Parsed, SipContentId,
     SipContentTransferEncoding, SipContentType, TransferEncoding, WarningCode, WarningKind,
 };
 
@@ -381,6 +381,127 @@ fn transfer_encoding_serde_is_its_mechanism() {
     }
 }
 
+#[test]
+fn content_id_comments_around_the_msg_id_are_legal() -> R {
+    let id = SipContentId::parse_strict("<abc@example.com>")?;
+    for raw in [
+        "(c) <abc@example.com> (d)",
+        "<abc@example.com>(d (e))",
+        "\t(c)<abc@example.com>",
+    ] {
+        assert_eq!(SipContentId::parse_body_part_strict(raw)?, id, "{raw}");
+    }
+    Ok(())
+}
+
+#[test]
+fn content_id_obsolete_forms_are_read_and_reported() {
+    for (raw, at, left) in [
+        ("<a . b (c) @ example.com>", 2, "a.b"),
+        ("< abc@example.com >", 1, "abc"),
+        ("<abc(c)@example.com>", 4, "abc"),
+        ("<\"a b\"@example.com>", 1, "\"a b\""),
+        ("<\"a\".\"b\"@example.com>", 1, "\"a\".\"b\""),
+        ("<a. \"b\"@example.com>", 3, "a.\"b\""),
+    ] {
+        let id = relaxed_body_part!(SipContentId, raw, &[(WarningCode::ObsoleteMsgId, Some(at))]);
+        assert_eq!(
+            (id.left(), id.right()),
+            (left, Some("example.com")),
+            "{raw}"
+        );
+        assert_eq!(
+            SipContentId::parse_body_part(&id.to_string()),
+            Ok(id),
+            "{raw}"
+        );
+    }
+    let parsed = SipContentId::parse_body_part_with_warnings("< abc@example.com >").unwrap();
+    assert_eq!(parsed.warnings[0].kind, WarningKind::Recovered);
+    assert_eq!(parsed.warnings[0].field, Field::ContentId);
+    let id = relaxed_body_part!(
+        SipContentId,
+        "<a@ [b@c] >",
+        &[(WarningCode::ObsoleteMsgId, Some(3))]
+    );
+    assert_eq!(id.right(), Some("[b@c]"));
+}
+
+#[test]
+fn a_sip_content_id_keeps_what_a_body_part_reads_as_a_comment() -> R {
+    let raw = "<abc(c)@example.com>";
+    let sip = SipContentId::parse_with_warnings(raw)?;
+    assert_eq!(codes(&sip.warnings), [(WarningCode::InvalidToken, Some(4))]);
+    assert_eq!(
+        sip.value
+            .left(),
+        "abc(c)"
+    );
+    let body = SipContentId::parse_body_part_with_warnings(raw)?;
+    assert_eq!(
+        body.value
+            .left(),
+        "abc"
+    );
+    Ok(())
+}
+
+#[test]
+fn content_id_breaches_outside_the_obsolete_forms_are_kept() {
+    let id = relaxed_body_part!(
+        SipContentId,
+        "<a (c) b@x>",
+        &[(WarningCode::InvalidToken, Some(2))]
+    );
+    assert_eq!(id.left(), "a b");
+    let id = relaxed_body_part!(
+        SipContentId,
+        "<a@[b (c)]>",
+        &[(WarningCode::InvalidToken, Some(3))]
+    );
+    assert_eq!(id.right(), Some("[b (c)]"));
+    let id = relaxed_body_part!(
+        SipContentId,
+        "<a\"(c)\"@x>",
+        &[(WarningCode::InvalidToken, Some(2))]
+    );
+    assert_eq!(id.left(), "a\" \"");
+    let id = relaxed_body_part!(
+        SipContentId,
+        "abc@example.com (c)",
+        &[(WarningCode::MissingBrackets, Some(0))]
+    );
+    assert_eq!(id.id(), "abc@example.com");
+    let id = relaxed_body_part!(
+        SipContentId,
+        "<abc (c)>",
+        &[
+            (WarningCode::ObsoleteMsgId, Some(4)),
+            (WarningCode::MissingIdRight, Some(8)),
+        ]
+    );
+    assert_eq!((id.left(), id.right()), ("abc", None));
+    relaxed_body_part!(
+        SipContentId,
+        "<abc@example.com> (\u{1})",
+        &[(WarningCode::ControlChar, Some(19))]
+    );
+}
+
+#[test]
+fn content_id_of_comments_alone_is_an_error() {
+    for raw in ["(c)", "<(c)>", "< (c) >"] {
+        assert_eq!(
+            SipContentId::parse_body_part(raw),
+            Err(ParseError::Malformed(sip_header::Fault::new(
+                Field::ContentId,
+                FaultCode::Empty
+            ))),
+            "{raw}"
+        );
+    }
+}
+
 /// Text built from the characters that frame a body-part value.
 fn body_text() -> impl Strategy<Value = String> {
     let piece = prop_oneof![
@@ -490,5 +611,32 @@ proptest! {
             codes(&parsed.warnings),
             vec![(WarningCode::InvalidToken, Some(row.len() - 4))]
         );
+        let row = format!("{lead}({}) <a@b c>", comment.concat());
+        let parsed = SipContentId::parse_body_part_with_warnings(&row).unwrap();
+        prop_assert_eq!(
+            codes(&parsed.warnings),
+            vec![(WarningCode::InvalidToken, Some(row.len() - 3))]
+        );
+    }
+
+    #[test]
+    fn content_id_body_part_reads_back_its_print(raw in body_text()) {
+        body_part_is_stable::<SipContentId>(&raw)?;
+        body_part_is_stable::<SipContentId>(&format!("<{raw}@example.com>"))?;
+        body_part_is_stable::<SipContentId>(&format!("<a.b@{raw}>"))?;
+    }
+
+    #[test]
+    fn content_id_without_comments_reads_as_its_sip_header(
+        left in "[a-z0-9!#$%&'*+/=?^_`{|}~-]{1,4}(\\.[a-z0-9-]{1,4}){0,2}",
+        right in prop_oneof![
+            "[a-z0-9-]{1,6}(\\.[a-z0-9-]{1,6}){0,2}",
+            "\\[[!-Z^-~]{0,8}\\]",
+        ],
+    ) {
+        let raw = format!("<{left}@{right}>");
+        let sip = SipContentId::parse_strict(&raw);
+        prop_assert!(sip.is_ok(), "{:?}: {:?}", raw, sip);
+        prop_assert_eq!(SipContentId::parse_body_part_strict(&raw), sip);
     }
 }

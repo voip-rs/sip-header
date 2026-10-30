@@ -5,10 +5,11 @@ use std::fmt::{Debug, Display};
 
 use sip_header::{
     ContactList, HistoryInfo, ListParse, ParseError, SipAccept, SipAcceptEncoding,
-    SipAcceptLanguage, SipAuthValue, SipCallId, SipContentLength, SipContentType, SipGeolocation,
-    SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderField, SipHeaderFieldRows,
-    SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipJoin, SipReasonList, SipReplaces,
-    SipSecurity, SipTargetDialog, SipVia, SipWarning, TokenList, TypedHeader, UriInfo, WarningCode,
+    SipAcceptLanguage, SipAuthValue, SipCallId, SipContentId, SipContentLength, SipContentType,
+    SipGeolocation, SipHeader, SipHeaderAddr, SipHeaderAddrList, SipHeaderField,
+    SipHeaderFieldRows, SipHeaderFields, SipHeaderLookup, SipHeaderRows, SipJoin, SipReasonList,
+    SipReplaces, SipSecurity, SipTargetDialog, SipVia, SipWarning, TokenList, TypedHeader, UriInfo,
+    WarningCode,
 };
 
 type R = Result<(), ParseError>;
@@ -24,6 +25,7 @@ fn message() -> SipHeaderFields<'static> {
         ("i", "a84b4c76e66710@example.com"),
         ("l", "142"),
         ("c", "application/sdp;charset=utf-8"),
+        ("content-id", "<abc@example.com>"),
         ("Via", "SIP/2.0/UDP 198.51.100.3;branch=z9hG4bK3"),
         ("r", "<sip:carol@example.com>"),
         ("b", "<sip:alice@example.com>"),
@@ -100,7 +102,7 @@ macro_rules! all_present {
 fn every_accessor_reads_a_holder() -> R {
     let m = message();
     all_present!(m;
-        sip_from, sip_to, call_id, content_length, content_type, refer_to, referred_by, reason, call_info, history_info,
+        sip_from, sip_to, call_id, content_length, content_type, content_id, refer_to, referred_by, reason, call_info, history_info,
         p_asserted_identity, p_preferred_identity, route, record_route, path, service_route,
         diversion, remote_party_id, contact, alert_info, error_info, allow, supported, require,
         proxy_require, unsupported, allow_events, content_encoding, content_language, in_reply_to,
@@ -174,6 +176,7 @@ fn hostile() -> SipHeaderFields<'static> {
         ("i", "a84b\0c@example.com\r\n"),
         ("Content-Length", "12\0"),
         ("Content-Type", "text/pl\0ain;charset=u\r\ntf8"),
+        ("Content-ID", "<ab\0c@example.com>"),
         ("r", "<sip:carol@example.com>;x=\"1\r\n"),
         ("b", "<sip:alice@example.com>\0"),
         ("Reason", "SIP;cause=200;text=\"else\r\nwhere\""),
@@ -299,6 +302,7 @@ fn hostile_rows_through_a_holder_come_out_clean_or_refused() {
         call_id: SipCallId => CallId,
         content_length: SipContentLength => ContentLength,
         content_type: SipContentType => ContentType,
+        content_id: SipContentId => ContentId,
         refer_to: SipHeaderAddr => ReferTo,
         referred_by: SipHeaderAddr => ReferredBy,
         reason: SipReasonList => Reason,

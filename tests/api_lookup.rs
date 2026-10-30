@@ -276,6 +276,7 @@ fn every_type_holds_headers_of_one_row_policy() {
     single::<SipCallId>();
     single::<SipContentLength>();
     single::<SipContentType>();
+    single::<sip_header::SipContentId>();
     single::<sip_header::SipReplaces>();
     single::<sip_header::SipJoin>();
     single::<sip_header::SipTargetDialog>();
