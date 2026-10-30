@@ -91,6 +91,10 @@ pub(crate) struct Locator<'a> {
     after_space: bool,
     /// Whether the last character read other than whitespace is `=`.
     after_equal: bool,
+    /// Whether a `warn-code` and the SP after it have been read.
+    after_code: bool,
+    /// Whether the `warn-text` has closed.
+    warn_text: bool,
     /// Set once a quote fails to close, since no later one can.
     quotes_unclosed: bool,
     /// Set once a bracket fails to close, since no later one can.
@@ -111,6 +115,8 @@ impl<'a> Locator<'a> {
             begun: false,
             after_space: false,
             after_equal: false,
+            after_code: false,
+            warn_text: false,
             quotes_unclosed: false,
             brackets_unclosed: false,
         }
@@ -142,7 +148,7 @@ impl<'a> Locator<'a> {
         match self.grammar {
             ListGrammar::Token | ListGrammar::Uri => in_value,
             ListGrammar::NameAddr => (self.part == Part::Lead && !self.begun) || in_value,
-            ListGrammar::Warning => self.begun && self.after_space,
+            ListGrammar::Warning => self.after_code && self.after_space && !self.warn_text,
             ListGrammar::Auth => self
                 .segment
                 .opens_quote(),
@@ -163,6 +169,7 @@ impl<'a> Locator<'a> {
     /// Record `c`, read at `at`, for the rules that look back; the mark
     /// the segment's first `=` makes.
     fn read(&mut self, at: usize, c: char) -> Option<Mark> {
+        self.after_code |= self.begun && c == ' ';
         let blank = is_trimmed(c);
         self.begun |= !blank;
         self.after_space = blank;
@@ -217,6 +224,7 @@ impl<'a> Locator<'a> {
         self.quotes_unclosed = close.is_none();
         if let Some(close) = close {
             self.i = close + 1;
+            self.warn_text = self.grammar == ListGrammar::Warning;
         }
         self.read(at, '"');
         Mark::Quote { open: at, close }

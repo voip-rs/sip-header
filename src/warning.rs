@@ -8,7 +8,7 @@ use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::error::{FaultCode, ParseError};
 use crate::is_token_char;
 use crate::list::CommaList;
-use crate::locate::ListGrammar;
+use crate::locate::{ListGrammar, Locator, Mark};
 use crate::lws;
 use crate::span::Span;
 
@@ -198,17 +198,13 @@ fn parse_warning_entry(
 
     let after_code = &s[space_pos..];
     let rest = after_code.trim_start();
+    let quote = Locator::entry(s, ListGrammar::Warning).find_map(|m| match m {
+        Mark::Quote { open, close } => Some((open, close)),
+        _ => None,
+    });
 
-    // The list splitter opens warn-text at a quote after whitespace; a quote
-    // glued to the agent is a stray one.
-    let quote_pos = after_code
-        .char_indices()
-        .find(|&(i, c)| c == '"' && after_code[..i].ends_with(|p: char| p.is_ascii_whitespace()))
-        .map(|(i, _)| i)
-        .or_else(|| after_code.find('"'))
-        .ok_or_else(|| ParseError::malformed(Field::Text, FaultCode::Missing, None))?;
-
-    let raw_agent = lws::trim_in(entry, &after_code[..quote_pos], Field::Agent, warnings);
+    let agent_end = quote.map_or(s.len(), |(open, _)| open);
+    let raw_agent = lws::trim_in(entry, &s[space_pos..agent_end], Field::Agent, warnings);
     let agent = crate::token_field(entry, raw_agent, Field::Agent, warnings);
     if agent.is_empty() {
         return Err(at(Field::Agent, FaultCode::Missing, rest));
@@ -224,7 +220,10 @@ fn parse_warning_entry(
         );
     }
 
-    let text = parse_quoted_string(entry, &after_code[quote_pos..], warnings)?;
+    let Some((open, close)) = quote else {
+        return Err(ParseError::malformed(Field::Text, FaultCode::Missing, None));
+    };
+    let text = warn_text(entry, &s[open..], close.map(|c| c - open), warnings)?;
 
     Ok(SipWarningEntry {
         code,
@@ -259,60 +258,50 @@ fn is_hostport(agent: &str) -> bool {
     port_ok && sip_uri::Host::parse_strict(host).is_ok()
 }
 
-/// Parse a quoted string starting with `"`, returning the unescaped content.
+/// The `warn-text` opening `s`, a slice of `entry`, unescaped, its quote
+/// closing at `close`; text after it is dropped under
+/// [`WarningCode::TrailingContent`].
 ///
 /// A final `\"` with no other close is read as a closing quote after a lone
 /// backslash, which is dropped with [`WarningCode::TrailingBackslash`].
-fn parse_quoted_string(
+fn warn_text(
     entry: &str,
     s: &str,
+    close: Option<usize>,
     warnings: &mut Vec<ParseWarning>,
 ) -> Result<String, ParseError> {
-    let Some(content) = s.strip_prefix('"') else {
+    let Some(close) = close else {
+        if let Some(inner) = s[1..].strip_suffix('"') {
+            let (text, trailing_backslash) = crate::unescape_quoted_pair_checked(inner);
+            if trailing_backslash {
+                warnings.push(
+                    ParseWarning::new(Field::Text, WarningCode::TrailingBackslash)
+                        .at(crate::offset_in(entry, inner) + inner.len() - 1),
+                );
+                return Ok(text);
+            }
+        }
         return Err(ParseError::malformed(
             Field::Text,
-            FaultCode::Missing,
+            FaultCode::Unterminated,
             Some(crate::offset_in(entry, s)),
         ));
     };
-
-    // Find the closing quote, respecting backslash escapes.
-    let mut escaped = false;
-    for (i, c) in content.char_indices() {
-        if escaped {
-            escaped = false;
-        } else if c == '\\' {
-            escaped = true;
-        } else if c == '"' {
-            let after = &content[i + 1..];
-            if let Some(junk) = Some(lws::trim_start_in(entry, after, Field::Text, warnings))
-                .filter(|j| !j.is_empty())
-            {
-                warnings.push(
-                    ParseWarning::new(Field::Text, WarningCode::TrailingContent)
-                        .at(crate::offset_in(entry, junk))
-                        .covering(Span::within(entry, junk.trim_end())),
-                );
-            }
-            return Ok(crate::unescape_quoted_pair(&content[..i]));
-        }
-    }
-    if let Some(inner) = content.strip_suffix('"') {
-        let (text, trailing_backslash) = crate::unescape_quoted_pair_checked(inner);
-        if trailing_backslash {
-            warnings.push(
-                ParseWarning::new(Field::Text, WarningCode::TrailingBackslash)
-                    .at(crate::offset_in(entry, inner) + inner.len() - 1),
-            );
-            return Ok(text);
-        }
-    }
-
-    Err(ParseError::malformed(
+    if let Some(junk) = Some(lws::trim_start_in(
+        entry,
+        &s[close + 1..],
         Field::Text,
-        FaultCode::Unterminated,
-        Some(crate::offset_in(entry, s)),
+        warnings,
     ))
+    .filter(|j| !j.is_empty())
+    {
+        warnings.push(
+            ParseWarning::new(Field::Text, WarningCode::TrailingContent)
+                .at(crate::offset_in(entry, junk))
+                .covering(Span::within(entry, junk.trim_end())),
+        );
+    }
+    Ok(crate::unescape_quoted_pair(&s[1..close]))
 }
 
 impl crate::span::Located for SipWarningEntry {}
