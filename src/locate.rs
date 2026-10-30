@@ -67,6 +67,8 @@
 //! that sets what reading each of them would; only the other bytes are
 //! decoded and matched. A rule that starts looking at a byte takes it out
 //! of [`PLAIN`], or the run steps over it unseen.
+//! `plain_runs_read_as_one_character_at_a_time` holds every mode's marks
+//! to those of the same locator with the runs turned off.
 //!
 //! `cfws.rs` shares [`Segment`] and `closing_quote` to locate a MIME
 //! parameter's quoted value.
@@ -187,6 +189,10 @@ pub(crate) struct Locator<'a> {
     quotes_unclosed: bool,
     /// Set once a bracket fails to close, since no later one can.
     brackets_unclosed: bool,
+    /// Whether [`PLAIN`] runs are read one character at a time, the
+    /// reference the fast path is tested against.
+    #[cfg(test)]
+    one_by_one: bool,
 }
 
 impl<'a> Locator<'a> {
@@ -207,6 +213,8 @@ impl<'a> Locator<'a> {
             warn_text: false,
             quotes_unclosed: false,
             brackets_unclosed: false,
+            #[cfg(test)]
+            one_by_one: false,
         }
     }
 
@@ -385,6 +393,8 @@ impl Iterator for Locator<'_> {
                 .iter()
                 .take_while(|&&b| PLAIN[usize::from(b)])
                 .count();
+            #[cfg(test)]
+            let run = if self.one_by_one { 0 } else { run };
             if run > 0 {
                 self.read_plain(self.i);
                 self.i += run;
@@ -433,6 +443,8 @@ impl Iterator for Locator<'_> {
                         i: self.i,
                         quotes_unclosed: self.quotes_unclosed,
                         brackets_unclosed: self.brackets_unclosed,
+                        #[cfg(test)]
+                        one_by_one: self.one_by_one,
                         ..Locator::split(self.text, self.grammar)
                     };
                     return Some(Mark::Comma(at));
@@ -739,7 +751,65 @@ mod tests {
         )
     }
 
+    /// What the rules name, each listed here rather than read from
+    /// [`PLAIN`], so a byte wrongly made plain is still drawn.
+    const NAMED: &[&str] = &[
+        "\"", "\\", "<", ">", ";", "=", ",", "@", ":", " ", "\t", "\n", "\u{b}", "\u{c}", "\r",
+        "\u{a0}", "\u{85}", "\u{3000}", "sip", "SIPS", "sip:", "sips:", "tel:", "399 ",
+    ];
+
+    /// Openings that put the next byte where a rule looks at it: an entry
+    /// that starts a bare SIP URI, a userinfo `;`, a warn-agent, a value.
+    const CONTEXTS: &[&str] = &[",sip:", ", SIPS:", "<sip:", "sip:u;", ";x@", "399 h ", "p="];
+
+    /// Plain ASCII and non-ASCII text.
+    const UNNAMED: &[&str] = &[
+        "a",
+        "x.y",
+        "/",
+        "-_!%*+`'~",
+        "()[]{}?&$#|^",
+        "9",
+        "é",
+        "中文",
+    ];
+
+    /// Text drawn mostly from [`NAMED`] and [`CONTEXTS`], between plain
+    /// runs, non-ASCII text and any one ASCII byte.
+    fn rule_text() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            6 => prop::sample::select(NAMED).prop_map(str::to_owned),
+            3 => prop::sample::select(CONTEXTS).prop_map(str::to_owned),
+            2 => prop::sample::select(UNNAMED).prop_map(str::to_owned),
+            1 => (0u8..0x80).prop_map(|b| char::from(b).to_string()),
+        ];
+        prop::collection::vec(piece, 0..32).prop_map(|p| p.concat())
+    }
+
+    /// The marks of `locator`, read with and without its [`PLAIN`] runs.
+    fn both_ways<'a>(locator: impl Fn() -> Locator<'a>) -> (Vec<Mark>, Vec<Mark>) {
+        let reference = Locator {
+            one_by_one: true,
+            ..locator()
+        };
+        (locator().collect(), reference.collect())
+    }
+
     proptest! {
+        /// A [`PLAIN`] run read in one step marks what reading it one
+        /// character at a time does, in every grammar and mode.
+        #[test]
+        fn plain_runs_read_as_one_character_at_a_time(text in rule_text()) {
+            for grammar in GRAMMARS {
+                let (fast, reference) = both_ways(|| Locator::split(&text, grammar));
+                prop_assert_eq!(fast, reference, "split {:?} {:?}", grammar, text);
+                let (fast, reference) = both_ways(|| Locator::entry(&text, grammar));
+                prop_assert_eq!(fast, reference, "entry {:?} {:?}", grammar, text);
+            }
+            let (fast, reference) = both_ways(|| Locator::params(&text));
+            prop_assert_eq!(fast, reference, "params {:?}", text);
+        }
+
         /// Each entry of a row carries the marks the row's split gave it.
         #[test]
         fn an_entry_reads_as_the_split_framed_it(row in text()) {
