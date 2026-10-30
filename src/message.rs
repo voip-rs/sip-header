@@ -54,8 +54,8 @@
 //!
 //! [`MessageLines`] is that line rule; [`SipMessageHeaders`] and every
 //! extract function read through it. Each line is searched for its LF once,
-//! the blank line found during the walk, and a name bounded in one pass over
-//! its bytes. A row computes nothing more until asked, so a caller after one
+//! the blank line found during the walk, and a name bounded by one search
+//! for its colon and a trim back over SP and HTAB. A row computes nothing more until asked, so a caller after one
 //! header pays, on every other row, only for that, and a value allocates only
 //! to unfold. The start-line check, which runs on the first line only,
 //! allocates nothing either.
@@ -948,18 +948,12 @@ impl<T: ?Sized + MessageText> std::fmt::Debug for MessageRow<'_, T> {
 /// colon allowed: where the name ends and where the colon is.
 #[inline]
 fn header_line(bytes: &[u8]) -> Option<(usize, usize)> {
-    let mut name_end = 0;
-    for (i, &b) in bytes
+    let colon = memchr::memchr(b':', bytes)?;
+    let name_end = bytes[..colon]
         .iter()
-        .enumerate()
-    {
-        match b {
-            b':' => return (name_end > 0).then_some((name_end, i)),
-            b' ' | b'\t' => {}
-            _ => name_end = i + 1,
-        }
-    }
-    None
+        .rposition(|b| !matches!(b, b' ' | b'\t'))
+        .map_or(0, |i| i + 1);
+    (name_end > 0).then_some((name_end, colon))
 }
 
 /// One warning per breach class in `name`, which starts at byte `at`.
