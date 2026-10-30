@@ -24,7 +24,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/voip-rs/sip-header"
 
 [workspace.dependencies]
-sip-uri = "0.3.0-rc.1"
+sip-uri = "0.3.0-rc.2"
 
 [features]
 default = ["message"]

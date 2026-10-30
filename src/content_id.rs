@@ -37,6 +37,9 @@
 use std::fmt;
 use std::ops::Range;
 
+use sip_uri::encoding::decode_cid;
+use sip_uri::Uri;
+
 use crate::cfws::{self, Framed, Grammar};
 use crate::diagnostic::{Field, ParseWarning, Parsed, WarningCode};
 use crate::error::{FaultCode, ParseError};
@@ -124,6 +127,29 @@ impl SipContentId {
     pub fn right(&self) -> Option<&str> {
         self.at
             .map(|at| &self.value[at + 1..])
+    }
+
+    /// Whether `uri` is a `cid:` URL (RFC 2392) naming this id: its text
+    /// after the scheme, percent-decoded, equals [`id`](Self::id) byte for
+    /// byte.
+    ///
+    /// ```
+    /// use sip_header::sip_uri::{Uri, UriParse};
+    /// use sip_header::{HeaderParse, SipContentId};
+    ///
+    /// let id = SipContentId::parse("<foo4%foo1@example.net>")?;
+    /// assert!(id.matches_cid(&Uri::parse("cid:foo4%25foo1@example.net")?));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn matches_cid(&self, uri: &Uri) -> bool {
+        uri.as_other()
+            .filter(|other| other.scheme() == Some("cid"))
+            .is_some_and(|other| {
+                decode_cid(other.rest()).as_ref()
+                    == self
+                        .value
+                        .as_bytes()
+            })
     }
 }
 
