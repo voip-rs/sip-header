@@ -71,8 +71,11 @@ use crate::lws::is_trimmed;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListGrammar {
     /// `token-ish *(SEMI generic-param)`: Via, the Accept family, Reason,
-    /// Security, the token lists.
+    /// Security.
     Token,
+    /// `token`, `Method` or `callid` alone: the token lists, where nothing
+    /// opens and every `,` separates.
+    Plain,
     /// `LAQUOT absoluteURI RAQUOT *(SEMI generic-param)`: Call-Info and its
     /// kin, Geolocation.
     Uri,
@@ -210,6 +213,7 @@ impl<'a> Locator<'a> {
                 .opens_quote();
         match self.grammar {
             ListGrammar::Token | ListGrammar::Uri => in_value,
+            ListGrammar::Plain => false,
             ListGrammar::NameAddr => (self.part == Part::Lead && !self.begun) || in_value,
             ListGrammar::Warning => self.after_code && self.after_space && !self.warn_text,
             ListGrammar::Auth => self
@@ -225,7 +229,9 @@ impl<'a> Locator<'a> {
             ListGrammar::Uri => self.part == Part::Lead && !self.begun,
             ListGrammar::NameAddr => self.part == Part::Lead && !self.bracketed,
             ListGrammar::Anywhere => true,
-            ListGrammar::Token | ListGrammar::Warning | ListGrammar::Auth => false,
+            ListGrammar::Token | ListGrammar::Plain | ListGrammar::Warning | ListGrammar::Auth => {
+                false
+            }
         }
     }
 
@@ -369,7 +375,7 @@ impl Iterator for Locator<'_> {
                 {
                     self.part = Part::Userinfo(at);
                 }
-                (';', _) if self.grammar != ListGrammar::Auth => {
+                (';', _) if !matches!(self.grammar, ListGrammar::Auth | ListGrammar::Plain) => {
                     self.read(at, c);
                     self.part = Part::Params;
                     self.segment = Segment::default();
@@ -641,8 +647,9 @@ mod tests {
         );
     }
 
-    const GRAMMARS: [ListGrammar; 6] = [
+    const GRAMMARS: [ListGrammar; 7] = [
         ListGrammar::Token,
+        ListGrammar::Plain,
         ListGrammar::Uri,
         ListGrammar::NameAddr,
         ListGrammar::Warning,

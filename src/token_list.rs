@@ -79,7 +79,7 @@ impl TokenList {
     /// Errors as [`new`](Self::new) does on a wrong header, and when no
     /// token remains where `header` needs one.
     pub fn parse_with_warnings(header: SipHeader, raw: &str) -> Result<Parsed<Self>, ParseError> {
-        Self::read(header, crate::split_row(raw, None, ListGrammar::Token))
+        Self::read(header, crate::split_row(raw, None, ListGrammar::Plain))
     }
 
     /// Parse `raw` leniently, discarding the warnings.
@@ -133,7 +133,7 @@ impl TokenList {
         header: SipHeader,
         rows: impl IntoIterator<Item = &'a str>,
     ) -> Result<Parsed<Self>, ParseError> {
-        Self::read(header, crate::row_entries(rows, ListGrammar::Token))
+        Self::read(header, crate::row_entries(rows, ListGrammar::Plain))
     }
 
     /// Build from header rows leniently, discarding the warnings.
