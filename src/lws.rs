@@ -21,15 +21,21 @@
 use crate::diagnostic::{Field, ParseWarning, WarningCode};
 use crate::span::Span;
 
-/// `s` split into the whitespace `str::trim_start` removes and the rest.
+/// Whether the parsers trim `c`: the class `str::trim` removes, and the
+/// only whitespace class any reader or the list splitter tests.
+pub(crate) fn is_trimmed(c: char) -> bool {
+    c.is_whitespace()
+}
+
+/// `s` split into the leading [`is_trimmed`] run and the rest.
 pub(crate) fn split_start(s: &str) -> (&str, &str) {
-    let rest = s.trim_start();
+    let rest = s.trim_start_matches(is_trimmed);
     (&s[..s.len() - rest.len()], rest)
 }
 
-/// `s` split into the rest and the whitespace `str::trim_end` removes.
+/// `s` split into the rest and the trailing [`is_trimmed`] run.
 pub(crate) fn split_end(s: &str) -> (&str, &str) {
-    let rest = s.trim_end();
+    let rest = s.trim_end_matches(is_trimmed);
     (rest, &s[rest.len()..])
 }
 
