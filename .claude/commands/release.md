@@ -58,7 +58,7 @@ scripts/release-tag.sh sip-header-catalog vX.Y.Z scratch/changelog-sip-header-ca
 scripts/release-tag.sh sip-header vX.Y.Z scratch/changelog-vX.Y.Z.txt
 ```
 
-   Bumps the package's manifest (for the catalog, also sip-header's requirement on it: the full version for a prerelease, `MAJOR.MINOR` otherwise), commits `release: <tag>`, detaches HEAD, pins `Cargo.lock` on that detached commit (`build: pin Cargo.lock for <tag>`), signs the tag from the changelog file, and returns to the branch. Refuses to run on a dirty tree, off master, or if the tag already exists. Nothing is pushed yet.
+   Bumps the package's manifest (for the catalog, also sip-header's requirement on it: the full version for a prerelease, `MAJOR.MINOR` otherwise), dry-runs the publish of every workspace package at the bumped versions (a catalog version not yet on crates.io resolves from the workspace; a failure restores the manifests and commits nothing), commits `release: <tag>`, detaches HEAD, pins `Cargo.lock` on that detached commit (`build: pin Cargo.lock for <tag>`), signs the tag from the changelog file, and returns to the branch. Refuses to run on a dirty tree, off master, or if the tag already exists. Nothing is pushed yet.
 
 4. Push master, wait for CI green:
 

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Bump one package's version, commit, pin Cargo.lock on a detached commit,
-# sign the tag.
+# Bump one package's version, dry-run the publish of every package at the
+# bumped versions, commit, pin Cargo.lock on a detached commit, sign the tag.
 #
 # The detach dance is the error-prone part of a release: a chained command
 # rejected mid-way (a hook, a denied permission) can commit Cargo.lock onto
@@ -78,6 +78,14 @@ if [ "$PACKAGE" = sip-header-catalog ]; then
 		exit 1
 	fi
 	git add Cargo.toml
+fi
+
+# The release versions must package before anything is committed; a catalog
+# version not yet on crates.io resolves from the workspace.
+if ! cargo publish --dry-run --workspace --allow-dirty; then
+	git restore --staged --worktree "$MANIFEST" Cargo.toml
+	echo "Publish dry run failed for $TAG; manifests restored, nothing committed." >&2
+	exit 1
 fi
 
 # A version the manifests already carry has nothing to commit.
