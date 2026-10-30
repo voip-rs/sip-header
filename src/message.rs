@@ -616,6 +616,7 @@ impl<'a, T: ?Sized + MessageText> MessageLines<'a, T> {
 impl<'a, T: ?Sized + MessageText> Iterator for MessageLines<'a, T> {
     type Item = MessageLine<'a, T>;
 
+    #[inline]
     fn next(&mut self) -> Option<MessageLine<'a, T>> {
         loop {
             let line = self.line()?;
