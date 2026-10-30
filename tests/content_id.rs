@@ -264,3 +264,35 @@ fn serde_holds_both_sides_and_reads_back_what_the_parser_produces() -> R {
     }
     Ok(())
 }
+
+#[test]
+fn a_cid_url_names_the_id_it_decodes_to() -> R {
+    use sip_header::sip_uri::{Uri, UriParse};
+    use sip_header::SipGeolocation;
+
+    let cid = |raw: &str| Uri::parse(raw).unwrap();
+    let id = SipContentId::parse_strict("<foo4%foo1@example.net>")?;
+    assert!(id.matches_cid(&cid("cid:foo4%25foo1@example.net")));
+    let id = SipContentId::parse_strict("<abc@example.com>")?;
+    for (raw, matches) in [
+        ("cid:abc@example.com", true),
+        ("CID:abc@example.com", true),
+        ("cid:%61bc@example.com", true),
+        ("cid:ABC@example.com", false),
+        ("cid:abc@example.com.", false),
+        ("cid:abc%40x@example.com", false),
+        ("mid:abc@example.com", false),
+        ("sip:abc@example.com", false),
+        ("https://example.com/abc@example.com", false),
+    ] {
+        assert_eq!(id.matches_cid(&cid(raw)), matches, "{raw}");
+    }
+    let quoted = SipContentId::parse("<\"a b\"@example.com>")?;
+    assert!(quoted.matches_cid(&cid("cid:%22a%20b%22@example.com")));
+    let bare = SipContentId::parse("<abc>")?;
+    assert!(bare.matches_cid(&cid("cid:abc")));
+    assert!(!bare.matches_cid(&cid("cid:abc@example.com")));
+    let geo = SipGeolocation::parse("<cid:abc@example.com>;inserted-by=example.org")?;
+    assert!(id.matches_cid(geo.entries()[0].uri()));
+    Ok(())
+}

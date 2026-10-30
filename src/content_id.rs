@@ -25,6 +25,14 @@
 //!
 //! RFC 8262 section 3.4.2 forbids a proxy to modify Content-ID, so a
 //! forwarder re-sends the row it received rather than this value's print.
+//!
+//! A `cid:` URL (RFC 2392) names a body part by its Content-ID with the
+//! brackets removed and the characters a URL cannot hold percent-encoded.
+//! `matches_cid` decodes the URL's text after the scheme through sip-uri's
+//! `decode_cid` and compares the bytes with the id; the decoded form is
+//! only compared, never stored or printed. `%25` decodes to `%`, per RFC
+//! 2392 erratum 454, which corrects the RFC's own example: the URL
+//! `cid:foo4%25foo1@example.net` names `<foo4%foo1@example.net>`.
 
 use std::fmt;
 use std::ops::Range;
