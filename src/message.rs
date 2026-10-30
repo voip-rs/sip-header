@@ -101,6 +101,7 @@ impl<'a> RawLines<'a> {
 impl Iterator for RawLines<'_> {
     type Item = Range<usize>;
 
+    #[inline]
     fn next(&mut self) -> Option<Range<usize>> {
         let at = self.next;
         let rest = self
@@ -940,6 +941,7 @@ impl<T: ?Sized + MessageText> std::fmt::Debug for MessageRow<'_, T> {
 
 /// `bytes`, a line, as `name: value` with a non-empty name, SWS before the
 /// colon allowed: where the name ends and where the colon is.
+#[inline]
 fn header_line(bytes: &[u8]) -> Option<(usize, usize)> {
     let mut name_end = 0;
     for (i, &b) in bytes
