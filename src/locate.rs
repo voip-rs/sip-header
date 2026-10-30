@@ -383,6 +383,8 @@ pub(crate) fn closing_quote(s: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     fn commas(text: &str, grammar: ListGrammar) -> Vec<usize> {
@@ -574,5 +576,117 @@ mod tests {
                 Mark::Param(20),
             ]
         );
+    }
+
+    const GRAMMARS: [ListGrammar; 6] = [
+        ListGrammar::Token,
+        ListGrammar::Uri,
+        ListGrammar::NameAddr,
+        ListGrammar::Warning,
+        ListGrammar::Auth,
+        ListGrammar::Anywhere,
+    ];
+
+    const PIECES: &[&str] = &[
+        "a", " ", "\t", "\u{a0}", "\u{b}", "\u{85}", "\u{3000}", "\"", "\\", "<", ">", ";", "=",
+        ",", "@", ":", "sip:", "SIPS:", "399 ",
+    ];
+
+    fn text() -> impl Strategy<Value = String> {
+        prop::collection::vec(prop::sample::select(PIECES), 0..24).prop_map(|p| p.concat())
+    }
+
+    /// `mark` moved `by` bytes later.
+    fn shifted(mark: Mark, by: usize) -> Mark {
+        let at = |i: usize| i + by;
+        match mark {
+            Mark::Quote { open, close } => Mark::Quote {
+                open: at(open),
+                close: close.map(at),
+            },
+            Mark::Bracket { open, close } => Mark::Bracket {
+                open: at(open),
+                close: close.map(at),
+            },
+            Mark::Param(i) => Mark::Param(at(i)),
+            Mark::Value(i) => Mark::Value(at(i)),
+            Mark::Comma(i) => Mark::Comma(at(i)),
+        }
+    }
+
+    /// Whether `mark` is a quote or bracket that never closes.
+    fn left_open(mark: &Mark) -> bool {
+        matches!(
+            mark,
+            Mark::Quote { close: None, .. } | Mark::Bracket { close: None, .. }
+        )
+    }
+
+    proptest! {
+        /// Each entry of a row carries the marks the row's split gave it.
+        #[test]
+        fn an_entry_reads_as_the_split_framed_it(row in text()) {
+            for grammar in GRAMMARS {
+                let marks: Vec<Mark> = Locator::split(&row, grammar).collect();
+                let mut start = 0;
+                for end in commas(&row, grammar).into_iter().chain([row.len()]) {
+                    let within: Vec<Mark> = marks
+                        .iter()
+                        .copied()
+                        .filter(|m| !matches!(m, Mark::Comma(_)))
+                        .filter(|m| (start..end).contains(&match *m {
+                            Mark::Quote { open, .. } | Mark::Bracket { open, .. } => open,
+                            Mark::Param(i) | Mark::Value(i) | Mark::Comma(i) => i,
+                        }))
+                        .collect();
+                    let alone: Vec<Mark> = Locator::entry(&row[start..end], grammar)
+                        .map(|m| shifted(m, start))
+                        .collect();
+                    prop_assert_eq!(alone, within, "{:?} {:?}", grammar, &row[start..end]);
+                    start = end + 1;
+                }
+            }
+        }
+
+        /// The parameter reader frames a tail as the entry reader does.
+        #[test]
+        fn params_read_as_the_entry_framed_them(entry in text()) {
+            for grammar in [ListGrammar::Token, ListGrammar::Uri, ListGrammar::NameAddr] {
+                let marks: Vec<Mark> = Locator::entry(&entry, grammar).collect();
+                let Some(first) = marks.iter().position(|m| matches!(m, Mark::Param(_))) else {
+                    continue;
+                };
+                let Mark::Param(semi) = marks[first] else {
+                    continue;
+                };
+                let tail: Vec<Mark> = Locator::params(&entry[semi..])
+                    .map(|m| shifted(m, semi))
+                    .collect();
+                prop_assert_eq!(&tail[..], &marks[first..], "{:?} {:?}", grammar, entry);
+            }
+        }
+
+        /// Entries that are one entry alone and leave nothing open split
+        /// back out of their join.
+        #[test]
+        fn closed_entries_split_back_out_of_their_join(
+            entries in prop::collection::vec(text(), 1..4),
+        ) {
+            for grammar in GRAMMARS {
+                let kept: Vec<&str> = entries
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|e| {
+                        let marks: Vec<Mark> = Locator::split(e, grammar).collect();
+                        !marks.iter().any(|m| matches!(m, Mark::Comma(_)) || left_open(m))
+                    })
+                    .collect();
+                if kept.is_empty() {
+                    continue;
+                }
+                let joined = kept.join(",");
+                prop_assert_eq!(split(&joined, grammar), kept, "{:?}", grammar);
+            }
+        }
     }
 }

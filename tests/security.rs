@@ -2429,3 +2429,286 @@ proptest! {
         }
     }
 }
+
+/// Pieces of list framing, the whitespace classes around it included.
+const FRAMING: &[&str] = &[
+    "a", "b", " ", "\u{a0}", "\u{b}", "\u{85}", "\u{3000}", "\"", "\\", "<", ">", ";", "=", ",",
+    "@", "x=",
+];
+
+/// One list entry: a plausible start under the list's grammar, then framing.
+fn entry_of(starts: &'static [&'static str]) -> impl Strategy<Value = String> {
+    (
+        prop::sample::select(starts),
+        prop::collection::vec(prop::sample::select(FRAMING), 0..12),
+    )
+        .prop_map(|(start, tail)| format!("{start}{}", tail.concat()))
+}
+
+const NAME_ADDR_STARTS: &[&str] = &[
+    "<sip:a@example.com>",
+    "<sip:a@example.com>;p=",
+    "sip:a@example.com",
+    "sip:u;",
+    "\"x\" <sip:b@example.org>",
+    "x <sip:c@example.net>",
+    "",
+];
+const URI_STARTS: &[&str] = &["<urn:example:1>", "<http://example.com/a>;purpose=", ""];
+const WARNING_STARTS: &[&str] = &["399 example.com ", "399 example.com \"", "301 h "];
+const REASON_STARTS: &[&str] = &["SIP;cause=200;text=", "SIP;cause=200", "Q.850;"];
+const VIA_STARTS: &[&str] = &[
+    "SIP/2.0/UDP 198.51.100.1;branch=z9hG4bK1;x=",
+    "SIP/2.0/UDP 203.0.113.1",
+];
+const AUTH_STARTS: &[&str] = &["realm=", "nonce=", "qop=", "a"];
+
+/// The range of the RFC 3261 §25.1 `quoted-string` opening `text`, which
+/// starts at `at` in its row, `quoted-pair` honoured.
+fn quoted_prefix(text: &str, at: usize) -> Option<Range<usize>> {
+    let bytes = text
+        .strip_prefix('"')?
+        .as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return Some(at..at + i + 2),
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// The span `span` of `row` reduced to the quoted-string it opens with.
+fn quoted(row: &str, span: Span) -> Option<Range<usize>> {
+    let r = span.range();
+    quoted_prefix(&row[r.clone()], r.start)
+}
+
+/// The quoted-strings the parameter values in `params` open with.
+fn quoted_params(row: &str, params: &HeaderParams) -> Vec<Range<usize>> {
+    params
+        .iter()
+        .flat_map(|(name, _)| params.value_spans(name))
+        .flatten()
+        .filter_map(|s| quoted(row, s))
+        .collect()
+}
+
+/// The ranges of `row` a URI read between `<` and `>` covers.
+fn bracketed(row: &str, uri: Option<Span>) -> Option<Range<usize>> {
+    uri.map(|s| s.range())
+        .filter(|r| row[..r.start].ends_with('<') && row[r.end..].starts_with('>'))
+}
+
+/// The ranges of `row` an address holds whole: a quoted display name, a
+/// bracketed URI, the quoted-strings its parameter values open with.
+fn addr_holds(row: &str, addr: &SipHeaderAddr) -> Vec<Range<usize>> {
+    addr.display_name_span()
+        .and_then(|s| quoted(row, s))
+        .into_iter()
+        .chain(bracketed(row, addr.uri_span()))
+        .chain(quoted_params(row, addr.params()))
+        .collect()
+}
+
+/// The ranges of `row` a URI entry holds whole: its URI when its `<` opens
+/// the entry, the recovery of a bracketless one aside.
+fn uri_entry_holds(row: &str, entry: &UriInfoEntry) -> Vec<Range<usize>> {
+    let opens_entry = |r: &Range<usize>| {
+        entry
+            .span()
+            .is_some_and(|s| {
+                s.range()
+                    .start
+                    + 1
+                    == r.start
+            })
+    };
+    bracketed(row, entry.uri_span())
+        .filter(opens_entry)
+        .into_iter()
+        .chain(quoted_params(row, entry.params()))
+        .collect()
+}
+
+/// Whether every `,` of `text` in `within` lies inside one of `held`.
+fn commas_held(text: &str, within: Range<usize>, held: &[Range<usize>]) -> bool {
+    text[within.clone()]
+        .match_indices(',')
+        .all(|(i, _)| {
+            held.iter()
+                .any(|r| r.contains(&(within.start + i)))
+        })
+}
+
+/// What a warning says about an entry, apart from its position.
+fn about(w: &ParseWarning) -> (Field, WarningCode, Option<usize>) {
+    (w.field, w.code, w.entry)
+}
+
+/// P1: entries whose commas all lie inside what their reader holds, and
+/// whose reader reports no quote or bracket left open, read back joined
+/// with `", "` exactly as `from_entries` reads them.
+fn joined_reads_as_entries<L>(
+    entries: &[String],
+    all_held: impl Fn(&str, &L) -> bool,
+) -> Result<(), TestCaseError>
+where
+    L: ListParse + HeaderParse + PartialEq + std::fmt::Debug,
+{
+    let left_open = |w: &ParseWarning| {
+        matches!(
+            w.code,
+            WarningCode::SkippedEntry
+                | WarningCode::UnterminatedQuote
+                | WarningCode::UnclosedBracket
+                | WarningCode::EmptyEntry
+        )
+    };
+    let kept: Vec<&str> = entries
+        .iter()
+        .map(String::as_str)
+        .filter(|e| {
+            L::from_entries_with_warnings([*e]).is_ok_and(|p| {
+                !p.warnings
+                    .iter()
+                    .any(left_open)
+                    && all_held(e, &p.value)
+            })
+        })
+        .collect();
+    if kept.is_empty() {
+        return Ok(());
+    }
+    let joined = kept.join(", ");
+    let whole = L::parse_with_warnings(&joined).map(|p| {
+        let about: Vec<_> = p
+            .warnings
+            .iter()
+            .map(about)
+            .collect();
+        (p.value, about)
+    });
+    let split = L::from_entries_with_warnings(
+        kept.iter()
+            .copied(),
+    )
+    .map(|p| {
+        let about: Vec<_> = p
+            .warnings
+            .iter()
+            .map(about)
+            .collect();
+        (p.value, about)
+    });
+    prop_assert_eq!(whole, split, "{:?}", joined);
+    Ok(())
+}
+
+/// P2: every `,` inside a kept entry's span lies inside what that entry
+/// holds.
+fn kept_entries_hold_their_commas<E>(
+    row: &str,
+    entries: &[E],
+    span: impl Fn(&E) -> Option<Span>,
+    holds: impl Fn(&str, &E) -> Vec<Range<usize>>,
+) -> Result<(), TestCaseError> {
+    for entry in entries {
+        let Some(within) = span(entry) else {
+            continue;
+        };
+        prop_assert!(
+            commas_held(row, within.range(), &holds(row, entry)),
+            "{:?} {:?}",
+            row,
+            within
+        );
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    #[test]
+    fn joined_entries_read_as_the_entries(
+        name_addrs in prop::collection::vec(entry_of(NAME_ADDR_STARTS), 1..4),
+        uris in prop::collection::vec(entry_of(URI_STARTS), 1..4),
+        warnings in prop::collection::vec(entry_of(WARNING_STARTS), 1..4),
+        reasons in prop::collection::vec(entry_of(REASON_STARTS), 1..4),
+        vias in prop::collection::vec(entry_of(VIA_STARTS), 1..4),
+        auths in prop::collection::vec(entry_of(AUTH_STARTS), 1..4),
+    ) {
+        let one_addr = |e: &str, addrs: &[SipHeaderAddr]| {
+            addrs.iter().all(|a| commas_held(e, 0..e.len(), &addr_holds(e, a)))
+        };
+        joined_reads_as_entries::<ContactList>(&name_addrs, |e, l| one_addr(e, l.addrs()))?;
+        joined_reads_as_entries::<SipHeaderAddrList>(&name_addrs, |e, l| one_addr(e, l.entries()))?;
+        joined_reads_as_entries::<HistoryInfo>(&name_addrs, |e, l| {
+            l.entries().iter().all(|h| commas_held(e, 0..e.len(), &addr_holds(e, h.addr())))
+        })?;
+        joined_reads_as_entries::<UriInfo>(&uris, |e, l| {
+            l.entries().iter().all(|u| commas_held(e, 0..e.len(), &uri_entry_holds(e, u)))
+        })?;
+        joined_reads_as_entries::<SipWarning>(&warnings, |e, l| {
+            l.entries().iter().all(|w| w.text().matches(',').count() == e.matches(',').count())
+        })?;
+        joined_reads_as_entries::<SipReasonList>(&reasons, |e, l| {
+            l.entries().iter().all(|r| commas_held(e, 0..e.len(), &quoted_params(e, r.params())))
+        })?;
+        joined_reads_as_entries::<SipVia>(&vias, |e, l| {
+            l.entries().iter().all(|v| commas_held(e, 0..e.len(), &quoted_params(e, v.params())))
+        })?;
+
+        let auth = |items: &[&str]| SipAuthValue::parse(&format!("Digest {}", items.join(", ")));
+        let kept: Vec<&str> = auths
+            .iter()
+            .map(String::as_str)
+            .filter(|item| {
+                let raw = format!("Digest {item}");
+                SipAuthValue::parse_with_warnings(&raw).is_ok_and(|p| {
+                    p.value.token68().is_none()
+                        && p.value.params().len() == 1
+                        && !p.warnings.iter().any(|w| w.code == WarningCode::UnterminatedQuote)
+                        && commas_held(&raw, 0..raw.len(), &quoted_params(&raw, p.value.params()))
+                })
+            })
+            .collect();
+        if !kept.is_empty() {
+            let whole = auth(&kept).map(|a| a.params().iter().map(|(n, v)| (n.to_string(), v.map(str::to_string))).collect::<Vec<_>>());
+            let each: Vec<_> = kept
+                .iter()
+                .flat_map(|item| auth(&[item]).map(|a| a.params().iter().map(|(n, v)| (n.to_string(), v.map(str::to_string))).collect::<Vec<_>>()).unwrap_or_default())
+                .collect();
+            prop_assert_eq!(whole, Ok(each), "{:?}", kept);
+        }
+    }
+
+    #[test]
+    fn kept_entries_hold_every_comma_in_their_span(
+        name_addrs in prop::collection::vec(entry_of(NAME_ADDR_STARTS), 1..4),
+        uris in prop::collection::vec(entry_of(URI_STARTS), 1..4),
+        vias in prop::collection::vec(entry_of(VIA_STARTS), 1..4),
+    ) {
+        let row = name_addrs.join(", ");
+        if let Ok(l) = ContactList::parse(&row) {
+            kept_entries_hold_their_commas(&row, l.addrs(), SipHeaderAddr::span, addr_holds)?;
+        }
+        if let Ok(l) = SipHeaderAddrList::parse(&row) {
+            kept_entries_hold_their_commas(&row, l.entries(), SipHeaderAddr::span, addr_holds)?;
+        }
+        if let Ok(l) = HistoryInfo::parse(&row) {
+            kept_entries_hold_their_commas(&row, l.entries(), HistoryInfoEntry::span, |row, h| addr_holds(row, h.addr()))?;
+        }
+        let row = uris.join(", ");
+        if let Ok(l) = UriInfo::parse(&row) {
+            kept_entries_hold_their_commas(&row, l.entries(), UriInfoEntry::span, uri_entry_holds)?;
+        }
+        let row = vias.join(", ");
+        if let Ok(l) = SipVia::parse(&row) {
+            kept_entries_hold_their_commas(&row, l.entries(), SipViaEntry::span, |row, v| quoted_params(row, v.params()))?;
+        }
+    }
+}
