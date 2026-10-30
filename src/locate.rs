@@ -206,6 +206,50 @@ mod tests {
             .collect()
     }
 
+    /// `text` cut at the commas the locator finds under `grammar`.
+    fn split(text: &str, grammar: ListGrammar) -> Vec<&str> {
+        let mut entries = Vec::new();
+        let mut start = 0;
+        for i in commas(text, grammar) {
+            entries.push(&text[start..i]);
+            start = i + 1;
+        }
+        entries.push(&text[start..]);
+        entries
+    }
+
+    /// Whitespace the readers trim beyond SP and HTAB.
+    const TRIMMED: &[&str] = &["\u{a0}", "\u{b}", "\u{85}", "\u{3000}"];
+
+    #[test]
+    fn whitespace_before_a_quote_is_the_class_the_readers_trim() {
+        for ws in TRIMMED {
+            for (grammar, text) in [
+                (
+                    ListGrammar::NameAddr,
+                    format!("<sip:a@example.com>;p={ws}\"x, <sip:b@example.org>\""),
+                ),
+                (
+                    ListGrammar::Token,
+                    format!("SIP;cause=200;text={ws}\"a, b\""),
+                ),
+                (
+                    ListGrammar::NameAddr,
+                    format!("{ws}\"a, b\" <sip:x@example.com>"),
+                ),
+            ] {
+                assert_eq!(split(&text, grammar), [&text], "{grammar:?} {text:?}");
+                assert_eq!(split(&text, ListGrammar::Anywhere), [&text], "{text:?}");
+            }
+            let auth = format!("realm={ws}\"a, b\", nonce=\"n\"");
+            assert_eq!(
+                split(&auth, ListGrammar::Auth),
+                [&format!("realm={ws}\"a, b\""), " nonce=\"n\""],
+                "{auth:?}"
+            );
+        }
+    }
+
     proptest! {
         #[test]
         fn split_reproduces_the_frozen_splitter(text in row()) {

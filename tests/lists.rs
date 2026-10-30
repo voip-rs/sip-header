@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use sip_header::sip_uri::WarningKind;
 use sip_header::{
     split_comma_entries, ContactList, FaultCode, HeaderParse, HistoryInfo, ListParse, ParseError,
-    SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipGeolocation, SipHeader, SipHeaderAddrList,
-    SipHeaderLookup, SipReasonList, SipSecurity, SipVia, SipWarning, TokenList, TypedHeader,
-    UriInfo, WarningCode,
+    SipAccept, SipAcceptEncoding, SipAcceptLanguage, SipAuthValue, SipGeolocation, SipHeader,
+    SipHeaderAddrList, SipHeaderLookup, SipReasonList, SipSecurity, SipVia, SipWarning, TokenList,
+    TypedHeader, UriInfo, WarningCode,
 };
 
 fn is_empty_fault<T: std::fmt::Debug>(r: Result<T, ParseError>) -> bool {
@@ -752,4 +752,74 @@ fn an_entry_that_yields_nothing_errs_with_its_fault() {
         Err(ParseError::Malformed(f)) if f.position.is_some() && f.entry.is_none()
     ));
     assert!(is_empty_fault(SipAcceptEntry::parse(" ")));
+}
+
+/// `(code, position, entry)` of one warning.
+type Reported = (WarningCode, Option<usize>, Option<usize>);
+
+/// Each warning lenient parsing of `raw` raises, after checking `parse`
+/// keeps that value and `parse_strict` refuses the first warning.
+fn reported<T>(raw: &str) -> (T, Vec<Reported>)
+where
+    T: HeaderParse + PartialEq + std::fmt::Debug,
+{
+    let parsed = T::parse_with_warnings(raw).unwrap();
+    assert_eq!(T::parse(raw).as_ref(), Ok(&parsed.value), "{raw:?}");
+    assert_eq!(
+        T::parse_strict(raw),
+        Err(ParseError::NonConformant(parsed.warnings[0])),
+        "{raw:?}"
+    );
+    let seen = parsed
+        .warnings
+        .iter()
+        .map(|w| (w.code, w.position, w.entry))
+        .collect();
+    (parsed.value, seen)
+}
+
+/// Whitespace the readers trim beyond SP and HTAB, with the code each raises.
+const TRIMMED: [(&str, WarningCode); 2] = [
+    ("\u{a0}", WarningCode::NonLwsWhitespace),
+    ("\u{b}", WarningCode::ControlChar),
+];
+
+#[test]
+fn whitespace_before_a_quote_never_splits_the_quoted_value() {
+    for (ws, code) in TRIMMED {
+        let raw = format!("<sip:a@example.com>;p={ws}\"x, <sip:b@example.org>\"");
+        let (contacts, seen) = reported::<ContactList>(&raw);
+        let [addr] = contacts.addrs() else {
+            panic!("{raw:?}: {contacts:?}");
+        };
+        assert_eq!(addr.param("p"), Some(Some("x, <sip:b@example.org>")));
+        assert!(addr
+            .params()
+            .is_quoted("p"));
+        assert_eq!(seen, [(code, Some(22), Some(0))], "{raw:?}");
+
+        let raw = format!("SIP;cause=200;text={ws}\"a, b\"");
+        let (reasons, seen) = reported::<SipReasonList>(&raw);
+        let [reason] = reasons.entries() else {
+            panic!("{raw:?}: {reasons:?}");
+        };
+        assert_eq!(reason.text(), Some("a, b"));
+        assert_eq!(seen, [(code, Some(19), Some(0))], "{raw:?}");
+
+        let raw = format!("{ws}\"a, b\" <sip:x@example.com>");
+        let (addrs, seen) = reported::<SipHeaderAddrList>(&raw);
+        let [addr] = addrs.entries() else {
+            panic!("{raw:?}: {addrs:?}");
+        };
+        assert_eq!(addr.display_name(), Some("a, b"));
+        assert_eq!(seen, [(code, Some(0), Some(0))], "{raw:?}");
+
+        let raw = format!("Digest realm={ws}\"a, b\", nonce=\"n\"");
+        let (auth, seen) = reported::<SipAuthValue>(&raw);
+        assert_eq!((auth.realm(), auth.nonce()), (Some("a, b"), Some("n")));
+        assert!(auth
+            .params()
+            .is_quoted("realm"));
+        assert_eq!(seen, [(code, Some(13), None)], "{raw:?}");
+    }
 }
