@@ -1,10 +1,10 @@
 # Design Rationale
 
-## Comma lists split through one quote- and bracket-aware splitter
+## The list splitter and the entry readers locate quotes through one locator
 
-Every list header splits through `split_comma_entries`, which skips commas inside `<...>` and inside quoted strings (honouring `quoted-pair`). No header gets a private splitter, because a list entry's quoted string (Warning's warn-text, an auth param, a display name) is as likely to hold a comma as its URI is. The splitter frames the row with its control characters dropped, as the entry parsers read it, while each entry stays a slice of the row as handed in, so a dropped character never moves a boundary.
+Every list header splits through one splitter, and the splitter and each entry reader find quoted strings, the addr-spec's brackets and where parameters start through one locator per list grammar (`locate.rs`), so no reader holds text the splitter cut or cuts text the splitter held; a disagreement lets one quoted value smuggle a whole extra entry. No header gets a private splitter or a private quote reader, because a list entry's quoted string (Warning's warn-text, an auth param, a display name) is as likely to hold a comma as its URI is. The splitter frames the row with its control characters dropped, as the entry parsers read it, while each entry stays a slice of the row as handed in, so a dropped character never moves a boundary.
 
-A `"` opens a quoted string only at bracket depth zero, only where the list's grammar lets one start (a display name, a parameter value, warn-text), and only when it closes; any other quote is ordinary text. The public splitter, which does not know the grammar, accepts the union of those positions. A stray quote therefore never holds commas, and printing a leniently parsed list cannot pair it with a later quote and reframe the entries. Text after a final comma is not an entry, but the comma is reported; the public splitter has a reporting sibling so a caller that splits and then builds from entries does not lose that breach.
+A `"` opens a quoted string only where the list's grammar lets one start, after the whitespace the parsers trim, and only when it closes; any other quote is ordinary text and holds no comma. No close depends on where the entry ends, because the splitter decides before it knows: a final `\"` is a quoted-pair, never a close. A `<` holds commas only where the grammar puts an addr-spec and only when it closes, at the first `>`; brackets do not nest. The public splitter, which does not know the grammar, accepts the union of those positions. Printing a leniently parsed list therefore cannot pair a stray quote with a later one and reframe the entries. Text after a final comma is not an entry, but the comma is reported; the public splitter has a reporting sibling so a caller that splits and then builds from entries does not lose that breach.
 
 ## Token fields drop stray framing
 
@@ -14,17 +14,13 @@ A `"`, `<`, `>` or `,` inside a token field is dropped by the lenient parser und
 
 Every `*(SEMI generic-param)` tail is read by the shared parameter reader in `lib.rs`, so a fix to parameter grammar (SWS around `;` and `=`, a `;` inside a quoted `gen-value`) reaches every header at once. The reader starts at the opening `;`, so a `;` with no parameter after it is reported wherever it appears.
 
-A quote that never closes is not a quoted-string, and the reader falls back to splitting at the next `;`. Treating it as open would let one stray quote erase the mandatory parameters after it.
+A quote that never closes is not a quoted-string, and the reader falls back to splitting at the next `;`. Treating it as open would let one stray quote erase the mandatory parameters after it. A value is quoted only when its quote closes at the value's end, and only the segment's first `=` opens a value.
 
 ## Header parameters are one type
 
 Every value type holds its parameters in `HeaderParams`, so key case, quoting, duplicates and serde behave one way across headers. Values are stored unescaped with, per parameter, whether it arrived quoted; Display re-quotes exactly those, plus any value that is neither a token nor a host, and the parser warns about a bare value it will have to re-quote. Whether a parameter must be quoted depends on the role the header plays: a Digest challenge quotes `qop`, a credential does not, and one `SipAuthValue` serves both, so the wire form is the only reliable source and quotedness is part of equality.
 
 Setting a key that exists replaces its value in place and drops its later repeats. A value's parameters change only through its owner's guard, which runs the builders' check and clears the value's spans. A key its owner sets through a typed setter (a tag, `rport`, `index`) is refused by every generic operation, removal included, since a second copy or a missing one prints a header naming something else. Duplicates arriving from the wire are kept and warned about, and lookup returns the first; adding a name a built value already holds is refused, since strict parsing refuses the repeat. Parameters are never percent-decoded: `%` is a token character in header parameters. Serde writes the parameters as held, in order, reserved keys among them, since equality counts their position. Deserialize must read back every value the parser can produce, repeats included, and accepts a value only when parsing its own wire form yields it again.
-
-## header_addr keeps its own quoted-string reader
-
-`quoted-pair` escaping and unescaping for Warning, auth params and display-name output share the `lib.rs` helpers. The name-addr parser's quoted-string reader is the exception: it tracks the position where the quoted string ends so parsing can continue after it, and bolting that onto the shared unescaper would give every other caller a return value it has no use for.
 
 ## Replaces framing is an explicit constructor
 
@@ -72,7 +68,7 @@ Callers pass the canonical name. A store keyed by wire name matches it case-inse
 
 ## Parameters after a bare addr-spec belong to the header
 
-Without angle brackets, every parameter after the URI is a header parameter (RFC 3261 section 20.10), so a tag on a bare From reaches dialog matching. The split skips a SIP URI's userinfo, where `user` may hold `;`, and Display always brackets the URI, so the parameters stay header parameters when the value is read again.
+Without angle brackets, every parameter after the URI is a header parameter (RFC 3261 section 20.10), so a tag on a bare From reaches dialog matching. The split skips a SIP URI's userinfo, where `user` may hold `;`, and Display always brackets the URI, so the parameters stay header parameters when the value is read again. A `;` before any `<` makes the entry a bare addr-spec, so a later `<` is parameter text and a display name cannot hold a `;`.
 
 ## Received text is reached by span, not stored
 
