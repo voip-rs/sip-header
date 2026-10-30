@@ -173,31 +173,22 @@ pub(crate) fn offset_in(outer: &str, inner: &str) -> usize {
 
 /// Unescape RFC 3261 §25.1 `quoted-pair` sequences: `\"` → `"`, `\\` → `\`.
 ///
-/// Operates on the content *between* surrounding double-quotes (caller strips
-/// them). Skips allocation when no backslash escapes are present.
+/// Operates on the content between a quote and the close
+/// [`closing_quote`](locate::closing_quote) found for it, so every `\`
+/// escapes the character after it.
 pub(crate) fn unescape_quoted_pair(s: &str) -> String {
-    unescape_quoted_pair_checked(s).0
-}
-
-/// [`unescape_quoted_pair`], plus whether a lone trailing `\`, which escapes
-/// nothing, was dropped.
-pub(crate) fn unescape_quoted_pair_checked(s: &str) -> (String, bool) {
     if !s.contains('\\') {
-        return (s.to_string(), false);
+        return s.to_string();
     }
     let mut result = String::with_capacity(s.len());
     let mut escaped = false;
     for ch in s.chars() {
-        if escaped {
-            result.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else {
+        if escaped || ch != '\\' {
             result.push(ch);
         }
+        escaped = !escaped && ch == '\\';
     }
-    (result, escaped)
+    result
 }
 
 /// RFC 3261 §25.1 `token` character.
@@ -945,20 +936,11 @@ mod tests {
     }
 
     #[test]
-    fn unescape_reports_lone_trailing_backslash() {
-        assert_eq!(
-            unescape_quoted_pair_checked(r"ab\"),
-            ("ab".to_string(), true)
-        );
-        assert_eq!(
-            unescape_quoted_pair_checked(r"a\\"),
-            (r"a\".to_string(), false)
-        );
-        assert_eq!(
-            unescape_quoted_pair_checked(r#"a\"b"#),
-            (r#"a"b"#.to_string(), false)
-        );
-        assert_eq!(unescape_quoted_pair(r"ab\"), "ab");
+    fn unescape_takes_each_pair_whole() {
+        assert_eq!(unescape_quoted_pair(r"a\\"), r"a\");
+        assert_eq!(unescape_quoted_pair(r#"a\"b"#), r#"a"b"#);
+        assert_eq!(unescape_quoted_pair(r"a\\\b"), r"a\b");
+        assert_eq!(unescape_quoted_pair("a\\\u{e9}"), "a\u{e9}");
     }
 
     #[test]

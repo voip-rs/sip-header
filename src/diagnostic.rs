@@ -364,9 +364,6 @@ pub enum WarningCode {
     /// A `"` that opens a quoted-string (RFC 3261 §25.1) and never closes;
     /// the value ends at the next delimiter.
     UnterminatedQuote,
-    /// A `\` ending a quoted-string, which RFC 3261 §25.1 `quoted-pair`
-    /// requires to escape a character; dropped.
-    TrailingBackslash,
     /// Contact `*` beside addresses or another `*`, where RFC 3261 §20.10
     /// allows it only alone; dropped.
     WildcardNotAlone,
@@ -477,7 +474,6 @@ impl WarningCode {
     fn own_kind(self) -> WarningKind {
         match self {
             WarningCode::TrailingContent
-            | WarningCode::TrailingBackslash
             | WarningCode::WildcardNotAlone
             | WarningCode::InvalidCause
             | WarningCode::SkippedEntry
@@ -498,7 +494,6 @@ impl WarningCode {
             WarningCode::TrailingContent => "trailing-content",
             WarningCode::InvalidToken => "invalid-token",
             WarningCode::UnterminatedQuote => "unterminated-quote",
-            WarningCode::TrailingBackslash => "trailing-backslash",
             WarningCode::WildcardNotAlone => "wildcard-not-alone",
             WarningCode::MissingIndex => "missing-index",
             WarningCode::NotNameAddr => "not-name-addr",
@@ -566,7 +561,6 @@ mod tests {
             WarningCode::TrailingContent,
             WarningCode::InvalidToken,
             WarningCode::UnterminatedQuote,
-            WarningCode::TrailingBackslash,
             WarningCode::WildcardNotAlone,
             WarningCode::MissingIndex,
             WarningCode::NotNameAddr,
@@ -599,7 +593,6 @@ mod tests {
                 | WarningCode::TrailingContent
                 | WarningCode::InvalidToken
                 | WarningCode::UnterminatedQuote
-                | WarningCode::TrailingBackslash
                 | WarningCode::WildcardNotAlone
                 | WarningCode::MissingIndex
                 | WarningCode::NotNameAddr
