@@ -40,6 +40,29 @@ The last row is 1.16x the floor in instructions and 1.17-1.19x in cycles. The sa
 
 On a synthetic bench of 521-byte, 11-row blocks, stopping at the first Content-Length row, the walk costs about 218 instructions per row, about half of it the two `memchr` calls. Removing one would break the one-LF-search-per-line rule.
 
+## Cost model of reading a list
+
+Every list value and every entry reader goes through the `Locator` (`locate.rs`). Per row and entry it does:
+
+- one search for a `,` in the row; a row without one is a single entry and is not split, a row with one is read once by the splitter;
+- one locator pass over each entry, the entry reader stopping at the first parameter `;` and the parameter reader going on from there, so a single-entry row is read once and a multi-entry row twice;
+- per byte of a run of bytes no rule names (`PLAIN`), one table lookup; only the other bytes are decoded, matched and recorded, at about 100 instructions each, and a locator costs about 90 to build and finish;
+- each parameter segment read as soon as the next `;` closes it, with no list of segments in between.
+
+## Measured list path
+
+A synthetic bench of 1M messages, each parsed for two Via rows, Contact, From and To, one pinned core, setup subtracted:
+
+| list reader | instructions/msg | cycles/msg |
+|---|---|---|
+| a splitter and quote reader per header, before the shared locator | 66.9k | 21.3k |
+| shared locator, every character decoded and recorded | 89.3k | 29.0k |
+| runs of plain bytes read in one step | 73.8k | 23.1k |
+| parameter segments read as the locator marks them, no segment list | 70.9k | 22.5k |
+| a row without a comma taken as one entry unscanned | 68.5k | 21.8k |
+
+The header walk alone on the same corpus (stopping at Content-Length) stayed at 2.41k instructions per message throughout.
+
 ## Traps found on the way
 
 - **A matcher rebuilt per row.** Before sip-header-catalog 1.0.0-rc.3, `SipHeader::matches` resolved the header on every call and a one-letter wire name went through a linear search of the compact forms; a caller building a `NameMatcher` per row spent about 10% of its run there. It is now cheap, and still the right shape for a loop is one `NameMatcher` built before it.
@@ -47,6 +70,8 @@ On a synthetic bench of 521-byte, 11-row blocks, stopping at the first Content-L
 - **A second pass that looks free.** Splitting the block off at the blank line before walking it, and rescanning the line read ahead after each row, made every byte go through the LF search three times. A caller searching for the header end before handing the block over adds another.
 - **The walk over bytes did not beat the walk over text.** Validating UTF-8 per message first cost the same within 1%. Bytes are offered for callers that hold bytes, not as a speed lever.
 - **The typed parse of a clean value.** `SipContentLength::parse_with_warnings` on plain digits went through the general scrub at about 630 instructions; the fast path takes about 135, and a property test holds it equal to the full path.
+- **In-function samples skid.** Without precise sampling, `perf record -e instructions:u` put a fifth to two fifths of the locator's samples on a function entry or the instruction after a call, pointing at the wrong lines. Callgrind on a short run and a bench of the locator alone per input shape gave the per-byte and per-event costs above.
+- **The locator's per-character step resists tuning.** Matching on the byte before the part (-1.6% on the list bench), moving the step out of line (-0.7%) and skipping the decode of ASCII (no change, the compiler already does) were not kept; inlining `Locator::next` into its readers cost 0.7%. The wins came from reading fewer characters, not from reading each one faster.
 
 ## Measuring a change
 
